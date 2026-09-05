@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  android-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install flet
+        run: pip install flet
+      - name: Build APK
+        run: flet build apk
+      - name: Build Linux
+        if: false  # X11/GBK deps on runner need extra pkgs; enable when needed
+        run: flet build linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvii-dash-android
+          path: build/apk/outputs/apk/debug/*.apk
+
+  macos-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install flet
+        run: pip install flet
+      - name: Build macOS app
+        run: flet build macos
+      - name: Build iOS (unsigned)
+        run: flet build ipa --exclude-code-signing
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvii-dash-macos
+          path: build/macos/Build/Products/Release/*.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvii-dash-ios-unsigned
+          path: build/ipa/*.ipa
