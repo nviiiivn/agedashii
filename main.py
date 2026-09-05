@@ -40,7 +40,7 @@ def main(page):
                 ft.Container(height=12),
                 *[ft.NavigationDrawerDestination(icon=ICONS[k], label=LABELS[k]) for k in DRAWER],
             ],
-            on_change=lambda e: render(DRAWER[e.control.selected_index]) if e.control.selected_index is not None else None,
+            on_change=lambda e: (render(DRAWER[e.control.selected_index]), page.close_drawer()) if e.control.selected_index is not None else page.close_drawer(),
         )
 
     drawer = nav_drawer()
@@ -48,7 +48,7 @@ def main(page):
     def topbar():
         p = PAL()
         return ft.Row(spacing=10, controls=[
-            ft.IconButton(ft.Icons.MENU, icon_color=p["text2"], on_click=lambda e: page.open(drawer)),
+            ft.IconButton(ft.Icons.MENU, icon_color=p["text2"], on_click=lambda e: page.show_drawer(drawer)),
             brand_chip(),
             ft.Container(expand=True),
             machine_dots(),
