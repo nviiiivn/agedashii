@@ -28,7 +28,7 @@ def _machines():
         rows = [
             ("OS", m["os"]), ("Host", m["host"]),
         ] + ([("Uptime", m["uptime"]), ("CPU", f"{m['cpu']}%"),
-              ("RAM", f"{m['ram']}%"), ("Temp", f"{m['temp']}°C"),
+              ("RAM", str(m["ram"]) + ("%" if isinstance(m["ram"], int) else "")), ("Temp", f"{m['temp']}°C"),
               ("Docker", str(m["docker"]))] if m["online"] else [])
         return card(ft.Column(spacing=6, controls=[
             ft.Row([

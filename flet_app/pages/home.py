@@ -78,7 +78,7 @@ def build(page):
         return card(ft.Column(spacing=6, controls=[
             ft.Row([title("Wat2Do"), ft.Container(expand=True),
                     ft.Text(f"{done}/{total}", size=12, color=p["accent"], weight=ft.FontWeight.W_600)]),
-            ft.ProgressBar(value=done / total, color=p["orange"], bgcolor=p["bg2"], bar_height=4, border_radius=2),
+            ft.ProgressBar(value=(done / total) if total else 0, color=p["orange"], bgcolor=p["bg2"], bar_height=4, border_radius=2),
             *[row(it) for it in M.WAT2DO["items"][:4]],
         ]))
 

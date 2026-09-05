@@ -48,7 +48,7 @@ def build(page):
         cnt = ft.Text()
         def rebuild():
             done = sum(1 for i in w["items"] if i.get("done"))
-            prog.value = done / len(w["items"])
+            prog.value = (done / len(w["items"])) if w["items"] else 0
             cnt.value = f"{done}/{len(w['items'])}"
             box.controls = [item_row(i, rebuild) for i in w["items"]]
             try:
@@ -64,7 +64,7 @@ def build(page):
         return card(ft.Column(spacing=6, controls=[
             sub("CONDITIONS", 10),
             ft.Row(spacing=6, wrap=True, controls=[
-                chip(w["wx_call"], p["yellow"], ft.Icons.CLOUD, small=True),
+                chip(w["wx_call"] or "—", p["yellow"], ft.Icons.CLOUD, small=True),
                 chip("suggest: indoor", p["cyan"], ft.Icons.CHAIR, small=True),
             ]),
         ]))

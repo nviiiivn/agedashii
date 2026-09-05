@@ -249,12 +249,9 @@ def __getattr__(name):
         val = _MAP[name]()
         if val is None:
             val = getattr(mock, name)
-        globals()[name] = val
         return val
     return getattr(mock, name)
 
 
 def refresh():
     _cache.clear()
-    for k in list(_MAP):
-        globals().pop(k, None)

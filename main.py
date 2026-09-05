@@ -2,7 +2,7 @@ import flet as ft
 from flet_app.ui import PAL, PAD, BRD, S, apply_theme, dot
 from flet_app.theme_data import THEMES
 from flet_app.pages import home, lab, tools, trips, weather, garage, wat2do, extras, settings
-from flet_app import mock as M
+from flet_app import api as M
 
 ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 MAIN = ["home", "lab", "tools", "garage", "wat2do"]
@@ -32,6 +32,12 @@ def main(page):
             ft.Container(width=8, height=8, border_radius=4, bgcolor=m["color"] if m["online"] else p["border"])
             for m in M.MACHINES])
 
+    async def drawer_pick(e):
+        idx = e.control.selected_index
+        if idx is not None:
+            render(DRAWER[idx])
+            await page.close_drawer()
+
     def nav_drawer():
         p = PAL()
         return ft.NavigationDrawer(
@@ -40,15 +46,18 @@ def main(page):
                 ft.Container(height=12),
                 *[ft.NavigationDrawerDestination(icon=ICONS[k], label=LABELS[k]) for k in DRAWER],
             ],
-            on_change=lambda e: (render(DRAWER[e.control.selected_index]), page.close_drawer()) if e.control.selected_index is not None else page.close_drawer(),
+            on_change=drawer_pick,
         )
 
-    drawer = nav_drawer()
+    async def open_menu(e):
+        await page.show_drawer()
+
+    page.drawer = nav_drawer()
 
     def topbar():
         p = PAL()
         return ft.Row(spacing=10, controls=[
-            ft.IconButton(ft.Icons.MENU, icon_color=p["text2"], on_click=lambda e: page.show_drawer(drawer)),
+            ft.IconButton(ft.Icons.MENU, icon_color=p["text2"], on_click=open_menu),
             brand_chip(),
             ft.Container(expand=True),
             machine_dots(),

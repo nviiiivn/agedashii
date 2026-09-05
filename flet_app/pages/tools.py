@@ -67,6 +67,6 @@ def _foodzen():
         card(ft.Column(spacing=4, controls=[
             ft.Row([title("Frequency radar", 13), ft.Container(expand=True),
                     chip("fixation", p["yellow"], ft.Icons.LOCAL_FIRE_DEPARTMENT, small=True)]),
-            sub(f"Current fixation: {fz['fixation']}", 11),
+            sub(f"Current fixation: {fz['fixation'] or '— none tracked'}", 11),
         ])),
     ])
