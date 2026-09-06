@@ -1,56 +1,61 @@
 # NVII-DASH
 
-The mobile companion app for [dashbored](../dashbored) — a Flet (Flutter) client for nvii's personal homelab dashboard, built to run on Android, Linux desktop, and the web from one Python codebase.
+Mobile companion app for [dashbored](https://git.alola.lol) — nvii's single-file homelab dashboard. Built with [Flet](https://flet.dev) (Python → Flutter). Same codebase compiles to Android APK, Linux desktop, and runs as a web preview.
 
-## What it is
+## What's live vs sample
 
-A native-feeling app that talks to a running **dashbored** server on your LAN and mirrors its pages:
+The app talks to a running dashbored server on your LAN (`http://192.0.2.21:6900` by default — edit `BASE` in `flet_app/api.py`). If the server is unreachable, pages fall back to bundled mock data so the UI never blanks.
 
-| Tab | What you get |
-|---|---|
-| **Home** | Greeting, live weather (Open-Meteo via server), now-playing, machine status dots, quick actions, Wat2Do mini-checklist |
-| **Lab** | Machines (CPU / RAM / disk / temps / uptime / docker counts, live from SSH probes), Things, Services (up/down dots), Qbit |
-| **Tools** | Moto feeds (4 sources + RSS), Vault, Journal, FoodZen (grocery list, needs, frequency-radar fixations) |
-| **Trips** | Saved rides + GPX ride stats |
-| **Weather** | Current conditions + 4-day forecast |
-| **Garage** | Bikes with mileage-since-service, Flipper deal scanner |
-| **Wat2Do** | Full daily checklist with sub-tasks, pain/spoons vitals, live save to the server |
-| **Extras** | Projects (Gitea), AI chat (real replies via the server's OpenRouter/Zen/Ollama routes), XNAV, Obligations |
-| **Settings** | All 21 dashboard themes, extracted 1:1 from the web app's CSS, switchable live |
-
-Everything interactive: check items off, chat with the AI, flip themes — state persists through the server.
+| Page | Live from server | Sample / placeholder |
+|---|---|---|
+| Home | weather, Wat2Do checklist + progress, machine dots | now-playing (mock), quick actions (not wired) |
+| Lab → Machines | machines, uptime, CPU/RAM/temp, online dots | Things (soon), Services (demo), Qbit (sample) |
+| Tools | feeds, journal, FoodZen lists/needs/pantry | Vault (static preview), fixation radar (mock) |
+| Trips | trip list, ride files | ride stats columns (pending GPX parse) |
+| Weather | current + 4-day forecast | Explore map (soon) |
+| Garage | bikes, specs, mileage/service stats | Flipper deals (sample), Mechanic (soon) |
+| Wat2Do | full checklist — **toggles and sliders save to the server** | date chevrons (not wired yet) |
+| Extras | projects, **AI chat (real replies via OpenRouter)** | XNAV (soon), obligations (mock) |
+| Settings | all 21 themes from the dashboard, exact CSS colors | theme applies live (per-session) |
 
 ## Quick start (web preview)
 
+Python 3.10+:
+
 ```bash
-python3 -m venv ~/Sandbox/tmp/flet-venv
-~/Sandbox/tmp/flet-venv/bin/pip install flet        # see note below on Raspberry Pi
-~/Sandbox/tmp/flet-venv/bin/python main.py          # serves http://<host>:8550
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt   # flet==0.86.5
+.venv/bin/python main.py                    # serves on :8550
 ```
 
-> **Raspberry Pi note:** the piwheels mirror ships a broken `flet-web` wheel (code only, no browser runtime). If the web preview 500s, install the real wheel from PyPI:
-> `pip install --force-reinstall --no-deps --index-url https://pypi.org/simple flet_web==0.86.5`
+**Raspberry Pi note:** the piwheels mirror ships a broken `flet-web` wheel (code only, no browser runtime). Fix by force-installing the real wheel:
 
-## Configuration
-
-The app expects a dashbored server at `http://192.0.2.21:6900` (edit `BASE` in `flet_app/api.py`). If the server is unreachable, every page falls back to bundled mock data so the UI never blanks — machines/weather/checklists keep rendering, clearly fake.
+```bash
+.venv/bin/pip install --force-reinstall --no-deps --index-url https://pypi.org/simple flet-web==0.86.5
+```
 
 ## Building
 
-- **Android APK** — `flet build apk` (needs Flutter + Android SDK; on Raspberry Pi use an arm64 Flutter source checkout + Debian's arm64 `aapt2` via `android.aapt2FromMavenOverride`)
-- **Linux** — `flet build linux`
-- **iOS / macOS** — requires macOS hardware (or a macOS CI runner) for Xcode; iOS install additionally needs an Apple Developer account
+**Android (on the Pi / arm64):** Google ships no arm64-host `gen_snapshot` or `aapt2` for Linux, so a release-AOT build needs two workarounds this repo has already applied on the build machine:
+
+- debug build via `flet build apk --flutter-build-args=--debug` (skips AOT), and
+- `android.aapt2FromMavenOverride=<arm64 aapt2>` in `build/flutter/android/gradle.properties` (Debian's arm64 aapt).
+
+The committed CI (`.github/workflows/build.yml`) builds a **release APK on GitHub's x86 runners** plus macOS `.app` and unsigned iOS `.ipa` on macos runners — use that for the optimized APK. Installing the iOS build additionally requires an Apple Developer account ($99/yr).
+
+**Linux desktop:** `flet build linux` (needs clang/cmake/GTK dev packages on the build machine; CI covers it).
 
 ## Code map
 
-```
-main.py                  nav shell: topbar, drawer, bottom bar, page router
-flet_app/
-  api.py                 server client: adapters, TTL cache, mock fallback, AI chat
-  mock.py                offline fallback data (same shapes as api adapters)
-  theme_data.py          21 themes, generated from the dashboard's CSS (gen-themes.py)
-  ui.py                  palette accessor, card/chip/dot helpers, apply_theme
-  pages/                 one module per page; tabbed pages share lab._tabs()
-```
+- `main.py` — nav shell: topbar (drawer, brand, dots), bottom bar, page router
+- `flet_app/api.py` — the client: per-endpoint adapters reshaping server JSON, 30s TTL cache, mock fallback, AI chat
+- `flet_app/mock.py` — mock data, same shapes as the adapters (+ no-op stubs so a full mock-swap runs)
+- `flet_app/theme_data.py` — 21 themes extracted 1:1 from the dashboard's CSS by `tools/gen-themes.py`
+- `flet_app/ui.py` — theme state, card/chip/dot helpers, `apply_theme`
+- `flet_app/pages/` — one module per page; tabbed pages share `lab._tabs`
 
-Architecture in one line: **pages read only the `M` interface** (`from .. import api as M`) — swap `api` for `mock` and the entire app runs offline unchanged.
+Architecture: pages read only the `M` interface — `from .. import api as M`. Swap `api` for `mock` and the app renders fully offline (writes degrade to no-ops).
+
+## Review
+
+Full 8-axis code-ultrareview on this repo: verdict **Needs work** (8 red / 24 orange). The reds (drawer crash, stale-data pinning, progress-bar crashes, shape drift) were fixed in commits `d7b6ad9` and the second round; remaining oranges are tracked (threading, lazy tabs, honest-demo labels landed). Report: see review artifacts in the build history.

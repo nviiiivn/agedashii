@@ -42,8 +42,7 @@ def build(page, on_theme=None):
             title("Appearance", 15),
             sub(f"Theme: {THEME_NAMES[S.theme]}", 11),
         ])),
-        group("Themes A–M", keys[:half]),
-        group("Themes N–Z", keys[half:]),
+        group("Themes", keys),
         card(ft.Column(spacing=6, controls=[
             title("System", 14),
             sub("Layout editing, menu builder, machine editor and the rest of Settings land with API wiring.", 11),

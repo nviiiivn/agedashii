@@ -56,6 +56,6 @@ def _flipper():
             sub(d["flag"], 10),
         ]), pad=10)
     return ft.Column(spacing=8, controls=[
-        ft.Row([chip(f"{len(M.FLIPPER)} live deals", p["orange"], ft.Icons.SEARCH, small=True)]),
+        ft.Row([chip(f"{len(M.FLIPPER)} sample deals", p["orange"], ft.Icons.SEARCH, small=True)]),
         *[deal(d) for d in M.FLIPPER],
     ])

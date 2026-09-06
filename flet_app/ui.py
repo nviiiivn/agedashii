@@ -58,7 +58,7 @@ def apply_theme(page, key=None):
         S.theme = key if key in THEMES else DEFAULT
     p = PAL()
     S.page = page
-    page.theme_mode = ft.ThemeMode.DARK if p["bg"].lower() != "#ffffff" and "light" not in (THEME_NAMES.get(S.theme, "").lower()) else ft.ThemeMode.LIGHT
+    page.theme_mode = ft.ThemeMode.LIGHT if S.theme in ("light", "sepia", "pastel") else ft.ThemeMode.DARK
     page.theme = ft.Theme(
         color_scheme_seed=p["accent"],
         scaffold_bgcolor=p["bg"],

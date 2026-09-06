@@ -85,7 +85,7 @@ def build(page):
     return ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO, controls=[
         ft.Column(spacing=0, controls=[
             ft.Text("Good evening, nvii", size=22, weight=ft.FontWeight.W_700, color=p["text"]),
-            sub("Fri, Sep 4 · Vulcan Lofts"),
+            sub(__import__("datetime").date.today().strftime("%a, %b %-d") + " · Vulcan Lofts"),
         ]),
         weather_card(), nowplaying_card(), machines_card(), actions_row(), wat2do_mini(),
     ])

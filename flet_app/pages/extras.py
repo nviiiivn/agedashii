@@ -48,6 +48,7 @@ def _ai(page):
         if not txt:
             return
         entry.value = ""
+        entry.update()
         msgs.append({"role": "user", "text": txt})
         render(ft.Row(controls=[ft.Text("…", size=13, color=p["text2"])], alignment=ft.MainAxisAlignment.START))
         model = M.ai_model()

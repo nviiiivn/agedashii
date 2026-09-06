@@ -110,3 +110,13 @@ OBLIGATIONS = [
     {"t": "Renew motorcycle insurance", "due": "Sep 12", "urg": "high"},
     {"t": "DMV appointment", "due": "Oct 02", "urg": "med"},
 ]
+
+# stubs so a mock-only swap never AttributeErrors (review finding)
+def ai_model():
+    return "openrouter/auto"
+
+def ai_chat(provider, model, messages):
+    return None
+
+def wat2do_save(state):
+    return None

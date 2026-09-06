@@ -19,8 +19,8 @@ def _tabs(page, tabs):
     )
 
 def build(page):
-    return _tabs(page, [("Machines", _machines()), ("Things", _things()),
-                        ("Services", _services()), ("Qbit", _qbit())])
+    return _tabs(page, [("Machines", _machines()), ("Things (soon)", _things()),
+                        ("Services (demo)", _services()), ("Qbit (sample)", _qbit())])
 
 def _machines():
     p = PAL()
