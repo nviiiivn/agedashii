@@ -31,7 +31,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: nvii-dash-android
-          path: build/apk/outputs/apk/debug/*.apk
+          path: build/apk/outputs/apk/*/*.apk
 
   macos-ios:
     runs-on: macos-latest
@@ -48,13 +48,15 @@ jobs:
         run: pip install flet
       - name: Build macOS app
         run: flet build macos --yes
-      - name: Build iOS (unsigned)
-        run: flet build ipa --exclude-code-signing --yes
+      - name: Build iOS simulator app (unsigned)
+        run: flet build ios-simulator --yes
       - uses: actions/upload-artifact@v4
         with:
           name: nvii-dash-macos
           path: build/macos/Build/Products/Release/*.app
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
-          name: nvii-dash-ios-unsigned
-          path: build/ipa/*.ipa
+          name: nvii-dash-ios-simulator
+          path: build/ios_simulator/**/*.app
+          if-no-files-found: warn
