@@ -6,6 +6,7 @@ failure they fall back to mock data. Real-but-empty (e.g. foodzen) stays empty.
 """
 import json
 import time
+import urllib.parse
 import urllib.request
 
 from . import config, mock
@@ -295,6 +296,150 @@ def foodzen_need_to_list():
     return _foodzen_apply(_fz.need_to_list)
 
 
+# ------------------------------------------------------------------ transport
+def _post_qs(path, params, raw_body=None, timeout=15):
+    """POST to an endpoint that takes its arguments in the query string.
+
+    Several dashbored write routes (journal/new, journal/delete, vault/save,
+    garage/records/add, garage/spec/save) read urllib.parse.parse_qs(query)
+    rather than a JSON body, and vault/save additionally takes the file
+    content as the raw body. Returns the decoded JSON, or None.
+    """
+    url = config.SERVER_URL + path + "?" + urllib.parse.urlencode(
+        {k: v for k, v in params.items() if v is not None})
+    data = raw_body if isinstance(raw_body, bytes) else (
+        raw_body.encode() if isinstance(raw_body, str) else b"")
+    req = urllib.request.Request(url, data=data, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with config._opener.open(req, timeout=timeout) as r:
+            return json.loads(r.read().decode() or "{}")
+    except Exception as e:
+        config._remember(config.SERVER_URL, False, config._describe(e))
+        return None
+
+
+def _ok(resp, *, key="ok"):
+    """(ok, message) from a write response, surfacing the server's own error."""
+    if resp is None:
+        return False, config.STATUS.get("detail") or "server unreachable"
+    if resp.get("error"):
+        return False, str(resp["error"])
+    if key in resp and not resp[key]:
+        return False, "server refused the write"
+    return True, "saved"
+
+
+# -------------------------------------------------------------------- journal
+JOURNAL_CATEGORIES = ["Mental-Health", "Trip-Reports", "Mechanicry",
+                      "New-Projects", "Dr-Visits", "Medications"]
+
+
+def journal_read(rel):
+    d = _get(f"/api/journal/read?path={urllib.parse.quote(rel)}")
+    return None if d is None else d.get("content", "")
+
+
+def journal_new(category, title):
+    """Create an entry. Returns (ok, message_or_path)."""
+    if category not in JOURNAL_CATEGORIES:
+        return False, f"unknown category {category!r}"
+    if not (title or "").strip():
+        return False, "title required"
+    r = _post_qs("/api/journal/new", {"category": category, "title": title.strip()})
+    if r is None:
+        return False, config.STATUS.get("detail") or "server unreachable"
+    if r.get("error"):
+        return False, str(r["error"])
+    _cache.pop("/api/journal/tree", None)
+    return True, r.get("path", "")
+
+
+def journal_save(rel, content):
+    ok, msg = _ok(_post("/api/journal/save", {"path": rel, "content": content}))
+    if ok:
+        _cache.pop("/api/journal/tree", None)
+        _cache.pop(f"/api/journal/read?path={urllib.parse.quote(rel)}", None)
+    return ok, msg
+
+
+def journal_delete(rel):
+    ok, msg = _ok(_post_qs("/api/journal/delete", {"path": rel}))
+    if ok:
+        _cache.pop("/api/journal/tree", None)
+    return ok, msg
+
+
+# --------------------------------------------------------------------- garage
+GARAGE_RECORD_TYPES = ("mileage", "services", "expenses")
+
+
+def garage_records(bike, rtype):
+    if rtype not in GARAGE_RECORD_TYPES:
+        return None
+    d = _get(f"/api/garage/records?bike={urllib.parse.quote(bike)}&type={rtype}")
+    return None if d is None else (d.get("records") or [])
+
+
+def garage_record_add(bike, rtype, record):
+    """Append a mileage / service / expense record.
+
+    The server assigns `id` and `created_at` under a lock (garage_records_add),
+    so the app deliberately does not invent them.
+    """
+    if rtype not in GARAGE_RECORD_TYPES:
+        return False, f"unknown record type {rtype!r}"
+    if not isinstance(record, dict) or not record:
+        return False, "empty record"
+    r = _post_qs("/api/garage/records/add", {"bike": bike, "type": rtype},
+                 raw_body=json.dumps(record))
+    ok, msg = _ok(r)
+    if ok:
+        _cache.pop(f"/api/garage/records?bike={urllib.parse.quote(bike)}&type={rtype}", None)
+        _cache.pop("/api/garage/tree", None)
+    return ok, msg
+
+
+def garage_read(rel):
+    d = _get(f"/api/garage/read?path={urllib.parse.quote(rel)}")
+    return None if d is None else d.get("content", "")
+
+
+def garage_save(rel, content):
+    ok, msg = _ok(_post("/api/garage/save", {"path": rel, "content": content}))
+    if ok:
+        _cache.pop("/api/garage/tree", None)
+    return ok, msg
+
+
+def garage_spec_save(bike, spec):
+    ok, msg = _ok(_post_qs("/api/garage/spec/save", {"bike": bike},
+                           raw_body=json.dumps(spec)))
+    if ok:
+        _cache.pop(f"/api/garage/spec?bike={urllib.parse.quote(bike)}", None)
+    return ok, msg
+
+
+# ---------------------------------------------------------------------- trips
+def trip_save(trip):
+    """Save a whole trip object. The server requires id and name."""
+    if not isinstance(trip, dict) or not trip.get("id") or not trip.get("name"):
+        return False, "id and name required"
+    ok, msg = _ok(_post("/api/trips/save", trip))
+    if ok:
+        _cache.pop("/api/trips", None)
+    return ok, msg
+
+
+# ---------------------------------------------------------------------- vault
+def vault_save(host, rel, content, lib=None):
+    """Write a note to a machine's vault. Content goes in the raw body."""
+    if not host or not rel:
+        return False, "host and path required"
+    return _ok(_post_qs("/api/vault/save", {"host": host, "path": rel, "lib": lib},
+                        raw_body=content))
+
+
 def journal():
     d = _get("/api/journal/tree")
     if d is None:
@@ -306,8 +451,23 @@ def journal():
                 continue
             out.append({"cat": c.get("label", c.get("name", "")),
                         "title": f.get("title") or f.get("name", "—"),
-                        "date": (f.get("mtime") or "")[:10]})
+                        "date": (f.get("mtime") or "")[:10],
+                        # Path the write endpoints want: category dir + the
+                        # file path, which the tree gives relative to it.
+                        "path": f"{c.get('path') or c.get('name', '')}/{f.get('path', '')}",
+                        "name": f.get("name", "")})
     return out
+
+
+def STATUS_LIVE():
+    """True when the last request actually reached the server.
+
+    Pages use this to decide whether to offer editing at all, and to show the
+    sample-data banner. Named in caps because module __getattr__ below falls
+    through to mock for anything it does not recognise, and a lowercase helper
+    reads like one of the data accessors.
+    """
+    return bool(config.STATUS.get("ok"))
 
 
 def ai_model():

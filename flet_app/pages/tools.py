@@ -2,10 +2,11 @@ import flet as ft
 from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
 from .. import api as M
 from .lab import _tabs
+from ._forms import Writer, offline_banner, rebuilder
 
 def build(page):
-    return _tabs(page, [("Feeds", _feeds()), ("Vault", _vault()),
-                        ("Journal", _journal()), ("FoodZen", _foodzen(page))])
+    return _tabs(page, [("Feeds", _feeds()), ("Vault", _vault(page)),
+                        ("Journal", _journal(page)), ("FoodZen", _foodzen(page))])
 
 def _feeds():
     p = PAL()
@@ -18,31 +19,132 @@ def _feeds():
         ]), pad=10)
     return ft.Column(spacing=8, controls=[row(i) for i in M.FEEDS])
 
-def _vault():
+def _vault(page):
+    """Write a note into a machine's vault.
+
+    Previously three hardcoded filenames that did nothing. The server's
+    /api/vault/save needs a machine id and a path and takes the note body
+    raw, so this is a real composer rather than a browser: listing a remote
+    vault needs an SSH round trip the app has no endpoint for yet, and
+    pretending to list files would be the same lie the old placeholder told.
+    """
     p = PAL()
-    return ft.Column(spacing=8, controls=[
-        card(ft.Row(spacing=10, controls=[
-            ft.Icon(ft.Icons.FOLDER, color=p["yellow"], size=18),
-            ft.Text("notes/", size=13, color=p["text"]),
-            ft.Container(expand=True), sub("12 files", 11)]), pad=10),
-        card(ft.Row(spacing=10, controls=[
-            ft.Icon(ft.Icons.DESCRIPTION, color=p["text2"], size=18),
-            ft.Text("spark-plugs.md", size=13, color=p["text"]),
-            ft.Container(expand=True), sub("2.1 KB", 11)]), pad=10),
-        card(ft.Row(spacing=10, controls=[
-            ft.Icon(ft.Icons.DESCRIPTION, color=p["text2"], size=18),
-            ft.Text("roadtrip-ideas.md", size=13, color=p["text"]),
-            ft.Container(expand=True), sub("4.8 KB", 11)]), pad=10),
+    w = Writer(page, rebuilder(page, build))
+    live = M.STATUS_LIVE()
+    machines = [m for m in (M.MACHINES or []) if m.get("id")]
+
+    if not live or not machines:
+        return ft.Column(spacing=8, controls=[
+            offline_banner(p, "the vault") if not live else
+            card(sub("No machines configured on the server.", 11), pad=12)])
+
+    host = ft.Dropdown(
+        value=machines[0]["id"], dense=True, filled=True, text_size=12, width=170,
+        border_color=p["border"], color=p["text"],
+        options=[ft.dropdown.Option(key=m["id"], text=m.get("display", m["id"]))
+                 for m in machines])
+    path = ft.TextField(hint_text="notes/spark-plugs.md", dense=True, filled=True,
+                        text_size=12, expand=True, border_color=p["border"],
+                        focused_border_color=p["accent"], color=p["text"])
+    body = ft.TextField(hint_text="note body...", multiline=True, min_lines=6,
+                        max_lines=20, dense=True, filled=True, text_size=12,
+                        border_color=p["border"], focused_border_color=p["accent"],
+                        color=p["text"])
+
+    async def save(e):
+        rel = (path.value or "").strip()
+        if not rel:
+            w.report(False, "path required")
+            page.update()
+            return
+        w.busy()
+        ok, msg = M.vault_save(host.value, rel, body.value or "")
+        w.report(ok, msg)
+        page.update()
+
+    return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
+        card(ft.Column(spacing=8, controls=[
+            title("Write a note", 14),
+            ft.Row(spacing=6, controls=[host, path]),
+            body,
+            ft.Row([ft.FilledButton("Save to vault", height=34, on_click=save)]),
+            sub("Saves over SSH to the selected machine's vault path.", 10),
+        ])),
+        w.control,
     ])
 
-def _journal():
+def _journal(page):
+    """Journal entries: create, open to edit, save, delete - all server-side."""
     p = PAL()
+    w = Writer(page, rebuilder(page, build))
+    entries = M.JOURNAL or []
+    live = M.STATUS_LIVE()
+
+    # The mock shape has no path, so only real entries can be opened or deleted.
     def row(j):
-        return card(ft.Column(spacing=4, controls=[
-            ft.Row([chip(j["cat"], p["purple"], small=True), ft.Container(expand=True), sub(j["date"], 10)]),
-            ft.Text(j["title"], size=13, weight=ft.FontWeight.W_500, color=p["text"]),
-        ]), pad=10)
-    return ft.Column(spacing=8, controls=[row(j) for j in M.JOURNAL])
+        rel = j.get("path")
+        head = ft.Row([chip(j["cat"], p["purple"], small=True), ft.Container(expand=True),
+                       sub(j.get("date", ""), 10)])
+        body = [head, ft.Text(j["title"], size=13, weight=ft.FontWeight.W_500,
+                              color=p["text"])]
+        if rel and live:
+            editor = ft.Column(spacing=6, visible=False)
+
+            async def open_entry(e, rel=rel, editor=editor):
+                if editor.visible:
+                    editor.visible = False
+                    editor.controls.clear()
+                    page.update()
+                    return
+                content = M.journal_read(rel)
+                if content is None:
+                    w.report(False, "could not read entry")
+                    page.update()
+                    return
+                field = ft.TextField(value=content, multiline=True, min_lines=6,
+                                     max_lines=20, text_size=12, dense=True,
+                                     filled=True, border_color=p["border"],
+                                     focused_border_color=p["accent"], color=p["text"])
+
+                async def save(e2, rel=rel, field=field):
+                    w.busy()
+                    ok, msg = M.journal_save(rel, field.value or "")
+                    w.report(ok, msg)
+                    page.update()
+
+                editor.controls[:] = [field, ft.Row(spacing=8, controls=[
+                    ft.FilledButton("Save", height=32, on_click=save),
+                    ft.OutlinedButton("Delete", height=32,
+                                      on_click=w.run(M.journal_delete, rel)),
+                ])]
+                editor.visible = True
+                page.update()
+
+            head.controls.insert(1, ft.IconButton(ft.Icons.EDIT_NOTE, icon_size=16,
+                                                  icon_color=p["text2"],
+                                                  on_click=open_entry))
+            body.append(editor)
+        return card(ft.Column(spacing=6, controls=body), pad=10)
+
+    cat = ft.Dropdown(
+        value=M.JOURNAL_CATEGORIES[0], dense=True, filled=True, text_size=12, width=150,
+        border_color=p["border"], color=p["text"],
+        options=[ft.dropdown.Option(c) for c in M.JOURNAL_CATEGORIES])
+
+    def make(title_text):
+        ok, res = M.journal_new(cat.value, title_text)
+        return ok, (f"created {res}" if ok else res)
+
+    return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
+        *([] if live else [offline_banner(p, "the journal")]),
+        card(ft.Column(spacing=8, controls=[
+            title("New entry", 14),
+            ft.Row(spacing=6, controls=[cat]),
+            w.entry("entry title...", make),
+        ])),
+        *[row(j) for j in entries],
+        w.control,
+    ])
 
 def _foodzen(page):
     """Editable FoodZen: grocery list, needs and pantry all write to the server.

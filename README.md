@@ -51,10 +51,10 @@ never blanks. **Settings → Server** shows which one you are looking at.
 |---|---|---|
 | Home | weather, Wat2Do checklist + progress, machine dots | now-playing (mock), quick actions (not wired) |
 | Lab → Machines | machines, uptime, CPU/RAM/temp, online dots | Things (soon), Services (demo), Qbit (sample) |
-| Tools | feeds, journal, **FoodZen — grocery list, needs and pantry all read AND write to the server** | Vault (static preview), fixation radar (mock) |
-| Trips | trip list, ride files | ride stats columns (pending GPX parse) |
+| Tools | feeds · **Journal — create, edit, delete** · **FoodZen — grocery list, needs, pantry** · **Vault — write notes over SSH** | fixation radar (mock) |
+| Trips | trip list, ride files · **create a trip** | stops/route are website-only; ride stats columns (pending GPX parse) |
 | Weather | current + 4-day forecast | Explore map (soon) |
-| Garage | bikes, specs, mileage/service stats | Flipper deals (sample), Mechanic (soon) |
+| Garage | bikes, specs, stats · **Mechanic — log mileage / services / expenses** | Flipper deals (sample) |
 | Wat2Do | full checklist — **toggles and sliders save to the server** | date chevrons (not wired yet) |
 | Extras | projects, **AI chat (real replies via OpenRouter)** | XNAV (soon), obligations (mock) |
 | Settings | server address + status, all 21 themes | theme applies live (per-session) |
