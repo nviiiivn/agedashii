@@ -5,7 +5,7 @@ from .lab import _tabs
 
 def build(page):
     return _tabs(page, [("Feeds", _feeds()), ("Vault", _vault()),
-                        ("Journal", _journal()), ("FoodZen", _foodzen())])
+                        ("Journal", _journal()), ("FoodZen", _foodzen(page))])
 
 def _feeds():
     p = PAL()
@@ -44,29 +44,127 @@ def _journal():
         ]), pad=10)
     return ft.Column(spacing=8, controls=[row(j) for j in M.JOURNAL])
 
-def _foodzen():
+def _foodzen(page):
+    """Editable FoodZen: grocery list, needs and pantry all write to the server.
+
+    Every write is confirmed before the row changes on screen. Optimistic UI
+    would be worse here than a brief pause: the same JSON files are edited from
+    the website, and a checkbox that ticks locally but never reached the server
+    is exactly the kind of quiet lie that makes the app untrustworthy.
+    """
     p = PAL()
     fz = M.FOODZEN
-    def item(t, done=False, subi=False):
-        return ft.Row(spacing=8, controls=[
-            ft.Icon(ft.Icons.CHECK_BOX if done else ft.Icons.CHECK_BOX_OUTLINE_BLANK, size=15,
-                    color=p["green"] if done else p["text2"]),
-            ft.Text(t, size=12, color=p["text2"] if done else (p["text3"] if subi else p["text"]),
-                    style=ft.TextStyle(decoration=ft.TextDecoration.LINE_THROUGH) if done else None,
-                    offset=ft.Offset(0.5, 0) if subi else None)])
-    return ft.Column(spacing=8, controls=[
+    live = bool(fz.get("items") or fz.get("need_items") or fz.get("pantry_items")) \
+        or fz.get("list_id") is not None
+
+    status = ft.Text("", size=11, color=p["text2"])
+
+    def rebuild():
+        M.refresh()
+        page.controls.clear()
+        page.add(build(page))
+        page.update()
+
+    def report(ok, msg):
+        status.value = msg if ok else f"not saved - {msg}"
+        status.color = p["text2"] if ok else p["pink"]
+
+    def run(fn, *a):
+        """Call a write, report the result, and re-read from the server."""
+        async def handler(e):
+            status.value = "saving..."
+            page.update()
+            ok, msg = fn(*a)
+            report(ok, msg)
+            if ok:
+                rebuild()
+            else:
+                page.update()
+        return handler
+
+    def add_row(hint, fn):
+        field = ft.TextField(hint_text=hint, dense=True, filled=True, text_size=12,
+                             expand=True, border_color=p["border"],
+                             focused_border_color=p["accent"], color=p["text"])
+
+        async def submit(e):
+            name = (field.value or "").strip()
+            if not name:
+                return
+            status.value = "saving..."
+            page.update()
+            ok, msg = fn(name)
+            report(ok, msg)
+            if ok:
+                field.value = ""
+                rebuild()
+            else:
+                page.update()
+
+        field.on_submit = submit
+        return ft.Row(spacing=6, controls=[
+            field, ft.IconButton(ft.Icons.ADD, icon_color=p["accent"], on_click=submit)])
+
+    def list_row(it):
+        name = it.get("name", "")
+        done = bool(it.get("done"))
+        qty = it.get("qty") or 1
+        return ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.IconButton(
+                ft.Icons.CHECK_BOX if done else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                icon_size=17, icon_color=p["green"] if done else p["text2"],
+                on_click=run(M.foodzen_toggle, name, not done)),
+            ft.Text(f"{name}{'' if qty in (1, None) else f'  x{qty}'}", size=12,
+                    color=p["text2"] if done else p["text"], expand=True,
+                    style=ft.TextStyle(
+                        decoration=ft.TextDecoration.LINE_THROUGH) if done else None),
+            chip(it.get("cat", ""), p["accent"], small=True) if it.get("cat") else ft.Container(),
+            ft.IconButton(ft.Icons.CLOSE, icon_size=15, icon_color=p["text2"],
+                          on_click=run(M.foodzen_remove, name)),
+        ])
+
+    def simple_row(name, remove_fn, cat=None):
+        return ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.Text(name, size=12, color=p["text"], expand=True),
+            chip(cat, p["purple"], small=True) if cat else ft.Container(),
+            ft.IconButton(ft.Icons.CLOSE, icon_size=15, icon_color=p["text2"],
+                          on_click=run(remove_fn, name)),
+        ])
+
+    items = fz.get("items") or []
+    need_items = fz.get("need_items") or []
+    pantry_items = fz.get("pantry_items") or []
+
+    banner = []
+    if not live:
+        banner = [card(ft.Row(spacing=8, controls=[
+            ft.Icon(ft.Icons.INFO_OUTLINE, size=16, color=p["yellow"]),
+            ft.Text("Showing sample data - not connected to the server. "
+                    "Anything added here will not save.", size=11,
+                    color=p["text2"], expand=True)]), pad=10)]
+
+    return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
+        *banner,
         card(ft.Column(spacing=6, controls=[
             ft.Row([title("Grocery list"), ft.Container(expand=True),
-                    chip(f"{len(fz['list'])} items", p["orange"], small=True)]),
-            *[item(t) for t in fz["list"]],
+                    chip(fz.get("list_name") or "new list", p["orange"], small=True)]),
+            *( [list_row(i) for i in items] if items
+               else [sub("empty - add something below", 11)] ),
+            add_row("add an item...", M.foodzen_add),
         ])),
-        card(ft.Column(spacing=4, controls=[
-            title("Needs", 13),
-            *[item(f"+ " + n) for n in fz["need"]],
+        card(ft.Column(spacing=6, controls=[
+            ft.Row([title("Needs", 13), ft.Container(expand=True),
+                    ft.TextButton("move all to list", on_click=run(M.foodzen_need_to_list))
+                    if need_items else ft.Container()]),
+            *( [simple_row(n.get("name", ""), M.foodzen_need_remove, n.get("cat"))
+                for n in need_items] if need_items else [sub("nothing needed", 11)] ),
+            add_row("need to restock...", M.foodzen_need_add),
         ])),
-        card(ft.Column(spacing=4, controls=[
-            ft.Row([title("Frequency radar", 13), ft.Container(expand=True),
-                    chip("fixation", p["yellow"], ft.Icons.LOCAL_FIRE_DEPARTMENT, small=True)]),
-            sub(f"Current fixation: {fz['fixation'] or '— none tracked'}", 11),
+        card(ft.Column(spacing=6, controls=[
+            title("Pantry", 13),
+            *( [simple_row(x.get("name", ""), M.foodzen_pantry_remove, x.get("cat"))
+                for x in pantry_items] if pantry_items else [sub("pantry empty", 11)] ),
+            add_row("already have...", M.foodzen_pantry_add),
         ])),
+        ft.Container(padding=PAD(0, 4), content=status),
     ])

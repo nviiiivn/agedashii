@@ -9,6 +9,7 @@ import time
 import urllib.request
 
 from . import config, mock
+from . import foodzen as _fz
 
 TTL = 30
 _cache = {}
@@ -208,7 +209,90 @@ def foodzen():
     else:
         pnames = []
     return {"list": [n for n in names if n], "need": [n for n in need if n],
-            "pantry": [n for n in pnames if n], "fixation": None}
+            "pantry": [n for n in pnames if n], "fixation": None,
+            # Richer view for the editable UI. The flat name lists above are
+            # kept because mock.py and the older page code expect them.
+            "list_id": lists[0].get("id") if lists else None,
+            "list_name": lists[0].get("name") if lists else None,
+            "items": lst if isinstance(lst, list) else [],
+            "need_items": d.get("need") or [],
+            "pantry_items": pitems if isinstance(pitems, list) else []}
+
+
+# ---------------------------------------------------------------- FoodZen writes
+# The server saves one whole collection at a time (POST {kind, data}), so every
+# mutation is read-modify-write. That is a lost-update risk if the website is
+# open on the same collection at the same moment; the window is small and the
+# server itself has no merge, so the app re-reads immediately before writing
+# and invalidates its cache immediately after.
+
+def foodzen_state(force=True):
+    """Raw, shape-normalised FoodZen state, or None if the server is unreachable."""
+    if force:
+        _cache.pop("/api/foodzen/state", None)
+    d = _get("/api/foodzen/state")
+    return None if d is None else _fz.normalise_state(d)
+
+
+def foodzen_save(kind, data):
+    if kind not in _fz.KINDS:
+        return False
+    r = _post("/api/foodzen/save", {"kind": kind, "data": data})
+    return bool(r and r.get("ok"))
+
+
+def _foodzen_apply(mutate):
+    """Read state, apply `mutate`, save only the collections it changed.
+
+    Returns (ok, message). A failure is reported rather than swallowed so the
+    UI can say the write did not land instead of showing it as applied.
+    """
+    state = foodzen_state(force=True)
+    if state is None:
+        return False, "server unreachable"
+    try:
+        changed = mutate(state)
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {e}"
+    if not changed:
+        return True, "no change"
+    for kind in sorted(changed):
+        if not foodzen_save(kind, state[kind]):
+            return False, f"saving {kind} failed"
+    _cache.pop("/api/foodzen/state", None)
+    return True, "saved"
+
+
+def foodzen_add(name):
+    return _foodzen_apply(lambda s: _fz.add_item(s, name))
+
+
+def foodzen_toggle(name, done):
+    return _foodzen_apply(lambda s: _fz.set_done(s, name, done))
+
+
+def foodzen_remove(name):
+    return _foodzen_apply(lambda s: _fz.remove_item(s, name))
+
+
+def foodzen_need_add(name):
+    return _foodzen_apply(lambda s: _fz.add_need(s, name))
+
+
+def foodzen_need_remove(name):
+    return _foodzen_apply(lambda s: _fz.remove_need(s, name))
+
+
+def foodzen_pantry_add(name):
+    return _foodzen_apply(lambda s: _fz.add_pantry(s, name))
+
+
+def foodzen_pantry_remove(name):
+    return _foodzen_apply(lambda s: _fz.remove_pantry(s, name))
+
+
+def foodzen_need_to_list():
+    return _foodzen_apply(_fz.need_to_list)
 
 
 def journal():

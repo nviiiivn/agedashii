@@ -51,7 +51,7 @@ never blanks. **Settings → Server** shows which one you are looking at.
 |---|---|---|
 | Home | weather, Wat2Do checklist + progress, machine dots | now-playing (mock), quick actions (not wired) |
 | Lab → Machines | machines, uptime, CPU/RAM/temp, online dots | Things (soon), Services (demo), Qbit (sample) |
-| Tools | feeds, journal, FoodZen lists/needs/pantry | Vault (static preview), fixation radar (mock) |
+| Tools | feeds, journal, **FoodZen — grocery list, needs and pantry all read AND write to the server** | Vault (static preview), fixation radar (mock) |
 | Trips | trip list, ride files | ride stats columns (pending GPX parse) |
 | Weather | current + 4-day forecast | Explore map (soon) |
 | Garage | bikes, specs, mileage/service stats | Flipper deals (sample), Mechanic (soon) |
