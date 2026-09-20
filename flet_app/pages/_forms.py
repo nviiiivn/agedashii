@@ -85,10 +85,19 @@ class Writer:
 def rebuilder(page, build_fn):
     """Re-read from the server and repaint the whole page."""
     from .. import api as M
+    from ..ui import S
 
     def rebuild():
         M.refresh()
-        page.controls.clear()
+        # Prefer the whole-app re-render main.py registers on S. Replacing
+        # page.controls directly, as this used to, threw away the topbar and
+        # the navigation bar along with the page body - after any write you
+        # were stranded on a page with no way off it.
+        rerender = getattr(S, "rerender", None)
+        if callable(rerender):
+            rerender()
+            return
+        page.controls.clear()      # standalone/tests: no chrome to preserve
         page.add(build_fn(page))
         page.update()
     return rebuild

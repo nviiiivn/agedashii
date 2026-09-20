@@ -1,6 +1,7 @@
 import flet as ft
 from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
 from .. import api as M
+from .. import prefs
 
 def build(page):
     p = PAL()
@@ -82,10 +83,23 @@ def build(page):
             *[row(it) for it in M.WAT2DO["items"][:4]],
         ]))
 
-    return ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO, controls=[
-        ft.Column(spacing=0, controls=[
-            ft.Text("Good evening, nvii", size=22, weight=ft.FontWeight.W_700, color=p["text"]),
+    def greeting():
+        hour = __import__("datetime").datetime.now().hour
+        part = "morning" if hour < 12 else "afternoon" if hour < 18 else "evening"
+        return ft.Column(spacing=0, controls=[
+            ft.Text(f"Good {part}, nvii", size=22, weight=ft.FontWeight.W_700,
+                    color=p["text"]),
             sub(__import__("datetime").date.today().strftime("%a, %b %-d") + " · Vulcan Lofts"),
-        ]),
-        weather_card(), nowplaying_card(), machines_card(), actions_row(), wat2do_mini(),
-    ])
+        ])
+
+    # Which panels appear, and in what order, is the owner's choice in
+    # Settings. Keys match prefs.HOME_PANEL_KEYS; an unknown key is skipped
+    # rather than crashing the whole page.
+    builders = {"greeting": greeting, "weather": weather_card,
+                "nowplaying": nowplaying_card, "machines": machines_card,
+                "actions": actions_row, "wat2do": wat2do_mini}
+    panels = [builders[k]() for k in prefs.home_panels() if k in builders]
+    if not panels:                      # everything hidden: say so, don't show a void
+        panels = [sub("Every panel is hidden. Settings \u2192 Home panels.", 11)]
+    return ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO,
+                     controls=panels)

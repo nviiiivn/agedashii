@@ -6,6 +6,7 @@ failure they fall back to mock data. Real-but-empty (e.g. foodzen) stays empty.
 """
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -19,6 +20,40 @@ WMO = {0: "clear", 1: "partly cloudy", 2: "partly cloudy", 3: "overcast",
        45: "fog", 48: "fog", 51: "drizzle", 53: "drizzle", 55: "drizzle",
        61: "rain", 63: "rain", 65: "rain", 71: "snow", 73: "snow", 75: "snow",
        80: "showers", 81: "showers", 82: "showers", 95: "storm", 96: "storm", 99: "storm"}
+
+
+
+def _server_said(exc):
+    """Pull the server's own error message out of a failed request.
+
+    dashbored answers 4xx/5xx with a JSON body like {"error": "bad bike"},
+    but urllib raises HTTPError and that body goes unread - so the user was
+    shown "server returned HTTP 500" while the server had already explained
+    exactly what was wrong. The body can only be read once, so it happens
+    here, in one place.
+    """
+    try:
+        raw = exc.read().decode("utf-8", "replace")
+    except Exception:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return raw.strip()[:200] or None
+    if isinstance(data, dict):
+        for key in ("error", "message", "detail"):
+            if data.get(key):
+                return str(data[key])[:200]
+    return None
+
+
+def _describe_failure(exc):
+    """Human-readable reason, preferring whatever the server actually said."""
+    if isinstance(exc, urllib.error.HTTPError):
+        said = _server_said(exc)
+        if said:
+            return said
+    return config._describe(exc)
 
 
 def _get(path, timeout=2.5):
@@ -40,7 +75,7 @@ def _get(path, timeout=2.5):
         config._remember(config.SERVER_URL, True, "connected")
         return data
     except Exception as e:
-        config._remember(config.SERVER_URL, False, config._describe(e))
+        config._remember(config.SERVER_URL, False, _describe_failure(e))
         return None
 
 
@@ -53,7 +88,7 @@ def _post(path, payload, timeout=6):
         with config._opener.open(req, timeout=timeout) as r:
             return json.loads(r.read().decode() or "{}")
     except Exception as e:
-        config._remember(config.SERVER_URL, False, config._describe(e))
+        config._remember(config.SERVER_URL, False, _describe_failure(e))
         return None
 
 
@@ -296,6 +331,74 @@ def foodzen_need_to_list():
     return _foodzen_apply(_fz.need_to_list)
 
 
+# ------------------------------------------------------------ maps / rides
+def mbtiles_path():
+    """Where the offline map archive lives, or None if none is installed.
+
+    Checked in order of how deliberate each location is: an explicit setting
+    wins, then a file shipped inside the app bundle, then one downloaded
+    beside the app. Returning None is a normal outcome - the map falls back
+    to online tiles and says so.
+    """
+    import os
+    from pathlib import Path
+    candidates = []
+    override = os.environ.get("NVII_MBTILES")
+    if override:
+        candidates.append(Path(override))
+    here = Path(__file__).resolve().parent.parent
+    candidates += [here / "assets" / "maps" / "bayarea.mbtiles",
+                   here / "maps" / "bayarea.mbtiles",
+                   Path.home() / ".nvii-dash" / "bayarea.mbtiles"]
+    for c in candidates:
+        try:
+            if c.is_file():
+                return str(c)
+        except OSError:
+            continue
+    return None
+
+
+def _gpx(name, points):
+    """Turn recorded fixes into GPX the server and every other tool can read.
+
+    Speed goes in a GPX extension rather than being dropped: it comes from
+    the GPS receiver's own Doppler calculation and is better than anything
+    recomputed from the points later.
+    """
+    import html as _h
+    import time as _t
+    head = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<gpx version="1.1" creator="NVII-DASH" xmlns="http://www.topografix.com/GPX/1/1">\n'
+        f"  <metadata><name>{_h.escape(name)}</name></metadata>\n"
+        f"  <trk><name>{_h.escape(name)}</name><trkseg>\n")
+    rows = []
+    for q in points:
+        stamp = _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime(q.get("t") or 0))
+        bits = [f'    <trkpt lat="{q["lat"]}" lon="{q["lon"]}">']
+        if q.get("alt") is not None:
+            bits.append(f'<ele>{q["alt"]:.1f}</ele>')
+        bits.append(f"<time>{stamp}</time>")
+        if q.get("speed") is not None:
+            bits.append(f'<extensions><speed>{q["speed"]:.2f}</speed></extensions>')
+        bits.append("</trkpt>")
+        rows.append("".join(bits))
+    return head + "\n".join(rows) + "\n  </trkseg></trk>\n</gpx>\n"
+
+
+def ride_save(name, points, distance_m=0.0):
+    """Upload a recorded track as GPX. Returns (ok, message)."""
+    if not points:
+        return False, "no points recorded"
+    payload = {"filename": f"{name}.gpx", "content": _gpx(name, points)}
+    ok, msg = _ok(_post("/api/rides/upload", payload, timeout=60))
+    if ok:
+        _cache.pop("/api/rides", None)
+        return True, f"{len(points)} points, {distance_m / 1609.344:.1f} mi"
+    return ok, msg
+
+
 # --------------------------------------------------------- EatZen / BPM
 # The server owns the food table and the parser, so the app stays thin and
 # the phone and the browser can never disagree about a sodium figure.
@@ -419,7 +522,7 @@ def _post_qs(path, params, raw_body=None, timeout=15):
         with config._opener.open(req, timeout=timeout) as r:
             return json.loads(r.read().decode() or "{}")
     except Exception as e:
-        config._remember(config.SERVER_URL, False, config._describe(e))
+        config._remember(config.SERVER_URL, False, _describe_failure(e))
         return None
 
 

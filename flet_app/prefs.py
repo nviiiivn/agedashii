@@ -1,0 +1,424 @@
+"""Owner-editable app preferences: layout, panels, units, targets.
+
+The website has a GridStack editor; the app had a theme picker. This module
+is the app's answer - the stored side of it. Settings writes here, and
+everything else *reads* here through the small sync API at the top
+(`visible_pages`, `bottom_bar_pages`, `home_panels`, `unit_system`, ...).
+
+Two rules shape the design:
+
+**Reads are synchronous and never fail.** Flet builds a page with ordinary
+sync calls, so a read that had to await storage could not be used where it is
+needed. Values therefore live in a module-level cache that starts at the
+shipped defaults; `load()` fills it in once, and every read is served from
+memory afterwards. Before `load()` runs - and on any device where storage is
+unavailable - reads return the defaults instead of raising. This mirrors
+`config.py`, which guards its load/save the same way and for the same reason.
+
+**Stored values are never trusted.** A saved order can name a page that no
+longer exists, miss one that was added since, or arrive as the wrong type
+entirely. Every list is run through `sanitise_order()` on the way in, so a
+stale or corrupt preference degrades to "the default order" rather than to a
+navigation bar with a missing tab or a KeyError at startup.
+
+SharedPreferences only round-trips str/int/float/bool/list[str], so hidden
+sets and orders are stored as lists of strings, not as dicts or sets.
+"""
+import re
+
+from . import config
+
+# ---------------------------------------------------------------- keys
+# All namespaced "nvii.*", alongside config.KEY_URL / KEY_CANDIDATES.
+KEY_PAGE_ORDER = "nvii.page_order"
+KEY_PAGES_HIDDEN = "nvii.pages_hidden"
+KEY_BOTTOM_PAGES = "nvii.bottom_pages"
+KEY_HOME_ORDER = "nvii.home_order"
+KEY_HOME_HIDDEN = "nvii.home_hidden"
+KEY_UNITS = "nvii.units"
+KEY_SODIUM_TARGET = "nvii.sodium_target"
+KEY_REFRESH_SECS = "nvii.refresh_secs"
+
+# ---------------------------------------------------------------- catalogue
+# The nine pages, in shipped order. Deliberately a copy of main.PAGES rather
+# than an import: main.py calls ft.run() at import time, so importing it from
+# a library module would start the app.
+PAGE_KEYS = ["home", "lab", "tools", "garage", "wat2do",
+             "trips", "weather", "extras", "settings"]
+
+PAGE_LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools", "garage": "Garage",
+               "wat2do": "Wat2Do", "trips": "Trips", "weather": "Weather",
+               "extras": "Extras", "settings": "Settings"}
+
+# Settings cannot be hidden: it is the only way back from a layout you regret.
+PROTECTED_PAGES = {"settings"}
+
+DEFAULT_BOTTOM = ["home", "lab", "tools", "garage", "wat2do"]
+
+# A NavigationBar also carries a "More" destination, so five is the most that
+# fits on a phone before the labels start eliding.
+MAX_BOTTOM = 5
+
+# The panels pages/home.py stacks, in the order it stacks them.
+HOME_PANEL_KEYS = ["greeting", "weather", "nowplaying", "machines", "actions", "wat2do"]
+
+HOME_PANEL_LABELS = {"greeting": "Greeting & date", "weather": "Weather",
+                     "nowplaying": "Now playing", "machines": "Machines",
+                     "actions": "Quick actions", "wat2do": "Wat2Do progress"}
+
+UNIT_SYSTEMS = ("imperial", "metric")
+SODIUM_TARGETS = (1500, 2300)
+
+# Seconds of cached-response reuse. 30 is what api.TTL ships with; 0 means
+# "only when I pull to refresh".
+REFRESH_CHOICES = (0, 15, 30, 60, 300, 900)
+DEFAULT_REFRESH = 30
+
+
+def _defaults():
+    return {
+        KEY_PAGE_ORDER: list(PAGE_KEYS),
+        KEY_PAGES_HIDDEN: [],
+        KEY_BOTTOM_PAGES: list(DEFAULT_BOTTOM),
+        KEY_HOME_ORDER: list(HOME_PANEL_KEYS),
+        KEY_HOME_HIDDEN: [],
+        KEY_UNITS: "imperial",
+        KEY_SODIUM_TARGET: 2300,
+        KEY_REFRESH_SECS: DEFAULT_REFRESH,
+    }
+
+
+_V = _defaults()
+
+# False until load() has been given a chance. Settings uses it to decide
+# whether to hydrate itself; nothing else should need it.
+LOADED = False
+
+
+# ---------------------------------------------------------------- pure logic
+def sanitise_order(saved, canonical):
+    """Return `canonical`'s members ordered by `saved`, unknowns dropped.
+
+    The two failure modes this exists to absorb: a preference saved by an
+    older build that names a page since removed, and one saved before a page
+    was added. Unknown names are dropped, missing ones are appended in their
+    canonical position, and a saved value that is not a list of strings is
+    ignored entirely.
+    """
+    order = []
+    if isinstance(saved, (list, tuple)):
+        for k in saved:
+            if isinstance(k, str) and k in canonical and k not in order:
+                order.append(k)
+    order += [k for k in canonical if k not in order]
+    return order
+
+
+def sanitise_set(saved, canonical):
+    """Return the members of `saved` that are real, in canonical order."""
+    chosen = set()
+    if isinstance(saved, (list, tuple)):
+        chosen = {k for k in saved if isinstance(k, str) and k in canonical}
+    return [k for k in canonical if k in chosen]
+
+
+def move(seq, key, delta):
+    """`seq` with `key` shifted `delta` places. Out-of-range moves are no-ops."""
+    out = list(seq)
+    if key not in out:
+        return out
+    i = out.index(key)
+    j = i + delta
+    if not (0 <= j < len(out)):
+        return out
+    out.insert(j, out.pop(i))
+    return out
+
+
+def _as_int(value, choices, fallback):
+    """Coerce a stored number to one of `choices`.
+
+    Storage backends are not consistent about whether an int comes back as an
+    int or as a string, so both are accepted; anything else falls back.
+    """
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return n if n in choices else fallback
+
+
+# ---------------------------------------------------------------- read API
+def page_order():
+    """All nine page keys in the owner's order, hidden ones included."""
+    return sanitise_order(_V.get(KEY_PAGE_ORDER), PAGE_KEYS)
+
+
+def hidden_pages():
+    """Page keys the owner has switched off. Never includes Settings."""
+    return [k for k in sanitise_set(_V.get(KEY_PAGES_HIDDEN), PAGE_KEYS)
+            if k not in PROTECTED_PAGES]
+
+
+def visible_pages():
+    """Pages to offer at all, in order. This is what the drawer should list."""
+    hidden = set(hidden_pages())
+    return [k for k in page_order() if k not in hidden]
+
+
+def bottom_bar_pages():
+    """Pages for the bottom navigation bar, in order, at most MAX_BOTTOM.
+
+    Hidden pages are filtered out, so switching a page off removes it from the
+    bar without a second edit. Never returns an empty list: a bar of nothing
+    but "More" is a dead end, so the first visible page stands in.
+    """
+    visible = visible_pages()
+    chosen = set(sanitise_set(_V.get(KEY_BOTTOM_PAGES), PAGE_KEYS))
+    bar = [k for k in visible if k in chosen][:MAX_BOTTOM]
+    if not bar and visible:
+        bar = visible[:1]
+    return bar
+
+
+def drawer_pages():
+    """Everything reachable from the drawer - the same set as visible_pages."""
+    return visible_pages()
+
+
+def home_panel_order():
+    """Every home panel key in the owner's order, hidden ones included."""
+    return sanitise_order(_V.get(KEY_HOME_ORDER), HOME_PANEL_KEYS)
+
+
+def hidden_home_panels():
+    return sanitise_set(_V.get(KEY_HOME_HIDDEN), HOME_PANEL_KEYS)
+
+
+def home_panels():
+    """Home panels to render, in order. Hidden ones are already removed."""
+    hidden = set(hidden_home_panels())
+    return [k for k in home_panel_order() if k not in hidden]
+
+
+def unit_system():
+    """'imperial' (mi, °F) or 'metric' (km, °C)."""
+    v = _V.get(KEY_UNITS)
+    return v if v in UNIT_SYSTEMS else "imperial"
+
+
+def distance_unit():
+    return "mi" if unit_system() == "imperial" else "km"
+
+
+def temperature_unit():
+    return "F" if unit_system() == "imperial" else "C"
+
+
+def sodium_target():
+    """The DASH sodium ceiling EatZen should start from, in mg (1500 or 2300)."""
+    return _as_int(_V.get(KEY_SODIUM_TARGET), SODIUM_TARGETS, 2300)
+
+
+def refresh_seconds():
+    """How long a cached server response stays good. 0 means manual only."""
+    return _as_int(_V.get(KEY_REFRESH_SECS), REFRESH_CHOICES, DEFAULT_REFRESH)
+
+
+def app_version():
+    """This client's version, read off the User-Agent it sends.
+
+    Taken from config.USER_AGENT rather than declared again here, so
+    Diagnostics can only ever show the version the server actually sees.
+    """
+    m = re.match(r"NVII-DASH/(\S+)", getattr(config, "USER_AGENT", "") or "")
+    return m.group(1) if m else "unknown"
+
+
+# ---------------------------------------------------------------- write API
+def set_page_order(order):
+    _V[KEY_PAGE_ORDER] = sanitise_order(order, PAGE_KEYS)
+
+
+def move_page(key, delta):
+    set_page_order(move(page_order(), key, delta))
+
+
+def set_page_hidden(key, hidden):
+    """Show or hide a page. Hiding a protected page is silently refused."""
+    if key not in PAGE_KEYS or (hidden and key in PROTECTED_PAGES):
+        return
+    current = set(hidden_pages())
+    if hidden:
+        current.add(key)
+    else:
+        current.discard(key)
+    _V[KEY_PAGES_HIDDEN] = [k for k in PAGE_KEYS if k in current]
+
+
+def set_in_bottom_bar(key, wanted):
+    """Add or remove a page from the bottom bar.
+
+    Adding past MAX_BOTTOM is refused rather than silently truncating a page
+    the owner already put there; the caller reports it.  Returns True if the
+    set changed.
+    """
+    if key not in PAGE_KEYS:
+        return False
+    current = sanitise_set(_V.get(KEY_BOTTOM_PAGES), PAGE_KEYS)
+    if wanted and key not in current:
+        if len(current) >= MAX_BOTTOM:
+            return False
+        current.append(key)
+    elif not wanted and key in current:
+        current.remove(key)
+    else:
+        return False
+    _V[KEY_BOTTOM_PAGES] = [k for k in PAGE_KEYS if k in set(current)]
+    return True
+
+
+def set_home_order(order):
+    _V[KEY_HOME_ORDER] = sanitise_order(order, HOME_PANEL_KEYS)
+
+
+def move_home_panel(key, delta):
+    set_home_order(move(home_panel_order(), key, delta))
+
+
+def set_home_panel_hidden(key, hidden):
+    if key not in HOME_PANEL_KEYS:
+        return
+    current = set(hidden_home_panels())
+    if hidden:
+        current.add(key)
+    else:
+        current.discard(key)
+    _V[KEY_HOME_HIDDEN] = [k for k in HOME_PANEL_KEYS if k in current]
+
+
+def set_unit_system(value):
+    if value in UNIT_SYSTEMS:
+        _V[KEY_UNITS] = value
+
+
+def set_sodium_target(value):
+    _V[KEY_SODIUM_TARGET] = _as_int(value, SODIUM_TARGETS, sodium_target())
+
+
+def set_refresh_seconds(value):
+    _V[KEY_REFRESH_SECS] = _as_int(value, REFRESH_CHOICES, refresh_seconds())
+    apply_runtime()
+
+
+def reset_layout():
+    """Put pages and home panels back the way the app ships. Units stay."""
+    d = _defaults()
+    for k in (KEY_PAGE_ORDER, KEY_PAGES_HIDDEN, KEY_BOTTOM_PAGES,
+              KEY_HOME_ORDER, KEY_HOME_HIDDEN):
+        _V[k] = d[k]
+
+
+def reset_all():
+    _V.clear()
+    _V.update(_defaults())
+    apply_runtime()
+
+
+def apply_runtime():
+    """Push the settings that other modules read as plain module state.
+
+    Only api.TTL today. Guarded because api imports are heavier than this
+    module's and a future refactor may rename it - a missing attribute should
+    cost the refresh setting, not the app.
+    """
+    try:
+        from . import api
+        api.TTL = refresh_seconds()
+    except Exception:  # noqa: BLE001 - a settings knob is never worth a crash
+        pass
+
+
+# ---------------------------------------------------------------- persistence
+async def load(prefs):
+    """Fill the cache from storage. Returns True if anything was read.
+
+    `prefs` is a flet SharedPreferences (or None, in tests and before the
+    service is registered). Every read is individually guarded: one key that
+    a platform refuses must not cost the other seven.
+    """
+    global LOADED
+    LOADED = True
+    if prefs is None:
+        return False
+    read_any = False
+    for key in _defaults():
+        try:
+            value = await prefs.get(key)
+        except Exception:  # noqa: BLE001 - storage is optional, not required
+            continue
+        if value is None:
+            continue
+        read_any = True
+        _V[key] = value
+    # Normalise once, here, so every later read is cheap and the stored shape
+    # can never surprise a caller.
+    _V[KEY_PAGE_ORDER] = page_order()
+    _V[KEY_PAGES_HIDDEN] = hidden_pages()
+    _V[KEY_BOTTOM_PAGES] = sanitise_set(_V.get(KEY_BOTTOM_PAGES), PAGE_KEYS)
+    _V[KEY_HOME_ORDER] = home_panel_order()
+    _V[KEY_HOME_HIDDEN] = hidden_home_panels()
+    _V[KEY_UNITS] = unit_system()
+    _V[KEY_SODIUM_TARGET] = sodium_target()
+    _V[KEY_REFRESH_SECS] = refresh_seconds()
+    apply_runtime()
+    return read_any
+
+
+async def save(prefs):
+    """Persist every preference. Returns False rather than raising."""
+    if prefs is None:
+        return False
+    payload = {
+        KEY_PAGE_ORDER: page_order(),
+        KEY_PAGES_HIDDEN: hidden_pages(),
+        KEY_BOTTOM_PAGES: sanitise_set(_V.get(KEY_BOTTOM_PAGES), PAGE_KEYS),
+        KEY_HOME_ORDER: home_panel_order(),
+        KEY_HOME_HIDDEN: hidden_home_panels(),
+        KEY_UNITS: unit_system(),
+        KEY_SODIUM_TARGET: sodium_target(),
+        KEY_REFRESH_SECS: refresh_seconds(),
+    }
+    try:
+        for key, value in payload.items():
+            await prefs.set(key, value)
+        return True
+    except Exception:  # noqa: BLE001 - report it in the UI, do not crash
+        return False
+
+
+def hydrate(page, store, on_done=None):
+    """Load once, in the background, from a synchronous build().
+
+    Needed because `load()` is async but Flet builds a page synchronously.
+    Startup should call `await load(S.prefs)` before the first render and
+    make this a no-op; this is the fallback for when it has not, and for a
+    Settings page opened in a harness with no event loop at all. Returns True
+    if a load was actually scheduled.
+    """
+    if LOADED or store is None:
+        return False
+    run_task = getattr(page, "run_task", None)
+    if not callable(run_task):
+        return False
+
+    async def job():
+        await load(store)
+        if on_done:
+            on_done()
+
+    try:
+        run_task(job)
+        return True
+    except Exception:  # noqa: BLE001 - no loop, stub page: fall back to defaults
+        return False

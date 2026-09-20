@@ -89,8 +89,11 @@ def _mechanic(page):
                     sub((r.get("created_at") or "")[:10], 10)]))
         page.update()
 
-    bike.on_change = load_records
-    rtype.on_change = load_records
+    # Flet 0.86 Dropdown fires on_select, not on_change. Assigning on_change
+    # is silently accepted and never called, so switching bike or record type
+    # left the list below showing the previous selection's records.
+    bike.on_select = load_records
+    rtype.on_select = load_records
     load_records()
 
     async def add(e):

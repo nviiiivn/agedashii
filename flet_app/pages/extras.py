@@ -4,8 +4,10 @@ from .. import api as M
 from .lab import _tabs
 
 def build(page):
+    # XNAV moved to Trips, where the rest of the ride pipeline lives; the
+    # copy here was a mock that could never record anything.
     return _tabs(page, [("Projects", _projects()), ("AI", _ai(page)),
-                        ("XNAV", _xnav()), ("Obligations", _obl())])
+                        ("Obligations", _obl())])
 
 def _projects():
     p = PAL()

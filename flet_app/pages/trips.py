@@ -3,9 +3,14 @@ from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
 from .. import api as M
 from .lab import _tabs
 from ._forms import Writer, offline_banner, rebuilder
+from . import xnav
 
 def build(page):
-    return _tabs(page, [("Selekt", _trips(page)), ("Produce", _produce()), ("Rides", _rides())])
+    # The ride pipeline in the order it is actually used: pick the route,
+    # edit it, ride it, record it. XNAV lived under Extras, which had
+    # nothing to do with rides.
+    return _tabs(page, [("Selekt", _trips(page)), ("Produce", _produce()),
+                        ("Rides", _rides()), ("XNAV", xnav.build(page))])
 
 def _trips(page):
     """Trip list, plus creating one.

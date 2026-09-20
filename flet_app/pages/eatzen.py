@@ -17,6 +17,7 @@ import time
 import flet as ft
 
 from .. import api as M
+from .. import prefs
 from ..ui import PAL, card, chip, sub, title
 from ._forms import Writer, offline_banner, rebuilder
 
@@ -85,7 +86,10 @@ def build_eatzen(page):
     if not M.STATUS_LIVE():
         return ft.Column(spacing=8, controls=[offline_banner(p, "EatZen")])
 
-    target = ft.Dropdown(value="2300", dense=True, filled=True, text_size=12, width=190,
+    # Default comes from Settings rather than being hard-coded, so the
+    # strict-DASH choice is made once and respected everywhere.
+    target = ft.Dropdown(value=str(prefs.sodium_target()), dense=True, filled=True,
+                         text_size=12, width=190,
                          border_color=p["border"], color=p["text"],
                          options=[ft.dropdown.Option("1500", "1500 mg (strict DASH)"),
                                   ft.dropdown.Option("2300", "2300 mg (DASH)")])
@@ -363,7 +367,9 @@ def build_eatzen(page):
 
     recalc()
     paint()
-    target.on_change = lambda e: (recalc(), page.update())
+    # Dropdown uses on_select in Flet 0.86; on_change never fires, so the
+    # total silently ignored the 1500/2300 mg switch.
+    target.on_select = lambda e: (recalc(), page.update())
 
     return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, controls=[
         card(ft.Column(spacing=8, controls=[
