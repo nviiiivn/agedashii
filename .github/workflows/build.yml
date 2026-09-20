@@ -113,14 +113,37 @@ jobs:
       - name: Build macOS app
         run: flet build macos --yes -o dist/macos
 
-      # `flet build ipa` is deliberately absent: it needs a provisioning
-      # profile and signing certificate from a paid Apple Developer Program
-      # account. The simulator build is unsigned and free, and is what can be
-      # produced here. Note the target is spelled with a hyphen; the previous
-      # workflow globbed build/ios_simulator (underscore) and so could never
-      # have found the output.
-      - name: Build iOS simulator app (unsigned)
-        run: flet build ios-simulator --yes -o dist/ios-simulator
+      # Unsigned iOS build for sideloading. With no provisioning profile
+      # configured, flet passes --no-codesign through to flutter
+      # (flet_cli/commands/build.py), which is exactly what AltStore /
+      # Sideloadly want: they re-sign with a free Apple ID on the way in. No
+      # paid Developer Program account involved.
+      - name: Build iOS (unsigned, for sideloading)
+        run: flet build ipa --yes -o dist/ipa
+
+      # flutter build ipa --no-codesign often stops at the .app/.xcarchive and
+      # never emits a .ipa, because packaging is normally the signing step's
+      # job. Sideloaders want a .ipa, which is just a zip with the app inside
+      # Payload/ - so build one if it is missing.
+      - name: Package .ipa if the unsigned build only produced an .app
+        run: |
+          set -eu
+          if find dist/ipa -name '*.ipa' | grep -q .; then
+            echo "flet already produced an .ipa, nothing to do"
+            exit 0
+          fi
+          app="$(find dist/ipa -maxdepth 4 -name 'Runner.app' -o -maxdepth 4 -name '*.app' | head -1)"
+          if [ -z "$app" ]; then
+            echo "no .app found under dist/ipa - listing what is there:" >&2
+            find dist/ipa | head -40 >&2
+            exit 1
+          fi
+          echo "packaging $app"
+          staging="$(mktemp -d)"
+          mkdir -p "$staging/Payload"
+          cp -R "$app" "$staging/Payload/"
+          (cd "$staging" && zip -qry nvii-dash-unsigned.ipa Payload)
+          mv "$staging/nvii-dash-unsigned.ipa" dist/ipa/
 
       - name: List build output
         run: |
@@ -135,6 +158,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nvii-dash-ios-simulator
-          path: dist/ios-simulator/**
+          name: nvii-dash-ios-unsigned-ipa
+          path: dist/ipa/**/*.ipa
           if-no-files-found: error

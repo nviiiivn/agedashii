@@ -103,13 +103,20 @@ CI (`.github/workflows/build.yml`) builds everything on GitHub runners —
 |---|---|---|
 | `nvii-dash-android-apk` | ubuntu | release APK |
 | `nvii-dash-linux-x64` | ubuntu | needs GTK/clang deps, installed by the workflow |
-| `nvii-dash-web-pwa` | ubuntu | also the **free route onto an iPhone** — serve it and Add to Home Screen |
+| `nvii-dash-web-pwa` | ubuntu | browser build — also the only way to preview on the Pi |
 | `nvii-dash-macos` | macos | unsigned; right-click → Open on first launch |
-| `nvii-dash-ios-simulator` | macos | unsigned, simulator only |
+| `nvii-dash-ios-unsigned-ipa` | macos | unsigned .ipa for sideloading |
 
-`flet build ipa` is deliberately not in CI: installing on a real iPhone requires
-a provisioning profile and signing certificate from a paid Apple Developer
-Program account ($99/yr). The PWA is the $0 alternative.
+**iOS:** the .ipa is built unsigned — with no provisioning profile configured,
+flet passes `--no-codesign` through to flutter. Sideload it with AltStore or
+Sideloadly, which re-sign with a free Apple ID; no paid Apple Developer Program
+account needed. (Free certs expire every 7 days, so the app needs periodic
+re-signing — AltStore does that automatically over wifi.)
+
+`flutter build ipa --no-codesign` frequently stops at the `.app` and never
+emits a `.ipa`, since packaging is normally part of signing. The workflow
+detects that and zips the app into `Payload/` itself, so the artifact is always
+a sideload-ready `.ipa`.
 
 Note on an earlier green build: run `34007945982` reported success for both jobs
 and uploaded **zero artifacts**, because the upload globs did not match flet's
