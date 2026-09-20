@@ -1,10 +1,51 @@
 # NVII-DASH
 
-Mobile companion app for [dashbored](https://git.alola.lol) — nvii's single-file homelab dashboard. Built with [Flet](https://flet.dev) (Python → Flutter). Same codebase compiles to Android APK, Linux desktop, and runs as a web preview.
+Companion app for [dashbored](https://git.alola.lol) — nvii's homelab dashboard.
+Built with [Flet](https://flet.dev) (Python → Flutter). One codebase builds an
+Android APK, a Linux x64 desktop app, a macOS app, an unsigned iOS simulator
+build, and a web/PWA bundle.
+
+## Pointing it at your server
+
+The app is a client; it needs a dashbored server to talk to. Set the address in
+**Settings → Server** — it is saved on the device (Flet `SharedPreferences`) and
+reused on next launch. No rebuild, no editing source.
+
+On startup the app tries each known address in order and adopts the first that
+answers, so a saved address that has gone stale falls back to the defaults in
+`flet_app/config.py` rather than hanging.
+
+### Reaching it from outside the house
+
+| Where you are | Works? | How |
+|---|---|---|
+| On the LAN | yes | `http://192.0.2.21:6900` direct |
+| On WireGuard (`vpn.alola.lol`) | yes | same LAN address, through the tunnel |
+| Cellular / anywhere else | **no** | see below |
+
+`iamprettyfamous.online` will not work as the app's server address. Two separate
+walls, both measured on 2026-09-19:
+
+1. **Cloudflare** 403s the default `Python-urllib/3.x` user agent at the edge,
+   before the request reaches the origin. The app therefore identifies itself as
+   `NVII-DASH/1.0`, which passes.
+2. **VoidAuth** forward-auth then 302s *every* path to
+   `auth.iamprettyfamous.online` — `/api/dashboard` and `/api/config` included.
+   There is no token or header the app can send to get past this today.
+
+So off-LAN use means the VPN. Settings reports the difference explicitly
+("blocked by auth" vs "unreachable") rather than a generic offline state,
+because the app silently showing sample data is the failure this is designed to
+make visible.
+
+Giving the app real off-LAN access would mean adding a token-auth path on the
+dashbored server and a Cloudflare rule to let it through — a deliberate decision
+about exposing the API publicly, not something to switch on casually.
 
 ## What's live vs sample
 
-The app talks to a running dashbored server on your LAN (`http://192.0.2.21:6900` by default — edit `BASE` in `flet_app/api.py`). If the server is unreachable, pages fall back to bundled mock data so the UI never blanks.
+If the server is unreachable, pages fall back to bundled mock data so the UI
+never blanks. **Settings → Server** shows which one you are looking at.
 
 | Page | Live from server | Sample / placeholder |
 |---|---|---|
@@ -16,11 +57,20 @@ The app talks to a running dashbored server on your LAN (`http://192.0.2.21:6900
 | Garage | bikes, specs, mileage/service stats | Flipper deals (sample), Mechanic (soon) |
 | Wat2Do | full checklist — **toggles and sliders save to the server** | date chevrons (not wired yet) |
 | Extras | projects, **AI chat (real replies via OpenRouter)** | XNAV (soon), obligations (mock) |
-| Settings | all 21 themes from the dashboard, exact CSS colors | theme applies live (per-session) |
+| Settings | server address + status, all 21 themes | theme applies live (per-session) |
 
-## Quick start (web preview)
+## Tests
 
-Python 3.10+:
+```bash
+python3 -m unittest discover -s tests -v    # 21 tests, no network needed
+```
+
+They cover server discovery and persistence: URL normalising, failover across
+candidates, storage round-trips, and — most importantly — that each failure mode
+is reported distinctly, since "unreachable", "behind a login" and "blocked at
+the edge" need completely different fixes.
+
+## Running it locally
 
 ```bash
 python3 -m venv .venv
@@ -28,34 +78,73 @@ python3 -m venv .venv
 .venv/bin/python main.py                    # serves on :8550
 ```
 
-**Raspberry Pi note:** the piwheels mirror ships a broken `flet-web` wheel (code only, no browser runtime). Fix by force-installing the real wheel:
+**This does not currently work on an aarch64 Raspberry Pi**, and the cause is
+not what a previous version of this README claimed. It is not a piwheels
+problem, and force-reinstalling from pypi.org does not fix it:
+`flet_web-0.86.5-py3-none-any.whl` fetched straight from pypi.org with
+`--no-cache-dir` is 24 kB and contains **zero** files under `flet_web/web/`
+(verified 2026-09-19). The Flutter web client is simply not shipped in the
+0.86.5 wheel, so the server starts and then 500s with
+`RuntimeError: Web root path not found`.
 
-```bash
-.venv/bin/pip install --force-reinstall --no-deps --index-url https://pypi.org/simple flet-web==0.86.5
-```
+`flet run --web` is no better here — it imports `flet_desktop`, which is not
+installed and is a 6 kB stub that fetches a platform binary at runtime.
+
+Neither affects the actual deliverables: `flet build` in CI downloads its own
+Flutter SDK and produces real apps. To preview on the Pi, use the CI **web/PWA**
+artifact and serve the folder statically.
 
 ## Building
 
-**Android (on the Pi / arm64):** Google ships no arm64-host `gen_snapshot` or `aapt2` for Linux, so a release-AOT build needs two workarounds this repo has already applied on the build machine:
+CI (`.github/workflows/build.yml`) builds everything on GitHub runners —
+`workflow_dispatch` to run it by hand:
 
-- debug build via `flet build apk --flutter-build-args=--debug` (skips AOT), and
-- `android.aapt2FromMavenOverride=<arm64 aapt2>` in `build/flutter/android/gradle.properties` (Debian's arm64 aapt).
+| Artifact | Runner | Notes |
+|---|---|---|
+| `nvii-dash-android-apk` | ubuntu | release APK |
+| `nvii-dash-linux-x64` | ubuntu | needs GTK/clang deps, installed by the workflow |
+| `nvii-dash-web-pwa` | ubuntu | also the **free route onto an iPhone** — serve it and Add to Home Screen |
+| `nvii-dash-macos` | macos | unsigned; right-click → Open on first launch |
+| `nvii-dash-ios-simulator` | macos | unsigned, simulator only |
 
-The committed CI (`.github/workflows/build.yml`) builds a **release APK on GitHub's x86 runners** plus macOS `.app` and unsigned iOS `.ipa` on macos runners — use that for the optimized APK. Installing the iOS build additionally requires an Apple Developer account ($99/yr).
+`flet build ipa` is deliberately not in CI: installing on a real iPhone requires
+a provisioning profile and signing certificate from a paid Apple Developer
+Program account ($99/yr). The PWA is the $0 alternative.
 
-**Linux desktop:** `flet build linux` (needs clang/cmake/GTK dev packages on the build machine; CI covers it).
+Note on an earlier green build: run `34007945982` reported success for both jobs
+and uploaded **zero artifacts**, because the upload globs did not match flet's
+output paths and `if-no-files-found` defaulted to a warning. Every build now
+writes to an explicit `-o dist/<target>` and every upload uses
+`if-no-files-found: error`, so an empty artifact fails the run instead of
+quietly shipping nothing.
+
+**Building on the Pi directly (arm64):** Google ships no arm64-host
+`gen_snapshot` or `aapt2` for Linux, so a release AOT build needs a debug build
+(`flet build apk --flutter-build-args=--debug`, skipping AOT) plus
+`android.aapt2FromMavenOverride=<arm64 aapt2>` in
+`build/flutter/android/gradle.properties`. Use CI for a real release APK.
 
 ## Code map
 
-- `main.py` — nav shell: topbar (drawer, brand, dots), bottom bar, page router
-- `flet_app/api.py` — the client: per-endpoint adapters reshaping server JSON, 30s TTL cache, mock fallback, AI chat
-- `flet_app/mock.py` — mock data, same shapes as the adapters (+ no-op stubs so a full mock-swap runs)
-- `flet_app/theme_data.py` — 21 themes extracted 1:1 from the dashboard's CSS by `tools/gen-themes.py`
-- `flet_app/ui.py` — theme state, card/chip/dot helpers, `apply_theme`
+- `main.py` — async entry point: loads the saved server address before first
+  paint, then the nav shell (topbar, drawer, bottom bar, page router)
+- `flet_app/config.py` — which server to talk to: candidates, probing, failure
+  diagnosis, `SharedPreferences` persistence
+- `flet_app/api.py` — the client: per-endpoint adapters reshaping server JSON,
+  30s TTL cache, mock fallback, AI chat
+- `flet_app/mock.py` — mock data, same shapes as the adapters
+- `flet_app/theme_data.py` — 21 themes extracted 1:1 from the dashboard's CSS by
+  `tools/gen-themes.py`
+- `flet_app/ui.py` — theme + app state, card/chip/dot helpers, `apply_theme`
 - `flet_app/pages/` — one module per page; tabbed pages share `lab._tabs`
+- `tests/` — stdlib unittest
 
-Architecture: pages read only the `M` interface — `from .. import api as M`. Swap `api` for `mock` and the app renders fully offline (writes degrade to no-ops).
+Architecture: pages read only the `M` interface — `from .. import api as M`.
+Swap `api` for `mock` and the app renders fully offline (writes become no-ops).
 
-## Review
+## Versions
 
-Full 8-axis code-ultrareview on this repo: verdict **Needs work** (8 red / 24 orange). The reds (drawer crash, stale-data pinning, progress-bar crashes, shape drift) were fixed in commits `d7b6ad9` and the second round; remaining oranges are tracked (threading, lazy tabs, honest-demo labels landed). Report: see review artifacts in the build history.
+Flet `0.86.5` and Flutter `3.44.8` are pinned together in `requirements.txt` and
+the workflow; bump both at once. The app uses the 0.86 API (`ft.run`,
+`SharedPreferences` as a registered service), so an unpinned `pip install flet`
+will eventually break it.

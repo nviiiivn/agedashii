@@ -4,6 +4,9 @@ from .theme_data import THEMES, THEME_NAMES, DEFAULT
 class State:
     theme = DEFAULT
     page = None
+    # Flet SharedPreferences instance, set once in main(). Held here because a
+    # service is unregistered as soon as it stops being strongly referenced.
+    prefs = None
 
 S = State()
 

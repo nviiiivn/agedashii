@@ -8,9 +8,8 @@ import json
 import time
 import urllib.request
 
-from . import mock
+from . import config, mock
 
-BASE = "http://192.0.2.21:6900"
 TTL = 30
 _cache = {}
 
@@ -21,26 +20,38 @@ WMO = {0: "clear", 1: "partly cloudy", 2: "partly cloudy", 3: "overcast",
 
 
 def _get(path, timeout=2.5):
+    """GET a JSON path from the configured server, or None.
+
+    The server address is read from config on every call rather than captured
+    at import, so changing it in Settings takes effect immediately. Redirects
+    are not followed - a 302 means an auth gateway intercepted us, and
+    following it would hand back an HTML login page that fails JSON parsing
+    and looks identical to the server being down.
+    """
     hit = _cache.get(path)
     if hit and time.time() - hit[0] < TTL:
         return hit[1]
     try:
-        with urllib.request.urlopen(BASE + path, timeout=timeout) as r:
+        with config._opener.open(config.SERVER_URL + path, timeout=timeout) as r:
             data = json.loads(r.read().decode())
         _cache[path] = (time.time(), data)
+        config._remember(config.SERVER_URL, True, "connected")
         return data
-    except Exception:
+    except Exception as e:
+        config._remember(config.SERVER_URL, False, config._describe(e))
         return None
 
 
 def _post(path, payload, timeout=6):
+    """POST JSON to the configured server, or None. See _get on redirects."""
     try:
         req = urllib.request.Request(
-            BASE + path, data=json.dumps(payload).encode(),
+            config.SERVER_URL + path, data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with config._opener.open(req, timeout=timeout) as r:
             return json.loads(r.read().decode() or "{}")
-    except Exception:
+    except Exception as e:
+        config._remember(config.SERVER_URL, False, config._describe(e))
         return None
 
 

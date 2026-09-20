@@ -3,6 +3,7 @@ from flet_app.ui import PAL, PAD, BRD, S, apply_theme, dot
 from flet_app.theme_data import THEMES
 from flet_app.pages import home, lab, tools, trips, weather, garage, wat2do, extras, settings
 from flet_app import api as M
+from flet_app import config
 
 ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 MAIN = ["home", "lab", "tools", "garage", "wat2do"]
@@ -13,8 +14,17 @@ ICONS = {"home": ft.Icons.HOME, "lab": ft.Icons.DNS, "tools": ft.Icons.CONSTRUCT
          "garage": ft.Icons.TWO_WHEELER, "wat2do": ft.Icons.CHECK_CIRCLE, "trips": ft.Icons.MAP,
          "weather": ft.Icons.CLOUD, "extras": ft.Icons.WIDGETS, "settings": ft.Icons.SETTINGS}
 
-def main(page):
+async def main(page):
     apply_theme(page)
+
+    # Persistent storage is a Flet *service*: constructing it inside the page
+    # context registers it, and it is unregistered again the moment nothing
+    # holds a strong reference - hence parking it on S rather than a local.
+    S.prefs = ft.SharedPreferences()
+    # Restore the saved server address and confirm it still answers before the
+    # first screen paints, so pages do not flash sample data then swap.
+    await config.load(S.prefs)
+
     body = ft.Container(expand=True, padding=PAD(12, 12))
 
     def brand_chip():
@@ -105,4 +115,8 @@ def main(page):
 
     render("home")
 
-ft.app(main, view=None, port=8550)
+# ft.app() is deprecated since 0.80 and removed in 0.90; ft.run() is the same
+# call. view=None keeps this headless (serves over HTTP) rather than trying to
+# open a desktop window - this host is a headless Pi. For a desktop window use
+# view=ft.AppView.FLET_APP, which is what `flet build linux/macos` produces.
+ft.run(main, view=None, port=8550)
