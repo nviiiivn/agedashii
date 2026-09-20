@@ -41,6 +41,24 @@ def _num(value):
         return None
 
 
+def _show(page, dlg):
+    """Open a dialog across Flet versions.
+
+    ft.Page has no .open()/.close() in 0.86 - they are show_dialog() and
+    pop_dialog(). Calling the wrong one raises AttributeError the moment the
+    dialog opens, which is how the "From label" form was broken.
+    """
+    (getattr(page, "show_dialog", None) or getattr(page, "open"))(dlg)
+
+
+def _dismiss(page, dlg):
+    fn = getattr(page, "pop_dialog", None)
+    if fn is not None:
+        fn()
+    else:
+        getattr(page, "close")(dlg)
+
+
 def _blank():
     return {"food": "", "qty": "", "unit": "", "na": "", "addsug": "", "idk": False,
             "res": None}
@@ -260,7 +278,7 @@ def build_eatzen(page):
                     row["unit"] = unit
                 row["idk"] = False
                 row["res"] = None
-                page.close(dlg)
+                _dismiss(page, dlg)
                 recalc(); paint()
             page.update()
 
@@ -273,9 +291,9 @@ def build_eatzen(page):
                                   ft.Row(spacing=6, wrap=True, controls=[f_g, f_n]),
                                   ft.Row(spacing=6, wrap=True, controls=[f_u, f_na]),
                                   f_as, preview]),
-            actions=[ft.TextButton("Cancel", on_click=lambda e: page.close(dlg)),
+            actions=[ft.TextButton("Cancel", on_click=lambda e: _dismiss(page, dlg)),
                      ft.FilledButton("Save", on_click=save)])
-        page.open(dlg)
+        _show(page, dlg)
         show_maths()
 
     sentence = ft.TextField(hint_text="1 hardboiled egg, 4oz portobello, 1 tbsp butter",

@@ -603,12 +603,23 @@ _POI_TTL = 30 * 60
 POI_CHUNK = 3
 
 
-def _overpass_once(cats, radius, timeout):
-    """One Overpass round trip, cached 30 min. Returns elements or None."""
-    key = (",".join(sorted(c["id"] for c in cats)), radius)
-    hit = _POI_CACHE.get(key)
+def _poi_key(cats, radius):
+    return (",".join(sorted(c["id"] for c in cats)), radius)
+
+
+def _poi_cached(cats, radius):
+    hit = _POI_CACHE.get(_poi_key(cats, radius))
     if hit and time.time() - hit[0] < _POI_TTL:
         return hit[1]
+    return None
+
+
+def _overpass_once(cats, radius, timeout):
+    """One Overpass round trip, cached 30 min. Returns elements or None."""
+    key = _poi_key(cats, radius)
+    cached = _poi_cached(cats, radius)
+    if cached is not None:
+        return cached
     ql = build_overpass_ql(cats, radius)
     req = urllib.request.Request(
         config.SERVER_URL + "/api/overpass", data=ql.encode(), method="POST",
@@ -625,20 +636,29 @@ def _overpass_once(cats, radius, timeout):
     return elems
 
 
-def overpass(cats, radius, timeout=75, chunk=POI_CHUNK):
-    """POIs around home, in chunks.
+def overpass(cats, radius, timeout=35, chunk=POI_CHUNK, budget=80):
+    """POIs around home, in chunks, within a time budget.
 
     Returns ``(elements, failed_ids)``. ``elements`` is None only when every
     chunk failed; otherwise it is what came back and ``failed_ids`` names the
     categories that did not, so the page can say the list is short rather than
     pretend it is complete.
+
+    The budget matters because Overpass queues requests when it is busy: a
+    wide scan can sit for a minute per chunk. Better a short list now, named
+    as short, than a spinner that never resolves.
     """
     if not cats:
         return [], []
+    deadline = time.time() + budget
     out, failed, any_ok = [], [], False
     for i in range(0, len(cats), max(1, chunk)):
         group = cats[i:i + max(1, chunk)]
-        got = _overpass_once(group, radius, timeout)
+        got = _poi_cached(group, radius)        # cached chunks are free
+        if got is None:
+            left = deadline - time.time()
+            got = (_overpass_once(group, radius, min(timeout, max(5.0, left)))
+                   if left > 0 else None)
         if got is None:
             failed.extend(c["id"] for c in group)
         else:

@@ -62,6 +62,8 @@ _S = {
     "route": [],        # decoded route geometry, [(lat, lon), ...]
     "route_color": "#3fb950",
     "today": None,      # {'events', 'thrift', 'movies', 'fresh'}
+    "poi_note": "",     # what the last scan said, so a repaint keeps saying it
+    "mission_note": "",
 }
 
 
@@ -377,6 +379,27 @@ def build(page):
         route_line.coordinates = [_ll(a, b) for a, b in _S["route"]]
         route_line.color = _S["route_color"]
 
+    async def fit(points, pad=1.35, max_zoom=16):
+        """Stand-in for Leaflet's fitBounds, which flet-map does not expose.
+
+        flet-map can move and zoom but not fit a bounding box after the fact,
+        so the zoom is derived from the span: at zoom z a 256 px tile spans
+        360/2^z degrees of longitude, and the map here is roughly 1.6 tiles
+        wide. Approximate on purpose - it beats leaving the map on the wrong
+        continent.
+        """
+        if not MAPS_AVAILABLE or not points:
+            return
+        lats = [a for a, _ in points]
+        lons = [b for _, b in points]
+        centre = ((min(lats) + max(lats)) / 2, (min(lons) + max(lons)) / 2)
+        span = max(max(lons) - min(lons), (max(lats) - min(lats)) / 0.7, 1e-4) * pad
+        zoom = max(3, min(max_zoom, math.log2(360.0 * 1.6 / span)))
+        try:
+            await the_map.move_to(destination=_ll(*centre), zoom=zoom)
+        except Exception:          # noqa: BLE001 - map not on screen yet
+            pass
+
     async def draw_route(lat, lon, costing, colour):
         status.value = "routing..."
         status.color = p["text2"]
@@ -392,11 +415,7 @@ def build(page):
         say(True, f"{round(r['minutes'])} min "
                   f"{'ride' if costing == 'motorcycle' else 'walk'} "
                   f"· {r['miles']:.1f} mi")
-        if MAPS_AVAILABLE:
-            try:
-                await the_map.move_to(destination=_ll(lat, lon), zoom=15)
-            except Exception:      # noqa: BLE001 - map not on screen yet
-                pass
+        await fit(r["geometry"] or [(lat, lon)])
         repaint()
 
     # ------------------------------------------------------ POIs and modes
@@ -436,7 +455,6 @@ def build(page):
             return
         allowed = {c["id"] for c in cats}
         _S["spots"] = W.spots_from(elems, allowed_ids=allowed)[:60]
-        _S["poi_note"] = ""
         poi_note.value = (f"{len(_S['spots'])} spots within "
                           f"{W.miles(radius()):.1f} mi of home"
                           if _S["spots"] else "Nothing found nearby.")
@@ -447,6 +465,7 @@ def build(page):
         _S["poi_note"] = poi_note.value
         paint_markers()
         paint_spots()
+        await fit([W.HOME] + [(s["lat"], s["lon"]) for s in _S["spots"]])
         repaint()
 
     def paint_spots():
@@ -660,20 +679,23 @@ def build(page):
         repaint()
         venues = _S["venues"]
         if not venues:
-            venues = await asyncio.to_thread(
-                W.overpass,
-                [c for c in W.POI_CATS
-                 if c["id"] in (W.VENUE_CATS["indoor"] if ctx["indoor"]
-                                else W.VENUE_CATS["outdoor"] + W.VENUE_CATS["indoor"])],
-                ctx["radius"])
+            wanted = (W.VENUE_CATS["indoor"] if ctx["indoor"]
+                      else W.VENUE_CATS["outdoor"] + W.VENUE_CATS["indoor"])
+            venues, failed = await asyncio.to_thread(
+                W.overpass, [c for c in W.POI_CATS if c["id"] in wanted], ctx["radius"])
             if venues is None:
                 mission_note.value = "mission roll failed - Overpass did not answer."
+                _S["mission_note"] = mission_note.value
                 repaint()
                 return
+            if failed:
+                mission_note.value = ("rolling from a short list - Overpass dropped "
+                                      + ", ".join(W.CAT_BY_ID[i]["label"] for i in failed))
             _S["venues"] = venues
         venue = W.pick_venue(venues, ctx)
         if not venue:
             mission_note.value = "no venues found around home - try a wider day."
+            _S["mission_note"] = mission_note.value
             _S["mission"] = None
             paint_mission()
             repaint()
@@ -682,7 +704,9 @@ def build(page):
             deck = await asyncio.to_thread(W.missions)
             _S["deck"] = deck or []
         _S["mission"] = W.roll_mission(venue, _S["deck"], ctx, random)
-        mission_note.value = ""
+        if not mission_note.value.startswith("rolling from a short list"):
+            mission_note.value = ""
+        _S["mission_note"] = mission_note.value
         paint_mission()
         paint_markers()
         repaint()
@@ -811,13 +835,15 @@ def build(page):
     today_box = ft.Column(spacing=10)
     today_fresh = ft.Text("", size=10, color=p["text2"])
 
-    def today_rows(heading, rows, colour):
+    def today_rows(heading, rows, colour, empty="nothing listed"):
         out = [ft.Text(heading, size=11, weight=ft.FontWeight.W_600, color=p["text2"])]
         if rows is None:
             out.append(sub("loading...", 11))
             return out
         if not rows:
-            out.append(sub("nothing listed", 11))
+            # `empty` distinguishes "the server said there is nothing" from
+            # "the server never answered". Both show no rows; only one is news.
+            out.append(sub(empty, 11))
             return out
         for r in rows:
             out.append(ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -838,21 +864,27 @@ def build(page):
     def paint_today():
         t = _S["today"] or {}
         today_fresh.value = t.get("fresh", "")
+        gone = t.get("gone") or {}
         today_box.controls = [
-            ft.Column(spacing=3, controls=today_rows("Free today", t.get("events"),
-                                                     "#4dd0e1")),
-            ft.Column(spacing=3, controls=today_rows("Thrift near", t.get("thrift"),
-                                                     "#ef5350")),
-            ft.Column(spacing=3, controls=today_rows("Movie spots near", t.get("movies"),
-                                                     "#ff8fab")),
+            ft.Column(spacing=3, controls=today_rows(
+                "Free today", t.get("events"), "#4dd0e1",
+                gone.get("curated") or "no free events listed for today")),
+            ft.Column(spacing=3, controls=today_rows(
+                "Thrift near", t.get("thrift"), "#ef5350",
+                gone.get("thrift") or "no thrift spots within 15 mi")),
+            ft.Column(spacing=3, controls=today_rows(
+                "Movie spots near", t.get("movies"), "#ff8fab",
+                gone.get("curated") or "no movie spots listed")),
         ]
 
     async def load_today():
-        out = {"events": None, "thrift": None, "movies": None, "fresh": "loading"}
+        out = {"events": None, "thrift": None, "movies": None, "fresh": "loading",
+               "gone": {}}
         cur = await asyncio.to_thread(W.curated)
         today = W.today_str()
         if cur is None:
             out.update({"events": [], "movies": [], "fresh": "unavailable"})
+            out["gone"]["curated"] = "unavailable - the server did not answer"
         else:
             stale = cur.get("events_stale_h")
             out["fresh"] = "stale list" if (stale is None or stale > 30) else "fresh"
@@ -872,10 +904,13 @@ def build(page):
         paint_today()
         repaint()
         els = await asyncio.to_thread(W.thrift_near)
-        out["thrift"] = ([] if els is None else
-                         [{"name": (e.get("tags") or {}).get("name", "—"),
-                           "meta": f"{W.miles(e.get('dist') or 0):.1f}mi",
-                           "lat": e["lat"], "lon": e["lon"]} for e in els])
+        if els is None:
+            out["thrift"] = []
+            out["gone"]["thrift"] = "unavailable - the server did not answer"
+        else:
+            out["thrift"] = [{"name": (e.get("tags") or {}).get("name", "—"),
+                              "meta": f"{W.miles(e.get('dist') or 0):.1f}mi",
+                              "lat": e["lat"], "lon": e["lon"]} for e in els]
         _S["today"] = dict(out)
         paint_today()
         repaint()
@@ -896,9 +931,10 @@ def build(page):
     paint_markers()
     paint_today()
     cats_row.visible = _S["cats_open"]
-    if _S["spots"]:
-        poi_note.value = (f"{len(_S['spots'])} spots within "
-                          f"{W.miles(radius()):.1f} mi of home")
+    if _S["poi_note"]:
+        poi_note.value = _S["poi_note"]
+    if _S["mission_note"]:
+        mission_note.value = _S["mission_note"]
 
     if _S["today"] is None:
         _run(page, load_today)
