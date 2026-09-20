@@ -3,10 +3,13 @@ from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
 from .. import api as M
 from .lab import _tabs
 from ._forms import Writer, offline_banner, rebuilder
+from . import eatzen
 
 def build(page):
     return _tabs(page, [("Feeds", _feeds()), ("Vault", _vault(page)),
-                        ("Journal", _journal(page)), ("FoodZen", _foodzen(page))])
+                        ("Journal", _journal(page)), ("FoodZen", _foodzen(page)),
+                        ("EatZen", eatzen.build_eatzen(page)),
+                        ("BPM", eatzen.build_bpm(page))])
 
 def _feeds():
     p = PAL()

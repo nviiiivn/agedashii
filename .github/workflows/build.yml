@@ -70,6 +70,57 @@ jobs:
       - name: Build web (PWA)
         run: flet build web --yes -o dist/web
 
+      # flet build linux emits a folder (binary + lib/ + data/ + site-packages),
+      # not a single runnable file. AppImage wraps that folder into one
+      # double-clickable executable, which is what people actually expect a
+      # Linux download to be.
+      - name: Package Linux build as an AppImage
+        run: |
+          set -eu
+          APP=NVII-DASH
+          # The launcher is the one ELF executable at the top of the build.
+          BIN="$(find dist/linux -maxdepth 1 -type f -executable \
+                 -exec sh -c 'file -b "$1" | grep -q ELF' _ {} \; -print | head -1)"
+          if [ -z "$BIN" ]; then
+            echo "no executable found at the top of dist/linux:" >&2
+            ls -la dist/linux >&2
+            exit 1
+          fi
+          echo "launcher: $BIN"
+          rm -rf AppDir && mkdir -p AppDir/usr/bin
+          cp -r dist/linux/. AppDir/usr/bin/
+          BINNAME="$(basename "$BIN")"
+          cat > AppDir/AppRun <<EOF
+          #!/bin/sh
+          # Resolve the real directory even when invoked through a symlink,
+          # so the bundled libs and python runtime are found.
+          HERE="\$(dirname "\$(readlink -f "\$0")")"
+          export LD_LIBRARY_PATH="\$HERE/usr/bin/lib:\${LD_LIBRARY_PATH:-}"
+          exec "\$HERE/usr/bin/$BINNAME" "\$@"
+          EOF
+          chmod +x AppDir/AppRun
+          cat > AppDir/$APP.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=$APP
+          Comment=Dashbored companion
+          Exec=$BINNAME
+          Icon=$APP
+          Categories=Utility;
+          Terminal=false
+          EOF
+          # An icon is mandatory. Use the app's own if the build produced one,
+          # otherwise a 1x1 placeholder so packaging cannot fail on artwork.
+          ICON="$(find dist/linux -name '*.png' | head -1)"
+          if [ -n "$ICON" ]; then cp "$ICON" AppDir/$APP.png
+          else printf '\211PNG\r\n\032\n' > AppDir/$APP.png; fi
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          mkdir -p dist/appimage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run \
+            AppDir "dist/appimage/$APP-x86_64.AppImage"
+          ls -la dist/appimage
+
       - name: List build output
         run: |
           echo "--- tree ---"; find dist -maxdepth 3 | head -60
@@ -91,6 +142,12 @@ jobs:
         with:
           name: nvii-dash-web-pwa
           path: dist/web/**
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvii-dash-linux-appimage
+          path: dist/appimage/*.AppImage
           if-no-files-found: error
 
   macos-ios:

@@ -51,7 +51,7 @@ never blanks. **Settings → Server** shows which one you are looking at.
 |---|---|---|
 | Home | weather, Wat2Do checklist + progress, machine dots | now-playing (mock), quick actions (not wired) |
 | Lab → Machines | machines, uptime, CPU/RAM/temp, online dots | Things (soon), Services (demo), Qbit (sample) |
-| Tools | feeds · **Journal — create, edit, delete** · **FoodZen — grocery list, needs, pantry** · **Vault — write notes over SSH** | fixation radar (mock) |
+| Tools | feeds · **Journal — create, edit, delete** · **FoodZen — grocery list, needs, pantry** · **Vault — write notes over SSH** · **EatZen — sodium tracking** · **BPM — blood pressure** | fixation radar (mock) |
 | Trips | trip list, ride files · **create a trip** | stops/route are website-only; ride stats columns (pending GPX parse) |
 | Weather | current + 4-day forecast | Explore map (soon) |
 | Garage | bikes, specs, stats · **Mechanic — log mileage / services / expenses** | Flipper deals (sample) |
@@ -102,7 +102,8 @@ CI (`.github/workflows/build.yml`) builds everything on GitHub runners —
 | Artifact | Runner | Notes |
 |---|---|---|
 | `nvii-dash-android-apk` | ubuntu | release APK |
-| `nvii-dash-linux-x64` | ubuntu | needs GTK/clang deps, installed by the workflow |
+| `nvii-dash-linux-x64` | ubuntu | folder build (binary + libs) |
+| `nvii-dash-linux-appimage` | ubuntu | **single double-clickable executable** |
 | `nvii-dash-web-pwa` | ubuntu | browser build — also the only way to preview on the Pi |
 | `nvii-dash-macos` | macos | unsigned; right-click → Open on first launch |
 | `nvii-dash-ios-unsigned-ipa` | macos | unsigned .ipa for sideloading |

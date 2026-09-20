@@ -296,6 +296,110 @@ def foodzen_need_to_list():
     return _foodzen_apply(_fz.need_to_list)
 
 
+# --------------------------------------------------------- EatZen / BPM
+# The server owns the food table and the parser, so the app stays thin and
+# the phone and the browser can never disagree about a sodium figure.
+
+DASH_TARGETS = (1500, 2300)
+
+
+def nutrition_search(query, limit=10):
+    """Food-name autocomplete against the server's table (USDA + your own)."""
+    if not (query or "").strip():
+        return []
+    d = _get(f"/api/nutrition/search?q={urllib.parse.quote(query)}&limit={int(limit)}")
+    return [] if d is None else (d.get("results") or [])
+
+
+def eatzen_parse(text, llm=False, model="", machine=""):
+    """Price a line of food. Returns the server's result dict, or None.
+
+    `llm` lets the server use the local model to pick among candidates it
+    shortlisted; numbers are computed server-side either way.
+    """
+    payload = {"text": text}
+    if llm:
+        payload.update({"llm": True, "model": model or "gemma4:latest",
+                        "machine": machine or ""})
+    return _post("/api/eatzen/parse", payload, timeout=90 if llm else 20)
+
+
+def eatzen_entries():
+    st = foodzen_state(force=False)
+    return [] if st is None else (st.get("eatzen") or [])
+
+
+def eatzen_log(entry):
+    """Append one intake entry."""
+    return _foodzen_apply(lambda s: (s.setdefault("eatzen", []).insert(0, entry),
+                                     {"eatzen"})[1])
+
+
+def eatzen_delete(entry_id):
+    def mutate(state):
+        before = state.get("eatzen") or []
+        state["eatzen"] = [e for e in before if e.get("id") != entry_id]
+        return {"eatzen"} if len(state["eatzen"]) != len(before) else set()
+    return _foodzen_apply(mutate)
+
+
+def eatzen_day_total(entries, day):
+    """Sodium logged on a given YYYY-MM-DD, for the BPM cross-reference."""
+    return sum((e.get("totals") or {}).get("na") or 0
+               for e in entries if str(e.get("ts") or "")[:10] == day)
+
+
+def custom_food_save(record):
+    """Teach the server a food it does not know, from its label."""
+    def mutate(state):
+        foods = [f for f in (state.get("custom_foods") or [])
+                 if f.get("n") != record.get("n")]
+        foods.append(record)
+        state["custom_foods"] = foods
+        return {"custom_foods"}
+    return _foodzen_apply(mutate)
+
+
+def bpm_readings():
+    st = foodzen_state(force=False)
+    rows = [] if st is None else (st.get("bpm") or [])
+    return sorted(rows, key=lambda b: str(b.get("ts") or ""), reverse=True)
+
+
+def bpm_add(reading):
+    return _foodzen_apply(lambda s: (s.setdefault("bpm", []).insert(0, reading),
+                                     {"bpm"})[1])
+
+
+def bpm_delete(reading_id):
+    def mutate(state):
+        before = state.get("bpm") or []
+        state["bpm"] = [b for b in before if b.get("id") != reading_id]
+        return {"bpm"} if len(state["bpm"]) != len(before) else set()
+    return _foodzen_apply(mutate)
+
+
+def bp_category(sys_, dia):
+    """American Heart Association ranges. Information, not advice.
+
+    Kept identical to the website's bpCategory so a reading is never labelled
+    one thing on the phone and another in the browser.
+    """
+    try:
+        sys_, dia = float(sys_), float(dia)
+    except (TypeError, ValueError):
+        return ("normal", "—")
+    if sys_ >= 180 or dia >= 120:
+        return ("crisis", "hypertensive crisis")
+    if sys_ >= 140 or dia >= 90:
+        return ("high2", "stage 2")
+    if sys_ >= 130 or dia >= 80:
+        return ("high1", "stage 1")
+    if sys_ >= 120:
+        return ("elev", "elevated")
+    return ("normal", "normal")
+
+
 # ------------------------------------------------------------------ transport
 def _post_qs(path, params, raw_body=None, timeout=15):
     """POST to an endpoint that takes its arguments in the query string.
