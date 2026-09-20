@@ -17,6 +17,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Only one build per ref at a time. Three overlapping runs competed for the
+# same runners and two died part-way through the Linux step.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # flet 0.86.5 requires this exact Flutter version; bump both together.
   FLUTTER_VERSION: "3.44.8"
@@ -58,11 +64,31 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libstdc++-12-dev
 
+      # assets/maps carries ~117 MB (offline tiles + routing graph) and every
+      # target embeds a copy, on top of the Flutter and Android SDKs. Report
+      # space at each stage so an out-of-disk failure is obvious rather than
+      # showing up as a step that simply stops.
+      - name: Free disk space and report
+        run: |
+          df -h / | tail -1
+          for d in /usr/share/dotnet /opt/ghc /usr/share/swift \
+                   /usr/local/share/powershell /usr/local/lib/android/sdk/ndk; do
+            sudo rm -rf "$d" || true
+          done
+          echo 'after cleanup:'; df -h / | tail -1
+          echo 'repo assets:'; du -sh assets/maps 2>/dev/null || echo '  none'
+
       - name: Build Android APK
         run: flet build apk --yes -o dist/apk
 
+      - name: Disk after APK
+        run: df -h / | tail -1
+
       - name: Build Linux x64
         run: flet build linux --yes -o dist/linux
+
+      - name: Disk after Linux
+        run: df -h / | tail -1
 
       # Also produces the PWA. This is the only free route onto an iPhone:
       # installing a real iOS build needs an Apple Developer Program account,
