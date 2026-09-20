@@ -191,7 +191,10 @@ def build(page):
                            "last": None, "distance_m": 0.0})
             track_line.coordinates = []
             note.value = "recording"
-        rec_button.text = "Stop" if _track["recording"] else "Record"
+        # FilledButton has no .text in Flet 0.86 - the label lives in
+        # .content. Assigning .text is accepted silently and the button never
+        # relabels, so you could not tell recording from stopped.
+        rec_button.content = "Stop" if _track["recording"] else "Record"
         redraw_stats()
         page.update()
 

@@ -81,6 +81,12 @@ class MBTiles:
 def _handler_for(archive):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        # Headers and body would otherwise go out as two small packets, and
+        # Nagle + delayed-ACK adds ~40 ms to every tile on loopback. Measured
+        # 45 ms -> 0.3 ms per tile. This is the difference between a map that
+        # pans smoothly and one that stutters.
+        disable_nagle_algorithm = True
+        wbufsize = 64 * 1024
 
         def log_message(self, *args):
             pass          # a tile server logging every pan is just noise
@@ -137,8 +143,18 @@ def start(mbtiles_path, port=0):
             archive = MBTiles(path)
         except sqlite3.Error:
             return None      # not a usable MBTiles file; caller falls back
-        server = ThreadingHTTPServer(("127.0.0.1", port), _handler_for(archive))
-        server.daemon_threads = True
+        # request_queue_size must be a CLASS attribute: __init__ calls
+        # server_activate() -> listen(request_queue_size), so assigning it on
+        # the instance afterwards is too late and changes nothing. A map
+        # widget opens a screenful of connections at once and the stdlib
+        # default backlog of 5 sends the rest into the ~1 s TCP SYN
+        # retransmit timer - 36 parallel tiles took 1.3 s instead of 35 ms.
+        class _Server(ThreadingHTTPServer):
+            daemon_threads = True
+            request_queue_size = 128
+            allow_reuse_address = True
+
+        server = _Server(("127.0.0.1", port), _handler_for(archive))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         _state.update({"server": server, "thread": thread,
