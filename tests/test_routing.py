@@ -85,9 +85,17 @@ class RoutingTestCase(unittest.TestCase):
 
     def setUp(self):
         self._env = os.environ.get(R.ENV_OVERRIDE)
+        # The real 78 MB graph now ships in assets/, so the bundled-asset
+        # search must be redirected or every "nothing installed" case finds
+        # it and these tests assert against the shipping file.
+        self._root = R.APP_ROOT
+        self._tmproot = tempfile.TemporaryDirectory()
+        R.APP_ROOT = Path(self._tmproot.name) / "app"
         R.reset()
 
     def tearDown(self):
+        R.APP_ROOT = self._root
+        self._tmproot.cleanup()
         R.reset()
         if self._env is None:
             os.environ.pop(R.ENV_OVERRIDE, None)

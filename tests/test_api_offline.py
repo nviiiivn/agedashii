@@ -240,6 +240,65 @@ class TestReadsSurviveTheServer(ApiOfflineCase):
         self.settle()
 
 
+class TestCacheIsScopedToItsServer(ApiOfflineCase):
+    """A cached row is one server's answer. It may never stand in for another's."""
+
+    def point_at(self, server):
+        config._opener = server
+        config.SERVER_URL = server.base
+
+    def test_a_cached_answer_is_not_served_for_a_different_address(self):
+        self.server.data["/api/trips"] = [{"id": "t0", "name": "from A"}]
+        self.assertEqual([t["name"] for t in api.trips()], ["from A"])
+
+        elsewhere = FakeServer("http://elsewhere.test:6900")
+        elsewhere.up = False
+        self.point_at(elsewhere)
+        self.assertIsNone(api._get("/api/trips"),
+                          "this server has never answered; we have nothing of its")
+        self.assertEqual(api.provenance("/api/trips"), api.NONE)
+
+        self.point_at(self.server)
+        self.assertEqual([t["name"] for t in api.trips()], ["from A"],
+                         "and switching back finds its rows waiting")
+
+    def test_a_restart_pointed_somewhere_else_shows_nothing_rather_than_the_old_server(self):
+        self.server.data["/api/trips"] = [{"id": "t0", "name": "from A"}]
+        self.assertEqual(len(api.trips()), 1)
+        self.store.close()
+
+        elsewhere = FakeServer("http://elsewhere.test:6900")
+        elsewhere.up = False
+        self.point_at(elsewhere)
+        self.store = self.new_store()          # cold launch, same database
+        api.set_store(self.store)
+        self.assertIsNone(api._get("/api/trips"))
+
+    def test_refresh_makes_the_next_read_ask_again_before_answering(self):
+        """What Settings relies on: a new address takes effect immediately."""
+        self.server.data["/api/trips"] = [{"id": "t0", "name": "old"}]
+        self.assertEqual([t["name"] for t in api.trips()], ["old"])
+
+        self.server.data["/api/trips"] = [{"id": "t0", "name": "new"}]
+        self.assertEqual([t["name"] for t in api.trips()], ["old"],
+                         "still inside the TTL, so no round trip")
+
+        api.refresh()
+        self.assertEqual([t["name"] for t in api.trips()], ["new"],
+                         "refresh means ask again now, not show the old one meanwhile")
+
+    def test_a_queued_write_is_not_shown_against_a_different_address(self):
+        self.seed_foodzen()
+        self.go_offline()
+        api.foodzen_add("Milk")
+
+        elsewhere = FakeServer("http://elsewhere.test:6900")
+        elsewhere.up = False
+        self.point_at(elsewhere)
+        self.assertIsNone(api._get(api.FOODZEN_PATH))
+        self.assertEqual(api.pending_count(), 1, "but the write is still queued")
+
+
 class TestWritesAreQueuedNotLost(ApiOfflineCase):
     def test_an_offline_write_is_queued_and_reports_it_honestly(self):
         self.seed_foodzen()

@@ -91,6 +91,9 @@ EARTH_R = 6371008.8
 
 # ------------------------------------------------------------ graph loading
 
+APP_ROOT = Path(__file__).resolve().parent.parent
+
+
 def graph_path():
     """Where the offline road graph lives, or None if none is installed.
 
@@ -106,9 +109,11 @@ def graph_path():
     override = os.environ.get(ENV_OVERRIDE)
     if override:
         candidates.append(Path(override))
-    here = Path(__file__).resolve().parent.parent
-    candidates += [here / "assets" / "maps" / GRAPH_FILENAME,
-                   here / "maps" / GRAPH_FILENAME,
+    # APP_ROOT is a module global so a test can point the bundled-asset
+    # search somewhere harmless. Once the real 78 MB graph shipped in
+    # assets/, every "nothing is installed" test started finding it.
+    candidates += [APP_ROOT / "assets" / "maps" / GRAPH_FILENAME,
+                   APP_ROOT / "maps" / GRAPH_FILENAME,
                    Path.home() / ".nvii-dash" / GRAPH_FILENAME]
     for c in candidates:
         try:

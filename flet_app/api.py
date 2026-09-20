@@ -124,18 +124,40 @@ def _new_store():
     return st
 
 
+# -------------------------------------------------------------- cache keying
+def _key(path):
+    """The cache key for an API path: the server it came from, then the path.
+
+    Scoped by origin on purpose. A cached row is one server's answer, and the
+    app can be re-pointed at a different address in Settings at any time - so
+    keying on the path alone means switching servers silently shows the old
+    server's data, and a restart pointed somewhere new shows it again with
+    nothing to notice it by.
+
+    The cost, accepted: the LAN address and the mDNS name are the same box,
+    and the app does not know that, so switching between them re-fetches
+    everything once. Each address keeps its own rows, so switching back is
+    instant again, and neither can ever answer for the other.
+    """
+    return config.normalise(config.SERVER_URL) + path
+
+
+def _keys(mapping):
+    return {_key(p): v for p, v in (mapping or {}).items()}
+
+
 # ---------------------------------------------------------------- invalidation
 # Cached entries are marked *stale*, never deleted: deleting is how an offline
 # app loses the only copy it has. A stale entry is still shown, and refreshed
 # behind the UI the moment the server is reachable again.
-_invalid = {}        # path -> anything fetched before this is stale
-_invalid_all = 0.0   # the same, for every path at once
+_invalid = {}        # cache key -> anything fetched before this is stale
+_invalid_all = 0.0   # the same, for every key at once
 
 
 def _invalidate(*paths):
     now = time.time()
     for path in paths:
-        _invalid[path] = now
+        _invalid[_key(path)] = now
 
 
 def refresh():
@@ -151,13 +173,21 @@ def refresh():
     _invalid.clear()
 
 
+def _invalidated(hit):
+    """True when someone said this entry is no longer to be trusted.
+
+    Stronger than being past its TTL: a TTL-stale answer is still the best
+    thing we have and gets shown while a refresh runs behind it, but an entry
+    dropped by a write or by Settings pointing at a different server has to
+    be re-read *before* it is shown again.
+    """
+    return hit.fetched_at < max(_invalid_all, _invalid.get(hit.path, 0.0))
+
+
 def _stale(hit, ttl=None):
     if hit is None:
         return True
-    ttl = TTL if ttl is None else ttl
-    if hit.fetched_at < max(_invalid_all, _invalid.get(hit.path, 0.0)):
-        return True
-    return hit.is_stale(ttl)
+    return _invalidated(hit) or hit.is_stale(TTL if ttl is None else ttl)
 
 
 class _CacheShim:
@@ -176,11 +206,11 @@ class _CacheShim:
         refresh()
 
     def get(self, path, default=None):
-        hit = store().get(path)
+        hit = store().get(_key(path))
         return default if hit is None else (hit.fetched_at, hit.data)
 
     def __contains__(self, path):
-        return store().get(path) is not None
+        return store().get(_key(path)) is not None
 
     def __len__(self):
         return store().stats().get("cached", 0)
@@ -190,12 +220,16 @@ _cache = _CacheShim()
 
 
 # ------------------------------------------------------------------- transport
-class _Failed(Exception):
+class _Failed(StoreError):
     """A request that did not land, carrying the server's own words.
 
     `gateway` means nothing of ours answered — no network, or an auth gateway
     answered instead. A queued write must not be charged a retry attempt for
     either of those; see `_is_gateway`.
+
+    A StoreError so that when the store records why a refresh failed it keeps
+    `detail` as written - already a line for a human - instead of prefixing
+    it with this class's name.
     """
 
     def __init__(self, detail, *, gateway=False):
@@ -351,9 +385,10 @@ def _ok(resp, *, key="ok"):
 # ----------------------------------------------------------------- read path
 def _read(path, fetch_fn, ttl=None):
     """Answer `path` from the store, refreshing behind the UI when stale."""
+    key = _key(path)
     try:
         st = store()
-        hit = st.get(path)
+        hit = st.get(key)
     except Exception:  # noqa: BLE001 - no local database is not a dead app
         return _direct(fetch_fn)
 
@@ -367,10 +402,23 @@ def _read(path, fetch_fn, ttl=None):
         # of uncached panels would be a page of timeouts.
         if not _worth_trying():
             return None
-        got = st.read(path, fetch_fn, ttl=0, background=False)
+        got = st.read(key, fetch_fn, ttl=0, background=False)
         return None if got is None else got.data
-    if _stale(hit, ttl):
-        st.read(path, fetch_fn, ttl=0, background=True)
+    if _invalidated(hit):
+        # Explicitly dropped - by a write, or by Settings pointing somewhere
+        # else. Re-read before showing it again, inline, the way the old
+        # cleared-cache code did; the copy we hold is the fallback if that
+        # fails, not the answer.
+        # st.refresh, not st.read: read declines to fetch anything while it
+        # believes it is offline, and this branch is the one place that has
+        # to ask anyway - deciding not to is _worth_trying's job.
+        if _worth_trying():
+            st.refresh(key, fetch_fn)
+            got = st.get(key)
+            return hit.data if got is None else got.data
+        _wake()
+    elif _stale(hit, ttl):
+        st.read(key, fetch_fn, ttl=0, background=True)
         _wake()
     return hit.data
 
@@ -385,7 +433,7 @@ def _direct(fetch_fn):
 def _cached(path, default=None):
     """What the store holds for `path`, without ever being the reason for a crash."""
     try:
-        return store().get_data(path, default)
+        return store().get_data(_key(path), default)
     except Exception:  # noqa: BLE001
         return default
 
@@ -397,26 +445,34 @@ def _reread(path, timeout=6):
     can get, but offline the device's own copy is a perfectly good base and
     refusing to edit it is the bug this module exists to remove.
     """
+    key = _key(path)
     try:
         st = store()
-        hit = st.get(path)
+        hit = st.get(key)
     except Exception:  # noqa: BLE001
         return _direct(lambda: _fetch(path, timeout))
     if hit is not None and hit.is_local:
         return hit.data
     if _worth_trying():
-        st.refresh(path, lambda: _fetch(path, timeout))
-    got = st.get(path)
+        st.refresh(key, lambda: _fetch(path, timeout))
+    got = st.get(key)
     return None if got is None else got.data
 
 
 def _worth_trying():
-    """Whether to spend a request finding out, rather than assuming offline."""
+    """Whether to spend a request finding out, rather than assuming offline.
+
+    "We are offline" is a belief about one address. Settings pointing the app
+    somewhere else - the LAN address instead of the VPN one, say - makes that
+    belief worthless, so a changed address always gets a try.
+    """
     try:
         state = store().status
     except Exception:  # noqa: BLE001
         return True
     if state["online"]:
+        return True
+    if config.normalise(config.STATUS.get("url") or "") != config.normalise(config.SERVER_URL):
         return True
     return time.time() - (state["at"] or 0.0) >= ONLINE_RECHECK
 
@@ -552,7 +608,10 @@ def _queue_write(path, *, json_body=None, params=None, body=None, timeout=None,
     """
     env = _envelope(json_body=json_body, params=params, body=body, timeout=timeout)
     try:
-        item_id = store().enqueue(method, path, env, local=local,
+        # The outbox keeps the bare path - it is what the URL is built from at
+        # send time - while the local effect lands under the origin-scoped
+        # cache key, so it is only ever shown for the server it is going to.
+        item_id = store().enqueue(method, path, env, local=_keys(local) or None,
                                   coalesce_key=coalesce_key)
     except Exception as e:  # noqa: BLE001 - no local database: send it now or lose it
         try:
@@ -640,7 +699,7 @@ def provenance(path):
     if st is None:
         return NONE
     try:
-        hit = st.get(path)
+        hit = st.get(_key(path))
     except Exception:  # noqa: BLE001
         return NONE
     if hit is None:

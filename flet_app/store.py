@@ -493,7 +493,11 @@ class Store:
         try:
             data = fetch_fn()
         except Exception as e:  # noqa: BLE001 - transport errors are expected here
-            self.set_online(False, f"{type(e).__name__}: {e}")
+            # Same rule as _flush: a StoreError's message was written for a
+            # human to read in Settings, so do not staple a class name to the
+            # front of it. Anything else is a surprise and says what it was.
+            self.set_online(False, str(e) if isinstance(e, StoreError)
+                            else f"{type(e).__name__}: {e}")
             return False
         if data is None:
             return False

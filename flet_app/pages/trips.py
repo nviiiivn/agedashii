@@ -70,8 +70,8 @@ def _zoom_for(points):
     """A zoom level that shows the whole route without maths theatre."""
     lats = [q[0] for q in points]
     lons = [q[1] for q in points]
+    # Longitude degrees are ~0.8 of a latitude degree at this latitude.
     span = max(max(lats) - min(lats), (max(lons) - min(lons)) * 0.8, 1e-4)
-    z = 9
     for level, limit in ((15, 0.004), (14, 0.008), (13, 0.016), (12, 0.033),
                          (11, 0.066), (10, 0.13), (9, 0.26), (8, 0.52),
                          (7, 1.05)):
