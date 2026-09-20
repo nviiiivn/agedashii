@@ -93,8 +93,16 @@ jobs:
       # Also produces the PWA. This is the only free route onto an iPhone:
       # installing a real iOS build needs an Apple Developer Program account,
       # so "Add to Home Screen" from this build is the no-cost path.
+      # The web target is excluded from the offline map and routing graph.
+      # Baking 117 MB into a Pyodide web bundle killed the runner (exit 143,
+      # OOM, seven minutes after splash generation) and took the AppImage
+      # down with it. A browser build should not ship a 78 MB routing graph
+      # as a download anyway - on the web the app talks to the server.
+      # continue-on-error so a web failure can never again block the five
+      # artifacts that matter on a phone or a laptop.
       - name: Build web (PWA)
-        run: flet build web --yes -o dist/web
+        continue-on-error: true
+        run: flet build web --yes -o dist/web --exclude assets/maps
 
       # flet build linux emits a folder (binary + lib/ + data/ + site-packages),
       # not a single runnable file. AppImage wraps that folder into one
@@ -165,6 +173,7 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
+        if: hashFiles('dist/web/**') != ''
         with:
           name: nvii-dash-web-pwa
           path: dist/web/**
