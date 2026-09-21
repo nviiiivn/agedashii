@@ -30,8 +30,14 @@ from . import foodzen as fzpage
 
 # Session state, at module level so a repaint after a write does not throw
 # away which feed filter, vault file or journal search you were looking at.
-_F = {"kind": "all", "data": None}
-_V = {"host": M.VAULT_DEFAULT_HOST, "lib": "DeVault", "tree": None, "err": None,
+#
+# Deliberately *not* a data cache. api._get already answers these from the
+# device's store in under a millisecond and refreshes behind the page, so
+# holding a second copy here only means the tab shows yesterday's list until
+# the app is restarted. What is kept is what the store cannot know: where
+# you were.
+_F = {"kind": "all"}
+_V = {"host": M.VAULT_DEFAULT_HOST, "lib": "DeVault",
       "open": set(), "file": None, "text": None, "editing": False}
 _J = {"cat": "all", "q": "", "sort": "new", "mode": "list", "open": None,
       "body": None, "editing": None}
@@ -113,9 +119,7 @@ def _feeds(page):
     the 21st row simply did not exist as far as the phone was concerned.
     """
     p = PAL()
-    if _F["data"] is None:
-        _F["data"] = M.feeds_full()
-    data = _F["data"]
+    data = M.feeds_full()
 
     body = ft.Column(spacing=8)
     meta = ft.Text("", size=10, color=p["text2"])
@@ -201,9 +205,10 @@ def _feeds(page):
             page.update()
         except Exception:          # noqa: BLE001
             pass
-        got = await asyncio.to_thread(M.feeds_full, True)
-        if got is not None:
-            _F["data"] = got
+        # force=1 makes the server rescrape every source, which takes long
+        # enough that it must not be the read path. The result lands in the
+        # store; the rebuild reads it back out of there.
+        await asyncio.to_thread(M.feeds_full, True)
         rebuilder(page, build)()
 
     paint()
@@ -234,8 +239,7 @@ def _vault(page):
     p = PAL()
     w = Writer(page, rebuilder(page, build))
 
-    if _V["tree"] is None and _V["err"] is None:
-        _V["tree"], _V["err"] = M.vault_tree(_V["host"], _V["lib"])
+    tree, tree_err = M.vault_tree(_V["host"], _V["lib"])
 
     tree_box = ft.Column(spacing=0, scroll=ft.ScrollMode.AUTO, height=250)
     name_line = ft.Text(_V["file"] or "Select a note", size=11,
@@ -259,10 +263,10 @@ def _vault(page):
             pass
 
     def paint_tree():
-        if _V["err"]:
-            tree_box.controls = [sub(_V["err"], 11)]
+        if tree_err:
+            tree_box.controls = [sub(tree_err, 11)]
             return
-        rows = M.vault_visible(M.vault_flatten(_V["tree"] or []), _V["open"])
+        rows = M.vault_visible(M.vault_flatten(tree or []), _V["open"])
         out = []
         for r in rows:
             if r["dir"]:
@@ -369,8 +373,8 @@ def _vault(page):
             if _V["lib"] == lib:
                 return
             _V["lib"] = lib
-            _V.update({"tree": None, "err": None, "file": None, "text": None,
-                       "editing": False, "open": set()})
+            _V.update({"file": None, "text": None, "editing": False,
+                       "open": set()})
             rebuilder(page, build)()
         return handler
 
@@ -389,8 +393,8 @@ def _vault(page):
         if chosen == _V["host"]:
             return
         _V["host"] = chosen
-        _V.update({"tree": None, "err": None, "file": None, "text": None,
-                   "editing": False, "open": set()})
+        _V.update({"file": None, "text": None, "editing": False,
+                   "open": set()})
         rebuilder(page, build)()
 
     host_pick.on_select = pick_host
@@ -428,7 +432,6 @@ def _vault(page):
             M.vault_write, _V["host"], rel, new_body.value or "", _V["lib"])
         w.report(ok, msg)
         if ok:
-            _V.update({"tree": None, "err": None})
             rebuilder(page, build)()
             return
         repaint()
@@ -440,6 +443,10 @@ def _vault(page):
                        *[_pill(p, lib, _V["lib"] == lib, switch_lib(lib))
                          for lib in M.VAULT_LIBS],
                        ft.Container(expand=True), host_pick,
+                       ft.IconButton(ft.Icons.REFRESH, icon_size=17,
+                                     icon_color=p["text2"],
+                                     tooltip="Re-read the tree",
+                                     on_click=lambda e: rebuilder(page, build)()),
                        ft.IconButton(ft.Icons.NOTE_ADD, icon_size=17,
                                      icon_color=p["text2"],
                                      tooltip="Write a new note",

@@ -317,6 +317,12 @@ class Overview(unittest.TestCase):
              mock.patch.object(api, "docker_running", return_value=containers):
             return api.overview()
 
+    def test_the_container_count_is_not_fetched_on_the_first_paint(self):
+        with mock.patch.object(api, "dashboard", return_value=self.DASH), \
+             mock.patch.object(api, "docker_running") as count:
+            api.overview()
+        count.assert_called_once_with(blocking=False)
+
     def test_an_unreachable_machine_is_not_counted_as_online(self):
         got = self._overview()
         self.assertEqual((got["online"], got["total"]), (1, 2))
@@ -345,12 +351,29 @@ class Overview(unittest.TestCase):
     def test_docker_running_counts_only_running_containers(self):
         hosts = {"a": {"containers": [{"state": "running"}, {"state": "exited"}]},
                  "b": {"containers": [{"state": "running"}]}}
-        with mock.patch.object(api, "docker_list", return_value=(hosts, None)):
+        with mock.patch.object(api, "_get", return_value=hosts):
             self.assertEqual(api.docker_running(), 2)
 
     def test_docker_erroring_is_unknown_rather_than_none_running(self):
-        with mock.patch.object(api, "docker_list", return_value=(None, "timed out")):
+        with mock.patch.object(api, "_get", return_value=None):
             self.assertIsNone(api.docker_running())
+
+    def test_the_first_paint_never_waits_six_seconds_on_docker(self):
+        """/api/docker_list SSHes to five hosts; three consecutive Home
+        builds were measured at 6.0, 5.9 and 6.1 seconds, all of it this.
+        Non-blocking, it answers from the store or not at all."""
+        with mock.patch.object(api, "_get") as wire, \
+             mock.patch.object(api, "_cached", return_value=None) as stored:
+            self.assertIsNone(api.docker_running(blocking=False))
+        wire.assert_not_called()
+        stored.assert_called_once()
+
+    def test_a_warm_store_answers_the_first_paint_without_the_wire(self):
+        hosts = {"a": {"containers": [{"state": "running"}]}}
+        with mock.patch.object(api, "_get") as wire, \
+             mock.patch.object(api, "_cached", return_value=hosts):
+            self.assertEqual(api.docker_running(blocking=False), 1)
+        wire.assert_not_called()
 
 
 class ForecastDays(unittest.TestCase):
@@ -550,9 +573,10 @@ class HomeRenders(unittest.TestCase):
                       "Oakland temp"):
             self.assertIn(label, said)
 
-    def test_docker_unknown_shows_a_dash_and_says_why(self):
+    def test_docker_not_counted_yet_says_so_rather_than_showing_a_zero(self):
         said = self._texts(self._build(self.DASH, self.WEATHER, containers=None))
-        self.assertIn("docker did not answer", said)
+        self.assertIn("counting...", said)
+        self.assertNotIn("0", said[said.index("Containers running") + 1])
 
     def test_no_dashboard_shows_dashes_rather_than_zeroes(self):
         said = self._texts(self._build(None, self.WEATHER))

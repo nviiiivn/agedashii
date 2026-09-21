@@ -2472,7 +2472,7 @@ def journal_filter(entries, cat="all", query="", sort="new"):
 
 
 # ------------------------------------------------------------------- overview
-def overview():
+def overview(blocking_docker=False):
     """Home's stat strip and per-machine rows, or None when never fetched.
 
     One /api/dashboard read - shared with `machines()` through the store, so
@@ -2480,9 +2480,15 @@ def overview():
     for separately and is allowed to fail on its own. The website shows an em
     dash for that one tile rather than losing the whole strip.
 
-    `containers` is None when docker could not be read. The difference between
-    "nothing is running" and "we do not know" is exactly the kind of thing
-    this app is not allowed to smudge into a zero.
+    `blocking_docker` is off for the first paint. /api/docker_list SSHes to
+    five machines and was measured at 6.0, 5.9 and 6.1 seconds on three
+    consecutive Home builds - six seconds of blank screen for one number.
+    Off, the count comes from whatever the store already holds and is None
+    otherwise; Home fetches it behind the page and repaints when it lands.
+
+    `containers` being None means docker has not been read *yet or at all*.
+    The difference between "nothing is running" and "we do not know" is
+    exactly the kind of thing this app is not allowed to smudge into a zero.
     """
     d = dashboard()
     if not isinstance(d, dict):
@@ -2504,7 +2510,8 @@ def overview():
                      "uptime": w.get("uptime") or ""})
     rows.sort(key=lambda r: (not r["online"], r["display"].lower()))
     return {"machines": rows, "online": online, "total": len(rows),
-            "services": services_up, "containers": docker_running()}
+            "services": services_up,
+            "containers": docker_running(blocking=blocking_docker)}
 
 
 def _pct(v):
@@ -2514,14 +2521,22 @@ def _pct(v):
         return None
 
 
-def docker_running():
+def docker_running(blocking=True):
     """How many containers are running across every host, or None.
 
-    None means docker could not be read, which Home shows as an em dash.
-    A zero here would be a claim, and on this server it would be a false one.
+    Store-backed rather than `docker_list()`, which goes straight to the
+    wire every time: the Lab page wants the server's own error text for a
+    host that would not answer, Home wants one integer it can show with no
+    signal. `blocking=False` answers only from what the store already holds,
+    so the first paint never waits on five SSH sessions.
+
+    None means docker has not been read, which Home shows as an em dash.
+    A zero here would be a claim, and on this server it would be a false one:
+    34 containers are running as this is written.
     """
-    d, err = docker_list()
-    if err or not isinstance(d, dict):
+    d = (_get("/api/docker_list", timeout=30) if blocking
+         else _cached("/api/docker_list"))
+    if not isinstance(d, dict):
         return None
     n = 0
     for m in d.values():

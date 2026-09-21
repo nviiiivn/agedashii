@@ -162,6 +162,16 @@ def build(page):
         ])
 
     # ----------------------------------------------------------- stat strip
+    docker_tile = ft.Column(spacing=1)
+
+    async def count_docker():
+        """Fetch the container count behind the page and drop it into place."""
+        n = await asyncio.to_thread(M.docker_running, True)
+        docker_tile.controls[1].value = "—" if n is None else str(n)
+        docker_tile.controls[2].value = ("across all hosts" if n is not None
+                                         else "docker did not answer")
+        repaint()
+
     def stat_tile(value, label, note, colour=None):
         return ft.Container(
             col={"xs": 6, "md": 3}, padding=PAD(10, 10), border_radius=12,
@@ -188,14 +198,23 @@ def build(page):
                           wx_words(cur.get("weather_code")) if cur else "no reading"),
             ])
         containers = ov["containers"]
+        # /api/docker_list SSHes to five machines and takes six seconds. It
+        # is not allowed to hold up the whole page for one integer, so the
+        # tile says it is counting and `count_docker` fills it in.
+        docker_tile.controls = [
+            ft.Text("Containers running", size=9, color=p["text2"]),
+            ft.Text("—" if containers is None else str(containers), size=22,
+                    weight=ft.FontWeight.W_700, color=p["text"]),
+            ft.Text("across all hosts" if containers is not None
+                    else "counting...", size=9, color=p["text3"], max_lines=1,
+                    overflow=ft.TextOverflow.ELLIPSIS)]
         return ft.ResponsiveRow(columns=12, spacing=8, run_spacing=8, controls=[
             stat_tile(str(ov["online"]), "Machines online",
                       f"of {ov['total']} total",
                       p["green"] if ov["online"] == ov["total"] else p["yellow"]),
-            stat_tile("—" if containers is None else str(containers),
-                      "Containers running",
-                      "across all hosts" if containers is not None
-                      else "docker did not answer"),
+            ft.Container(col={"xs": 6, "md": 3}, padding=PAD(10, 10),
+                         border_radius=12, bgcolor=p["surface"],
+                         border=BRD(p["border"], 1), content=docker_tile),
             stat_tile(str(ov["services"]), "Services up", "active units"),
             stat_tile(f"{round(cur['temperature_2m'])}°F" if cur else "—",
                       "Oakland temp",
@@ -478,6 +497,9 @@ def build(page):
         "nowplaying": nowplaying_card, "machines": machines_card,
         "links": links_card, "actions": actions_row, "wat2do": wat2do_mini,
     })
+    # Only chase the slow number if the strip that shows it is on screen.
+    if ov is not None and ov["containers"] is None and docker_tile.controls:
+        _run(count_docker)
     # The status line is chrome, not a panel: a power command that failed
     # must have somewhere to say so even with every card hidden.
     return ft.Column(spacing=10, expand=True, controls=[
