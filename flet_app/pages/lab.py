@@ -1043,6 +1043,10 @@ _QB_STOPPED = {"pausedDL", "pausedUP", "stoppedDL", "stoppedUP"}
 _QB_BAD = {"error", "missingFiles", "unknown"}
 _QB_SEEDING = {"uploading", "forcedUP", "stalledUP", "queuedUP", "checkingUP"}
 
+# The name filter, at module level so a repaint after an action does not
+# quietly widen the list back out to everything.
+_QB_FILTER = {"text": ""}
+
 
 def _qb_color(state):
     p = PAL()
@@ -1159,6 +1163,13 @@ def _qbit(page):
                 ft.OutlinedButton("Resume" if stopped else "Pause", height=30,
                                   on_click=act("resume" if stopped else "pause",
                                                thash, name)),
+                ft.IconButton(ft.Icons.FAST_FORWARD, icon_size=16,
+                              icon_color=p["text2"], tooltip="force start",
+                              on_click=act("setForceStart", thash, name, value=True)),
+                ft.IconButton(ft.Icons.FIND_REPLACE, icon_size=16,
+                              icon_color=p["text2"],
+                              tooltip="recheck the files on disk",
+                              on_click=act("recheck", thash, name)),
                 ft.Container(expand=True),
                 delete_button(thash, name),
             ]))
@@ -1168,25 +1179,88 @@ def _qbit(page):
             controls.append(sub("no hash in the server's reply — cannot act on this one", 10))
         return card(ft.Column(spacing=6, controls=controls), pad=10)
 
+    # qBittorrent's own transfer/info keys. The website reads dl_rate,
+    # ul_rate and free_space, none of which qBittorrent sends, which is why
+    # its Download / Upload / Free Space tiles have always read 0 B/s.
     dl_total, up_total = _speed(stats.get("dl_info_speed")), _speed(stats.get("up_info_speed"))
+    free = stats.get("free_space_on_disk")
+    active = sum(1 for t in torrents if str(t.get("state")) == "downloading")
+    seeding = sum(1 for t in torrents if str(t.get("state")) in _QB_SEEDING)
     summary = [b for b in (f"{len(torrents)} torrents" if torrents else "",
                            f"↓{dl_total}" if dl_total else "",
                            f"↑{up_total}" if up_total else "",
+                           f"{active} active / {seeding} seeding" if torrents else "",
+                           f"{_bytes(free)} free" if free else "",
                            str(stats.get("connection_status") or "")) if b]
-    head = card(ft.Row(spacing=8, controls=[
-        title("Torrents", 14),
-        ft.Container(expand=True),
+
+    def bulk(action, verb, **extra):
+        """One instruction for every torrent at once. Always asks first."""
+        send = act(action, "all", "all torrents", **extra)
+
+        async def handler(e):
+            if not torrents:
+                w.report(False, "there are no torrents to act on")
+                page.update()
+                return
+            _confirm(page, f"{verb} all {len(torrents)} torrents?",
+                     "This is sent to qBittorrent as one instruction for every "
+                     "torrent it holds"
+                     + (", and cannot be undone. Files on disk are kept."
+                        if action == "delete" else "."),
+                     verb, send, danger=action == "delete")
+        return handler
+
+    head = card(ft.Column(spacing=8, controls=[
+        ft.Row(spacing=8, controls=[
+            title("Torrents", 14),
+            ft.Container(expand=True),
+            ft.IconButton(ft.Icons.REFRESH, icon_size=17, icon_color=p["text2"],
+                          tooltip="re-read from the server",
+                          on_click=lambda e: w.rebuild()),
+        ]),
         sub(" · ".join(summary) or "no transfer stats", 11),
-        ft.IconButton(ft.Icons.REFRESH, icon_size=17, icon_color=p["text2"],
-                      tooltip="re-read from the server",
-                      on_click=lambda e: w.rebuild()),
+        ft.Row(spacing=6, wrap=True, run_spacing=6, controls=[
+            ft.OutlinedButton("Resume all", height=30,
+                              on_click=bulk("resume", "Resume")),
+            ft.OutlinedButton("Pause all", height=30,
+                              on_click=bulk("pause", "Pause")),
+            ft.TextButton("Delete all", height=30,
+                          style=ft.ButtonStyle(color=p["red"]),
+                          on_click=bulk("delete", "Delete", deleteFiles=False)),
+        ]),
     ]), pad=10)
+
+    search = ft.TextField(hint_text="filter by name", dense=True, filled=True,
+                          text_size=12, expand=True, border_color=p["border"],
+                          focused_border_color=p["accent"], color=p["text"],
+                          value=_QB_FILTER["text"])
+    listing = ft.Column(spacing=10)
+
+    def paint():
+        q = _QB_FILTER["text"].lower()
+        shown = [t for t in torrents if not q or q in str(t.get("name") or "").lower()]
+        if torrents and not shown:
+            listing.controls = [card(
+                sub(f"None of the {len(torrents)} torrents match “"
+                    f"{_QB_FILTER['text']}”.", 11), pad=12)]
+        else:
+            listing.controls = [row(t) for t in shown]
+
+    def do_filter(e=None):
+        _QB_FILTER["text"] = (search.value or "").strip()
+        paint()
+        page.update()
+
+    search.on_change = do_filter
+    search.on_submit = do_filter
+    paint()
 
     body = [head]
     if err:
         body.append(_error_card("qBittorrent did not answer", err))
     if torrents:
-        body.extend(row(t) for t in torrents)
+        body.append(ft.Row(spacing=6, controls=[search]))
+        body.append(listing)
     elif not err:
         body.append(card(sub("qBittorrent is up and has no torrents.", 11), pad=12))
     body.append(w.control)

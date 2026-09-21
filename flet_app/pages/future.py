@@ -201,6 +201,56 @@ def spots_from(elements):
     return out[:MAX_SPOTS]
 
 
+# app.js's curated meta: the key the server uses, a label, and a colour.
+# These are hand-kept lists the server ships, not scan results - backroads,
+# redwoods, EBT-accepting museums, film locations, oddities, and scraped
+# Funcheap events. Counts as of 2026-09-21: 12, 17, 178, 1362, 10, 46.
+CURATED = (
+    ("backroads", "Backroads", "#f2c94c", ft.Icons.ROUTE),
+    ("redwoods", "Redwoods", "#66bb6a", ft.Icons.FOREST),
+    ("weirdseed", "Weird", "#ff8a65", ft.Icons.REMOVE_RED_EYE),
+    ("ebt", "EBT museums", "#ba68c8", ft.Icons.MUSEUM),
+    ("movies", "Film locations", "#ff8fab", ft.Icons.MOVIE),
+    ("events", "Events", "#4dd0e1", ft.Icons.CALENDAR_MONTH),
+)
+CURATED_BY_ID = {c[0]: {"id": c[0], "label": c[1], "color": c[2], "icon": c[3]}
+                 for c in CURATED}
+
+# app.js caps a curated list at 250 after sorting by distance from home.
+MAX_CURATED = 250
+
+
+def curated_spots(curated, key):
+    """One curated list as spots -> (placeable spots, names with no coordinates).
+
+    A third of the EBT list has ``"lat": null`` - those are real places the
+    list knows only by name and city, and dropping them silently would shrink
+    "178 museums" to 117 with nothing said. They come back separately so the
+    page can name them instead of pretending they were never there.
+    """
+    rows = (curated or {}).get(key)
+    if not isinstance(rows, list):
+        return [], []
+    spots, nameless = [], []
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("name"):
+            continue
+        try:
+            lat, lon = float(r["lat"]), float(r["lon"])
+        except (TypeError, ValueError, KeyError):
+            city = str(r.get("city") or "").strip()
+            nameless.append(f"{r['name']} ({city})" if city else str(r["name"]))
+            continue
+        spots.append({"oid": f"curated:{key}:{r['name']}", "name": str(r["name"]),
+                      "cat": "weird" if key == "weirdseed" else "pretty",
+                      "lat": round(lat, 6), "lon": round(lon, 6),
+                      "note": str(r.get("note") or ""), "imgs": [],
+                      "url": str(r.get("url") or ""),
+                      "dist_m": haversine_m(HOME, (lat, lon))})
+    spots.sort(key=lambda s: s["dist_m"])
+    return spots[:MAX_CURATED], nameless
+
+
 def gem_to_spot(gem):
     """A saved gem in the same shape a scanned spot has, so rows share code."""
     try:
@@ -231,6 +281,29 @@ def scan(cats, radius_m, centre=None):
             f"&cats={urllib.parse.quote(joined)}")
     d = M._get(path, timeout=30)
     return None if d is None else spots_from(d.get("elements"))
+
+
+def curated():
+    """The server's curated lists, or (None, why). Cached like every read."""
+    return M.future_curated()
+
+
+def _events_age(cur_data):
+    """How stale the scraped events are, in the server's own number.
+
+    ``events_stale_h`` sits alongside the lists in the same payload. Showing
+    events without it invites reading a week-old scrape as tonight's diary.
+    """
+    hours = (cur_data or {}).get("events_stale_h")
+    try:
+        hours = float(hours)
+    except (TypeError, ValueError):
+        return ""
+    if hours < 1:
+        return "events scraped under an hour ago"
+    if hours < 48:
+        return f"events scraped {hours:.0f}h ago"
+    return f"events scraped {hours / 24:.0f} days ago"
 
 
 def saved():
@@ -345,7 +418,11 @@ def not_connected(p, somedays):
 
 # Survives a repaint so a scan is not thrown away every time the page
 # rebuilds - the same reason wat2do.py keeps its `_S`.
-_S = {"cats": list(DEFAULT_CATS), "dist": 50, "spots": None, "note": ""}
+_S = {"cats": list(DEFAULT_CATS), "dist": 50, "spots": None, "note": "",
+      # Which curated list is open, if any. It replaces the scan results in
+      # the Found card rather than sitting beside them, exactly as on the
+      # website, because they answer the same question two ways.
+      "curated": None}
 
 
 def _run(page, coro_fn, *args):
@@ -414,6 +491,25 @@ def build(page):
                 ft.Icon(meta["icon"], size=12,
                         color=meta["color"] if on else p["text2"]),
                 ft.Text(meta["label"], size=10,
+                        weight=ft.FontWeight.W_600 if on else ft.FontWeight.W_400,
+                        color=p["text"] if on else p["text2"])]))
+
+    def cur_chip(meta, count):
+        on = _S["curated"] == meta["id"]
+
+        def toggle(e, key=meta["id"]):
+            _S["curated"] = None if _S["curated"] == key else key
+            rerender()
+
+        return ft.Container(
+            padding=PAD(3, 8), border_radius=9, ink=True, on_click=toggle,
+            bgcolor=ft.Colors.with_opacity(0.18, meta["color"]) if on else p["bg2"],
+            border=BRD(meta["color"] if on else p["border"], 1),
+            content=ft.Row(spacing=5, tight=True, controls=[
+                ft.Icon(meta["icon"], size=12,
+                        color=meta["color"] if on else p["text2"]),
+                ft.Text(f"{meta['label']} {count}" if count else meta["label"],
+                        size=10,
                         weight=ft.FontWeight.W_600 if on else ft.FontWeight.W_400,
                         color=p["text"] if on else p["text2"])]))
 
@@ -555,16 +651,51 @@ def build(page):
                                        f"{miles(spot['dist_m']):.1f} mi", 10)]),
                                *buttons]))
 
-    spots = _S["spots"]
-    if spots is None:
-        results.controls = [sub("Pick categories and a distance, then Scan.", 11)]
-        count.value = ""
-    elif not spots:
-        results.controls = [sub("Nothing in those categories that far out.", 11)]
-        count.value = "0 found"
+    # ---------------------------------------------------------- curated
+    cur_data, cur_err = curated()
+    cur_counts = {k: len(v) for k, v in (cur_data or {}).items()
+                  if isinstance(v, list)}
+    cur_spots, cur_nameless = [], []
+    if _S["curated"]:
+        cur_spots, cur_nameless = curated_spots(cur_data, _S["curated"])
+
+    if _S["curated"]:
+        meta = CURATED_BY_ID.get(_S["curated"], CURATED[0])
+        if cur_spots:
+            results.controls = [row(s, saved_row=False) for s in cur_spots]
+            # Film locations is 1362 rows and the list is capped at 250, so
+            # "250 in Film locations" would read as the whole list. The rows
+            # with no coordinates are counted out of this and named below
+            # instead, so the two omissions do not get confused for each other.
+            placeable = cur_counts.get(_S["curated"], len(cur_spots)) - len(cur_nameless)
+            count.value = (f"{len(cur_spots)} nearest of {placeable} in {meta['label']}"
+                           if len(cur_spots) < placeable
+                           else f"{len(cur_spots)} in {meta['label']}")
+        else:
+            results.controls = [sub(
+                cur_err or f"The server's {meta['label']} list is empty.", 11)]
+            count.value = ""
+        if cur_nameless:
+            # Not a footnote: these are real entries the list holds without
+            # coordinates, and quietly dropping them would turn 178 museums
+            # into 117 with nothing said about the rest.
+            shown = " · ".join(cur_nameless[:8])
+            results.controls.append(sub(
+                f"{len(cur_nameless)} more in this list have no coordinates, so "
+                f"they cannot be placed or ridden to: {shown}"
+                + ("…" if len(cur_nameless) > 8 else ""), 10))
     else:
-        results.controls = [row(s, saved_row=False) for s in spots]
-        count.value = f"{len(spots)} found"
+        spots = _S["spots"]
+        if spots is None:
+            results.controls = [sub("Pick categories and a distance, then Scan — "
+                                    "or open one of the curated lists above.", 11)]
+            count.value = ""
+        elif not spots:
+            results.controls = [sub("Nothing in those categories that far out.", 11)]
+            count.value = "0 found"
+        else:
+            results.controls = [row(s, saved_row=False) for s in spots]
+            count.value = f"{len(spots)} found"
 
     if somedays is None:
         saved_box.controls = [sub("No someday list on this device yet - "
@@ -589,7 +720,18 @@ def build(page):
             ft.Row(spacing=6, wrap=True,
                    controls=[cat_chip(CAT_BY_ID[c[0]]) for c in GEM_CATS]),
         ])),
-        card(ft.Column(spacing=4, controls=[title("Found", 13), results])),
+        card(ft.Column(spacing=6, controls=[
+            ft.Row([title("Curated lists", 13), ft.Container(expand=True),
+                    sub(_events_age(cur_data), 10)]),
+            sub("Lists the server keeps by hand, not scan results. Tap one to "
+                "read it; tap it again to go back to your scan.", 10),
+            ft.Row(spacing=6, wrap=True, run_spacing=6, controls=[
+                cur_chip(CURATED_BY_ID[c[0]], cur_counts.get(c[0], 0))
+                for c in CURATED]),
+            *([sub(cur_err, 10)] if cur_err else []),
+        ])),
+        card(ft.Column(spacing=4, controls=[
+            title("Curated" if _S["curated"] else "Found", 13), results])),
         card(ft.Column(spacing=4, controls=[
             ft.Row([title("Someday list", 13), ft.Container(expand=True),
                     sub(f"{len(somedays)} saved" if somedays else "", 10)]),
