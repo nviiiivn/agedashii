@@ -11,8 +11,8 @@ WHERE THE GRAPH COMES FROM
     OSM extract: nodes, a CSR adjacency, per-class lengths, segment
     geometry, street names, two uniform snapping grids and a turn-restriction
     trie, all in one blob that loads by `array.fromfile` rather than being
-    parsed. The Bay Area is 87 MB / 725k nodes and loads in ~66 ms; a 40 km
-    route takes ~190 ms.
+    parsed. The Bay Area is 86 MB / 725,626 nodes and loads in ~72 ms; a
+    40 km route takes ~180 ms on the Pi this was measured on.
 
     Nothing here builds a graph. If there is no `.rg` installed that is a
     normal state, not an error - `route()` falls back to the server's
@@ -52,15 +52,24 @@ THE TWO HONESTY RULES
 THREADING
     The graph loads once, lazily, on a background thread: opening the Trips
     page must not block the UI for 50 ms, and app startup must not pay for a
-    78 MB read that most launches never use. `route()` blocks while it
+    86 MB read that most launches never use. `route()` blocks while it
     searches, so callers run it off the UI thread - `route_async()` is the
     awaitable wrapper that does that for you.
 
     `Graph.search` reuses per-graph scratch buffers (that is what makes
     it fast), so two searches on one Graph would corrupt each other. Every
-    search therefore takes `_SEARCH_LOCK`. Routes are ~190 ms and the user
+    search therefore takes `_SEARCH_LOCK`. Routes are ~180 ms and the user
     asks for one at a time; serialising them is free and the alternative is
     a wrong route.
+
+WHAT IS STILL WRONG, AND KNOWN TO BE
+    Snapping has no heading to go on, so on a divided highway a fix that
+    lands nearer the other carriageway starts the route going the wrong
+    way until the next exit. At realistic GPS error (5-8 m) this is rarer
+    than the junction snap it replaces; at 25 m it is about as common.
+    Turn restrictions with two or more via ways are dropped by the builder
+    rather than guessed at, and so are conditional and other-vehicle ones -
+    see the list in build_graph.py.
 
 Ported from the measured routing spike. The search, the snap, the polyline
 assembly and the maneuver rules are that code, unchanged in behaviour; what
@@ -107,8 +116,35 @@ MAXSPEED_MS = max(SPEED_KMH) / 3.6
 SEC_PER_DM = [0.1 / (k / 3.6) for k in SPEED_KMH]
 # flat penalty added when leaving a node, stands in for intersection delay
 JUNCTION_PENALTY_S = 1.5
+# Turning straight back the way you came is legal on most roads and costs
+# real time: slow, wait for a gap, turn. It is priced rather than banned
+# because at a dead end it is the only move there is. Pricing it is also
+# what makes a banned turn mean anything - with a free U-turn the router
+# will happily drive past the junction, turn round and come back, which is
+# a legal route through an illegal turn and not what the sign meant.
+# 40 s is about 330 m of city driving: enough that a U-turn has to earn it.
+U_TURN_PENALTY_S = 40.0
 
 EARTH_R = 6371008.8
+
+_EMPTY = {}
+
+Snap = namedtuple("Snap", "lat lon dist_m seg i t frac len_m u v fwd bwd")
+Snap.__doc__ = """Where a lat/lon actually lands on the road network.
+
+lat, lon   the projected point - on the road, not the junction
+dist_m     how far the asked-for point was from it. The honest number: it
+           is what says "you are not on a mapped road", and MAX_SNAP_M
+           judges it.
+seg        segment id, or -1 for a fallback snap straight to a junction
+i, t       the projection sits t of the way along the segment's i'th
+           shape-point pair - enough to cut the drawn line at the point
+frac       and this far along the whole segment, by length, 0..1
+len_m      the segment's length, the graph's own figure
+u, v       the junctions the segment runs from and to
+fwd, bwd   the directed edge u->v and the directed edge v->u, or -1 where
+           the road is one-way and that direction does not exist
+"""
 
 
 # ------------------------------------------------------------ graph loading
@@ -132,7 +168,7 @@ def graph_path():
     if override:
         candidates.append(Path(override))
     # APP_ROOT is a module global so a test can point the bundled-asset
-    # search somewhere harmless. Once the real 78 MB graph shipped in
+    # search somewhere harmless. Once the real 86 MB graph shipped in
     # assets/, every "nothing is installed" test started finding it.
     candidates += [APP_ROOT / "assets" / "maps" / GRAPH_FILENAME,
                    APP_ROOT / "maps" / GRAPH_FILENAME,
@@ -166,7 +202,7 @@ def start_loading(path=None):
 
     Phases: "absent" (nothing installed), "loading", "ready", "failed".
 
-    A failure is sticky. Re-reading a 78 MB file that has already failed to
+    A failure is sticky. Re-reading an 86 MB file that has already failed to
     parse, every time a page opens, turns a broken install into a slow one
     as well; replacing the file needs an app restart on a phone anyway.
     `reset()` is the escape hatch for anything that changes the file in
@@ -259,7 +295,7 @@ class Graph:
 
     Ported unchanged from the spike. Everything is a flat `array`, and the
     file layout matches it byte for byte, so loading is `fromfile` rather
-    than parsing - which is the entire reason 78 MB opens in 55 ms.
+    than parsing - which is the entire reason 86 MB opens in 72 ms.
     """
 
     __slots__ = ("n", "e", "s", "p", "xy", "off", "to", "len", "cls", "seg",
@@ -267,7 +303,7 @@ class Graph:
                  "grid_off", "grid_nod", "gw", "gh", "minx", "miny", "cell",
                  "olat", "olon", "mx", "my", "path", "version",
                  "sgrid_off", "sgrid_seg", "tr_off", "tr_edge", "tr_next",
-                 "tr_head", "tr_gate", "ntrie", "ns", "_root",
+                 "tr_head", "tr_gate", "ntrie", "ns", "_root", "_nogate",
                  "_dist", "_par", "_prev", "_stamp", "_tgt", "_gen")
 
     MAGIC = b"RGRAPH01"
@@ -329,12 +365,15 @@ class Graph:
                 self.tr_head = None
                 self.tr_gate = bytes(n)
             self.blob = f.read(nblob)
+            if len(self.blob) != nblob:
+                raise ValueError("graph file is truncated")
         self.ntrie = ntrie
         # Search states: [0, n) is "at this node, no restriction in play";
         # [n, n+ntrie-1) is trie state t >= 1, which pins down both the node
         # and the part-matched restriction. One integer, either way.
         self.ns = n + (ntrie - 1 if ntrie else 0)
         self._root = None
+        self._nogate = None
 
     # ---------------------------------------------------------- helpers
     def name(self, sid):
@@ -412,38 +451,216 @@ class Graph:
             r += 1
         return best, math.sqrt(bestd)
 
-    # ---------------------------------------- A* with reusable scratch
-    def astar_fast(self, src, dst, metric="time", weight=1.0):
-        """A*, with the O(n) per-call scratch allocation hoisted.
+    def node_at(self, lat, lon):
+        """The node index sitting exactly on this coordinate, or -1.
 
-        A fresh [inf]*n / [-1]*n / bytearray(n) per route costs ~3n writes,
-        which is the one thing that scales with graph size rather than route
-        length. Here the buffers are allocated once per Graph and
-        invalidated with a generation counter, so the per-route reset is
-        O(settled) instead of O(n).
+        Used to tie a segment's first and last shape point back to the two
+        junctions they are, which is what saves the file a 7.6 MB
+        segment-to-edge table: the endpoints *are* the index.
+        """
+        x, y = self.proj(lat, lon)
+        gw, gh, cell = self.gw, self.gh, self.cell
+        cx = int((x - self.minx) / cell)
+        cy = int((y - self.miny) / cell)
+        xy, goff, gnod = self.xy, self.grid_off, self.grid_nod
+        best, bestd = -1, 1.0                      # 1 m; f32 error is ~2 cm
+        for j in range(max(0, cy - 1), min(gh, cy + 2)):
+            for i in range(max(0, cx - 1), min(gw, cx + 2)):
+                c = j * gw + i
+                for k in range(goff[c], goff[c + 1]):
+                    nd = gnod[k]
+                    d = abs(xy[2 * nd] - x) + abs(xy[2 * nd + 1] - y)
+                    if d < bestd:
+                        bestd, best = d, nd
+        return best
+
+    def snap_edge(self, lat, lon, max_m=MAX_SNAP_M):
+        """Nearest point on a *road*, not nearest junction. A Snap, or None.
+
+        The segment grid buckets every segment into every cell its geometry
+        crosses, so expanding rings until the ring distance exceeds the best
+        hit so far is exact - unlike growing a junction search, which can
+        never prove it has not missed a long edge running past the door.
+
+        Returns None on an RGRAPH01 graph (no segment grid), on an empty
+        graph, or when nothing lies within `max_m`. Callers fall back to
+        `snap()` and say which one they used.
+        """
+        if self.sgrid_off is None or not self.s:
+            return None
+        x, y = self.proj(lat, lon)
+        cell, gw, gh = self.cell, self.gw, self.gh
+        cx = int((x - self.minx) / cell)
+        cy = int((y - self.miny) / cell)
+        goff, gseg, geom, so = (self.sgrid_off, self.sgrid_seg,
+                                self.geom, self.seg_off)
+        mx, my, olat, olon = self.mx, self.my, self.olat, self.olon
+        seen = set()
+        add = seen.add
+        best = None
+        bestd = 1e30
+        r = 0
+        rmax = int(max_m / cell) + 2
+        while r <= rmax:
+            for j in range(max(0, cy - r), min(gh, cy + r + 1)):
+                if r and cy - r < j < cy + r:
+                    cols = (cx - r, cx + r)
+                else:
+                    cols = range(max(0, cx - r), min(gw, cx + r + 1))
+                for i in cols:
+                    if i < 0 or i >= gw:
+                        continue
+                    c = j * gw + i
+                    for q in range(goff[c], goff[c + 1]):
+                        sid = gseg[q]
+                        if sid in seen:
+                            continue
+                        add(sid)
+                        a, b = so[sid], so[sid + 1]
+                        px = (geom[2 * a + 1] / 1e7 - olon) * mx
+                        py = (geom[2 * a] / 1e7 - olat) * my
+                        for i2 in range(a, b - 1):
+                            qx = (geom[2 * i2 + 3] / 1e7 - olon) * mx
+                            qy = (geom[2 * i2 + 2] / 1e7 - olat) * my
+                            ex, ey = qx - px, qy - py
+                            l2 = ex * ex + ey * ey
+                            if l2 <= 0.0:
+                                t = 0.0
+                            else:
+                                t = ((x - px) * ex + (y - py) * ey) / l2
+                                if t < 0.0:
+                                    t = 0.0
+                                elif t > 1.0:
+                                    t = 1.0
+                            dx = px + t * ex - x
+                            dy = py + t * ey - y
+                            d = dx * dx + dy * dy
+                            if d < bestd:
+                                bestd = d
+                                best = (sid, i2 - a, t)
+                            px, py = qx, qy
+            if best is not None and r * cell > math.sqrt(bestd):
+                break
+            r += 1
+        if best is None:
+            return None
+        return self._snap_detail(best, math.sqrt(bestd))
+
+    def _snap_detail(self, best, dist_m):
+        """Turn (segment, point index, parameter) into a full Snap."""
+        sid, i, t = best
+        geom, so = self.geom, self.seg_off
+        a, b = so[sid], so[sid + 1]
+        lat0 = geom[2 * (a + i)] / 1e7
+        lon0 = geom[2 * (a + i) + 1] / 1e7
+        lat1 = geom[2 * (a + i + 1)] / 1e7
+        lon1 = geom[2 * (a + i + 1) + 1] / 1e7
+        plat = lat0 + (lat1 - lat0) * t
+        plon = lon0 + (lon1 - lon0) * t
+        # how far along the whole segment, by length, the projection sits
+        run = 0.0
+        upto = 0.0
+        mx, my, olat, olon = self.mx, self.my, self.olat, self.olon
+        px = (geom[2 * a + 1] / 1e7 - olon) * mx
+        py = (geom[2 * a] / 1e7 - olat) * my
+        for j in range(a, b - 1):
+            qx = (geom[2 * j + 3] / 1e7 - olon) * mx
+            qy = (geom[2 * j + 2] / 1e7 - olat) * my
+            step = math.hypot(qx - px, qy - py)
+            if j - a == i:
+                upto = run + step * t
+            run += step
+            px, py = qx, qy
+        frac = (upto / run) if run > 0 else 0.0
+        # the two junctions the segment runs between, and the directed edges
+        u = self.node_at(geom[2 * a] / 1e7, geom[2 * a + 1] / 1e7)
+        v = self.node_at(geom[2 * (b - 1)] / 1e7, geom[2 * (b - 1) + 1] / 1e7)
+        fwd = bwd = -1
+        off, seg = self.off, self.seg
+        if u >= 0:
+            for k in range(off[u], off[u + 1]):
+                if seg[k] == sid:
+                    fwd = k
+                    break
+        if v >= 0:
+            for k in range(off[v], off[v + 1]):
+                if seg[k] == (sid | 0x80000000):
+                    bwd = k
+                    break
+        if fwd < 0 and bwd < 0:
+            return None
+        length = self.len[fwd if fwd >= 0 else bwd] / 10.0
+        return Snap(plat, plon, dist_m, sid, i, t, frac, length, u, v,
+                    fwd, bwd)
+
+    # ---------------------------------------- A* with reusable scratch
+    def search(self, sources, targets, goal, metric="time", weight=1.0,
+               restrictions=True):
+        """A* from a set of starts to a set of finishes, honouring turns.
+
+        `sources` is [(state, cost already spent getting there)], `targets`
+        is {node: (cost still to spend after arriving, final edge or -1)},
+        and `goal` is the (x, y) in projected metres that the heuristic aims
+        at. Those three are what let a route begin and end in the middle of
+        a block: the part-edge at each end is priced as a source cost and a
+        finish cost rather than pretended away.
+
+        Returns (total_cost, edges, source_state, settled). `edges` is the
+        list of directed edge ids between the winning source and finish, and
+        is [] for a finish on the source's own edge. `edges` is None when
+        there is no route.
+
+        Admissibility, and therefore the early exit: every edge costs at
+        least its straight-line length over the fastest calibrated speed,
+        and so does every finish cost, so once the cheapest thing left in
+        the heap is no better than the best finish already found, nothing
+        left can beat it.
+
+        A* with the O(n) per-call scratch allocation hoisted: a fresh
+        [inf]*n / [-1]*n per route costs ~3n writes, the one thing that
+        scales with graph size rather than route length. The buffers are
+        allocated once per Graph and invalidated with a generation counter,
+        so the per-route reset is O(settled) instead of O(n).
 
         NOT reentrant: the scratch is shared. Callers hold _SEARCH_LOCK.
         """
-        n = self.n
+        n, ns = self.n, self.ns
         try:
             dist = self._dist
         except AttributeError:
-            self._dist = dist = [0.0] * n
-            self._par = [-1] * n
-            self._stamp = array("I", bytes(4 * n))
+            self._dist = dist = [0.0] * ns
+            self._par = array("i", bytes(4 * ns))
+            self._prev = array("i", bytes(4 * ns))
+            self._stamp = array("I", bytes(4 * ns))
+            self._tgt = bytearray(n)
             self._gen = 0
-        par, stamp = self._par, self._stamp
+        par, prev, stamp = self._par, self._prev, self._stamp
+        tgt = self._tgt
         self._gen += 1
         if self._gen >= 0x7FFFFFFF:          # generation wrap, ~2e9 routes
-            self._stamp = stamp = array("I", bytes(4 * n))
+            self._stamp = stamp = array("I", bytes(4 * ns))
             self._gen = 1
         gen = self._gen
         CLOSED = 0x80000000
+        closed = gen | CLOSED
+        BANNED = self.BANNED
 
         off, to, elen, ecls = self.off, self.to, self.len, self.cls
         xy = self.xy
-        gx = xy[2 * dst]
-        gy = xy[2 * dst + 1]
+        tr_off, tr_edge, tr_next, tr_head = (self.tr_off, self.tr_edge,
+                                             self.tr_next, self.tr_head)
+        if restrictions:
+            gate = self.tr_gate
+            root_get = self.root_map().get
+        else:
+            # Used only to answer "is this unroutable because of a banned
+            # turn, or at all?" - see _route_offline. Allocated the first
+            # time that question is asked, which on most graphs is never.
+            if self._nogate is None:
+                self._nogate = bytes(self.n)
+            gate = self._nogate
+            root_get = _EMPTY.get
+        gx, gy = goal
         sqrt = math.sqrt
         push = heapq.heappush
         pop = heapq.heappop
@@ -451,71 +668,137 @@ class Graph:
             spd = SEC_PER_DM
             inv_h = weight / MAXSPEED_MS
             pen = JUNCTION_PENALTY_S
+            uturn = U_TURN_PENALTY_S
         else:
             spd = [0.1] * len(SEC_PER_DM)
             inv_h = weight
             pen = 0.0
+            uturn = 0.0
 
-        dist[src] = 0.0
-        par[src] = -1
-        stamp[src] = gen
-        dx = xy[2 * src] - gx
-        dy = xy[2 * src + 1] - gy
-        heap = [(sqrt(dx * dx + dy * dy) * inv_h, src)]
-        settled = 0
-        while heap:
-            _, u = pop(heap)
-            su = stamp[u]
-            if su & CLOSED:
+        heap = []
+        for state, cost0 in sources:
+            if stamp[state] == gen and dist[state] <= cost0:
                 continue
-            stamp[u] = gen | CLOSED
-            settled += 1
-            if u == dst:
-                return dist[u], (par, stamp, gen), settled
-            du = dist[u]
-            for k in range(off[u], off[u + 1]):
-                v = to[k]
-                sv = stamp[v]
-                if sv == (gen | CLOSED):
+            dist[state] = cost0
+            par[state] = -1
+            prev[state] = -1
+            stamp[state] = gen
+            sn = state if state < n else tr_head[state - n + 1]
+            dx = xy[2 * sn] - gx
+            dy = xy[2 * sn + 1] - gy
+            push(heap, (cost0 + sqrt(dx * dx + dy * dy) * inv_h, state))
+        for node in targets:
+            tgt[node] = 1
+
+        best_cost = float("inf")
+        best_state = -1
+        settled = 0
+        try:
+            while heap:
+                f, s = pop(heap)
+                if f >= best_cost:
+                    break
+                if stamp[s] & CLOSED:
                     continue
-                nd = du + elen[k] * spd[ecls[k]] + pen
-                if sv != gen or nd < dist[v]:
-                    dist[v] = nd
-                    par[v] = k
-                    stamp[v] = gen
-                    dx = xy[2 * v] - gx
-                    dy = xy[2 * v + 1] - gy
-                    push(heap, (nd + sqrt(dx * dx + dy * dy) * inv_h, v))
-        return None, (par, stamp, gen), settled
+                stamp[s] = closed
+                settled += 1
+                if s < n:
+                    u = s
+                    ca = cb = 0
+                else:
+                    t = s - n + 1
+                    u = tr_head[t]
+                    ca, cb = tr_off[t], tr_off[t + 1]
+                du = dist[s]
+                ps = prev[s]
+                if ps < 0:
+                    pnode = -1
+                elif ps < n:
+                    pnode = ps
+                else:
+                    pnode = tr_head[ps - n + 1]
+                if tgt[u]:
+                    finish, fedge = targets[u]
+                    allowed = True
+                    if fedge >= 0 and cb > ca:
+                        for c in range(ca, cb):
+                            if tr_edge[c] == fedge:
+                                allowed = tr_next[c] != BANNED
+                                break
+                    if allowed and du + finish < best_cost:
+                        best_cost = du + finish
+                        best_state = s
+                if cb == ca and not gate[u]:
+                    # the ordinary case: nothing here is restricted
+                    for k in range(off[u], off[u + 1]):
+                        v = to[k]
+                        sv = stamp[v]
+                        if sv == closed:
+                            continue
+                        nd = du + elen[k] * spd[ecls[k]] + pen
+                        if v == pnode:
+                            nd += uturn
+                        if sv != gen or nd < dist[v]:
+                            dist[v] = nd
+                            par[v] = k
+                            prev[v] = s
+                            stamp[v] = gen
+                            dx = xy[2 * v] - gx
+                            dy = xy[2 * v + 1] - gy
+                            push(heap, (nd + sqrt(dx * dx + dy * dy) * inv_h, v))
+                else:
+                    for k in range(off[u], off[u + 1]):
+                        vn = to[k]
+                        nxt = -1
+                        for c in range(ca, cb):
+                            if tr_edge[c] == k:
+                                nxt = tr_next[c]
+                                break
+                        if nxt < 0 and gate[u]:
+                            nxt = root_get(k, -1)
+                        if nxt == BANNED:
+                            continue
+                        v = vn if nxt < 0 else n + nxt - 1
+                        sv = stamp[v]
+                        if sv == closed:
+                            continue
+                        nd = du + elen[k] * spd[ecls[k]] + pen
+                        if vn == pnode:
+                            nd += uturn
+                        if sv != gen or nd < dist[v]:
+                            dist[v] = nd
+                            par[v] = k
+                            prev[v] = s
+                            stamp[v] = gen
+                            dx = xy[2 * vn] - gx
+                            dy = xy[2 * vn + 1] - gy
+                            push(heap, (nd + sqrt(dx * dx + dy * dy) * inv_h, v))
+        finally:
+            for node in targets:
+                tgt[node] = 0
 
+        if best_state < 0:
+            return None, None, -1, settled
+        edges = []
+        v = best_state
+        while par[v] >= 0:
+            edges.append(par[v])
+            v = prev[v]
+            if len(edges) > self.e:          # cycle guard; should never fire
+                return None, None, -1, settled
+        edges.reverse()
+        return best_cost, edges, v, settled
 
-def _tail(g, k):
-    """Owner node of directed edge index k (binary search in CSR offsets)."""
-    off = g.off
-    lo, hi = 0, g.n
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if off[mid] <= k:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo - 1
+    def astar_fast(self, src, dst, metric="time", weight=1.0):
+        """Plain node-to-node A*. (cost, edges, settled); cost None = no route.
 
-
-def edge_path(g, parent, src, dst):
-    """Walk the parent array back from dst to src. List of edge ids, or None."""
-    path = []
-    v = dst
-    while v != src:
-        k = parent[v]
-        if k < 0:
-            return None
-        path.append(k)
-        v = _tail(g, k)
-        if len(path) > g.e:                  # cycle guard; should never fire
-            return None
-    path.reverse()
-    return path
+        A thin wrapper over `search` kept because "route between these two
+        junctions" is still the question a test or a bench wants to ask.
+        """
+        cost, edges, _src, settled = self.search(
+            [(src, 0.0)], {dst: (0.0, -1)},
+            (self.xy[2 * dst], self.xy[2 * dst + 1]), metric, weight)
+        return cost, edges, settled
 
 
 # ---------------------------------------------------------------- geometry
@@ -548,7 +831,12 @@ def polyline(g, edges):
 
 
 def _polyline_bounds(g, edges):
-    """(points, bounds) where bounds[i] = (first_idx, last_idx) of edge i.
+    """(points, bounds) where bounds[i] = (first_idx, last_idx) of edge i."""
+    return _chain([_edge_points(g, k) for k in edges])
+
+
+def _chain(chunks):
+    """(points, bounds) where bounds[i] = (first_idx, last_idx) of chunk i.
 
     The spike's `polyline()` threw the per-edge boundaries away. Live
     guidance needs them: they are what ties a maneuver to a point on the
@@ -557,8 +845,7 @@ def _polyline_bounds(g, edges):
     """
     pts = []
     bounds = []
-    for k in edges:
-        chunk = _edge_points(g, k)
+    for chunk in chunks:
         if not chunk:
             last = max(len(pts) - 1, 0)
             bounds.append((last, last))
@@ -655,33 +942,38 @@ def compass_word(deg):
     return COMPASS[int((deg + 22.5) % 360 / 45)]
 
 
-def _maneuvers_from_graph(g, edges, pts, bounds, cum):
+def _maneuvers_from_legs(g, legs, pts, bounds, cum):
     """Turn-by-turn list. The spike's rules, plus where each turn happens.
 
     A junction only earns an instruction if the geometry actually turns
     *and* there was a real alternative (degree > 2), or the street name
     changes. Without the degree test every kink in a road becomes a "bear
     left" and the list is unreadable.
+
+    A leg is (points, length_m, class, street name, node it ends at). Most
+    are whole graph edges; the first and last may be part of one, which is
+    the point - the "head <compass>" now describes the direction the rider
+    is really facing rather than the direction out of a junction they are
+    nowhere near.
     """
-    if not edges:
+    if not legs:
         return []
     out = []
-    cur_name = g.name(g.seg[edges[0]] & 0x7FFFFFFF)
+    cur_name = legs[0][3]
     start_b = bearing(pts[0], pts[1]) if len(pts) > 1 else 0.0
     out.append([f"head {compass_word(start_b)}"
                 + (f" on {cur_name}" if cur_name else ""),
                 cur_name, 0.0, pts[0], 0, 0.0])
-    run = g.len[edges[0]] / 10.0
-    for i in range(1, len(edges)):
-        k0, k1 = edges[i - 1], edges[i]
-        nm = g.name(g.seg[k1] & 0x7FFFFFFF)
+    run = legs[0][1]
+    for i in range(1, len(legs)):
+        nm = legs[i][3]
         s0, e0 = bounds[i - 1]
         s1, e1 = bounds[i]
         b0 = bearing(pts[e0 - 1], pts[e0]) if e0 > s0 else 0.0
         b1 = bearing(pts[s1], pts[s1 + 1]) if e1 > s1 else 0.0
         delta = (b1 - b0 + 540) % 360 - 180
-        node = g.to[k0]
-        degree = g.off[node + 1] - g.off[node]
+        node = legs[i - 1][4]
+        degree = (g.off[node + 1] - g.off[node]) if node >= 0 else 0
         significant = (abs(delta) > 25 and degree > 2) or (nm != cur_name and nm)
         if significant:
             out[-1][2] = run
@@ -689,11 +981,82 @@ def _maneuvers_from_graph(g, edges, pts, bounds, cum):
                         nm, 0.0, pts[s1], s1, cum[s1]])
             cur_name = nm
             run = 0.0
-        run += g.len[k1] / 10.0
+        run += legs[i][1]
     out[-1][2] = run
     out.append(["arrive at your destination", cur_name, 0.0,
                 pts[-1], len(pts) - 1, cum[-1]])
     return [Maneuver(*m) for m in out]
+
+
+def _edge_leg(g, k):
+    """One whole directed edge, as a leg."""
+    return (_edge_points(g, k), g.len[k] / 10.0, g.cls[k],
+            g.name(g.seg[k] & 0x7FFFFFFF), g.to[k])
+
+
+def _same_point(a, b):
+    return abs(a[0] - b[0]) < 1e-9 and abs(a[1] - b[1]) < 1e-9
+
+
+def _part_leg(g, snap, k, to_end, head):
+    """The slice of a snapped segment on one side of the projection.
+
+    `to_end` True gives the run from the projection to the segment's last
+    shape point, False the run from its first shape point to the
+    projection; either is then reversed by the caller if it is travelled
+    the other way. Returns None when the slice is too short to draw or to
+    count, which happens whenever the fix lands on a junction.
+    """
+    pts = _seg_points(g, snap.seg)
+    p = (snap.lat, snap.lon)
+    if to_end:
+        chunk = list(pts[snap.i + 1:])
+        if chunk and _same_point(chunk[0], p):
+            chunk[0] = p
+        else:
+            chunk.insert(0, p)
+        length = (1.0 - snap.frac) * snap.len_m
+    else:
+        chunk = list(pts[:snap.i + 1])
+        if chunk and _same_point(chunk[-1], p):
+            chunk[-1] = p
+        else:
+            chunk.append(p)
+        length = snap.frac * snap.len_m
+    if len(chunk) < 2 or length < 0.05:
+        return None
+    return (chunk, length, g.cls[k], g.name(snap.seg), head)
+
+
+def _seg_points(g, sid):
+    a, b = g.seg_off[sid], g.seg_off[sid + 1]
+    geom = g.geom
+    return [(geom[2 * i] / 1e7, geom[2 * i + 1] / 1e7) for i in range(a, b)]
+
+
+def _mid_leg(g, snap_a, snap_b, k, forward):
+    """The slice of one segment between two projections onto it.
+
+    Start and destination on the same block is the one case the search
+    cannot answer: both ends are the same edge, so there is nothing to
+    search. Travelling it directly is also always the cheapest way, since
+    the only alternative is the whole way round.
+    """
+    pts = _seg_points(g, snap_a.seg)
+    lo, hi = (snap_a, snap_b) if forward else (snap_b, snap_a)
+    chunk = ([(lo.lat, lo.lon)]
+             + pts[lo.i + 1:hi.i + 1]
+             + [(hi.lat, hi.lon)])
+    out = [chunk[0]]
+    for q in chunk[1:]:
+        if not _same_point(out[-1], q):
+            out.append(q)
+    if not forward:
+        out.reverse()
+    length = abs(snap_b.frac - snap_a.frac) * snap_a.len_m
+    if len(out) < 2 or length < 0.05:
+        return None
+    return (out, length, g.cls[k], g.name(snap_a.seg), -1)
 
 
 # ------------------------------------------------------------------- Route
@@ -849,15 +1212,88 @@ def remaining(route, position):
 
 # ----------------------------------------------------------- offline route
 
+def _anchor(g, lat, lon):
+    """Snap a point, preferring an edge and falling back to a junction."""
+    s = g.snap_edge(lat, lon)
+    if s is not None:
+        return s
+    node, d = g.snap(lat, lon)
+    if node < 0:
+        return None
+    return Snap(g.olat + g.xy[2 * node + 1] / g.my,
+                g.olon + g.xy[2 * node] / g.mx,
+                d, -1, 0, 0.0, 0.0, 0.0, node, node, -1, -1)
+
+
+def _at_junction(s):
+    """The node this snap is really standing on, or -1 for mid-block.
+
+    A projection that lands within a metre of a segment's end is at the
+    junction, and treating it as "part-way along this one segment" would
+    offer the rider only that segment's two directions out of a crossroads
+    that has four. One metre is well inside GPS noise and inside the
+    precision the geometry is stored at.
+    """
+    if s.seg < 0:
+        return s.u
+    if s.frac * s.len_m <= 1.0:
+        return s.u
+    if (1.0 - s.frac) * s.len_m <= 1.0:
+        return s.v
+    return -1
+
+
+def _sources_for(g, s):
+    """[(search state, cost already spent)] for starting at snap `s`.
+
+    Both ways out of the block, where both are legal: the rider halfway
+    down a two-way street may reach either end, and which one is cheaper
+    depends on where they are going. On a one-way there is only one.
+    """
+    node = _at_junction(s)
+    if node >= 0:
+        return [(node, 0.0)], {}
+    out = []
+    legs = {}
+    if s.fwd >= 0:
+        state = g.entry_state(s.fwd)
+        out.append((state, (1.0 - s.frac) * s.len_m * 10.0
+                    * SEC_PER_DM[g.cls[s.fwd]]))
+        legs[state] = (s.fwd, True)
+    if s.bwd >= 0:
+        state = g.entry_state(s.bwd)
+        out.append((state, s.frac * s.len_m * 10.0 * SEC_PER_DM[g.cls[s.bwd]]))
+        legs[state] = (s.bwd, False)
+    return out, legs
+
+
+def _targets_for(g, s):
+    """{node: (cost still to spend, final edge)} for finishing at snap `s`."""
+    node = _at_junction(s)
+    if node >= 0:
+        return {node: (0.0, -1)}, {}
+    out = {}
+    legs = {}
+    if s.fwd >= 0:
+        out[s.u] = (s.frac * s.len_m * 10.0 * SEC_PER_DM[g.cls[s.fwd]], s.fwd)
+        legs[s.u] = (s.fwd, False)
+    if s.bwd >= 0 and s.v not in out:
+        out[s.v] = ((1.0 - s.frac) * s.len_m * 10.0
+                    * SEC_PER_DM[g.cls[s.bwd]], s.bwd)
+        legs[s.v] = (s.bwd, True)
+    return out, legs
+
+
 def _route_offline(g, frm, to):
     t0 = time.perf_counter()
     with _SEARCH_LOCK:
-        src, ds = g.snap(*frm)
-        dst, dd = g.snap(*to)
-        if src < 0 or dst < 0:
-            which = "start" if src < 0 else "destination"
+        a = _anchor(g, *frm)
+        b = _anchor(g, *to)
+        if a is None or b is None:
+            which = "start" if a is None else "destination"
             return _failed("offline", f"the {which} is outside the area the "
                                       f"offline map covers")
+        ds, dd = a.dist_m, b.dist_m
         if ds > MAX_SNAP_M or dd > MAX_SNAP_M:
             far, dist = ("start", ds) if ds >= dd else ("destination", dd)
             return _failed("offline",
@@ -865,32 +1301,81 @@ def _route_offline(g, frm, to):
                            f"road in the offline map - it is outside the area "
                            f"this graph covers",
                            snap_from_m=ds, snap_to_m=dd)
-        if src == dst:
+        if haversine_m((a.lat, a.lon), (b.lat, b.lon)) < 1.0:
             return _failed("offline",
-                           "start and destination snap to the same junction",
-                           snap_from_m=ds, snap_to_m=dd)
-        cost, state, _settled = g.astar_fast(src, dst, "time")
-        if cost is None:
-            return _failed("offline",
-                           "no road route between those two points in the "
-                           "offline map", snap_from_m=ds, snap_to_m=dd)
-        edges = edge_path(g, state[0], src, dst)
-    if not edges:
+                           "start and destination are the same place on the "
+                           "same road", snap_from_m=ds, snap_to_m=dd)
+        note = ""
+        legs = _same_block(g, a, b)
+        if legs is None:
+            sources, head_legs = _sources_for(g, a)
+            targets, tail_legs = _targets_for(g, b)
+            cost, edges, src_state, _settled = g.search(
+                sources, targets, g.proj(b.lat, b.lon), "time")
+            if cost is None:
+                # Turn restrictions can strand a pocket of road that the
+                # graph's own connectivity check said was fine - a ramp you
+                # may only leave one way, tagged so you may not. Refusing to
+                # route there is the wrong answer on a motorcycle; so is
+                # quietly routing through a banned turn. Do it, and say so.
+                cost, edges, src_state, _settled = g.search(
+                    sources, targets, g.proj(b.lat, b.lon), "time",
+                    restrictions=False)
+                if cost is None:
+                    return _failed("offline",
+                                   "no road route between those two points "
+                                   "in the offline map",
+                                   snap_from_m=ds, snap_to_m=dd)
+                note = ("the only way there in the offline map goes through a "
+                        "turn the map says is banned - check the signs")
+            legs = []
+            if src_state in head_legs:
+                k, to_end = head_legs[src_state]
+                leg = _part_leg(g, a, k, to_end, g.to[k])
+                if leg is not None:
+                    if not to_end:
+                        leg = ([q for q in reversed(leg[0])],) + leg[1:]
+                    legs.append(leg)
+            legs += [_edge_leg(g, k) for k in edges]
+            end_node = (g.to[edges[-1]] if edges
+                        else g.state_node(src_state))
+            if end_node in tail_legs:
+                k, to_end = tail_legs[end_node]
+                leg = _part_leg(g, b, k, to_end, -1)
+                if leg is not None:
+                    if to_end:
+                        leg = ([q for q in reversed(leg[0])],) + leg[1:]
+                    legs.append(leg)
+    if not legs:
         return _failed("offline", "the offline router produced an empty path",
                        snap_from_m=ds, snap_to_m=dd)
-    pts, bounds = _polyline_bounds(g, edges)
+    pts, bounds = _chain([leg[0] for leg in legs])
     if len(pts) < 2:
         return _failed("offline", "the offline route has no drawable shape",
                        snap_from_m=ds, snap_to_m=dd)
-    cum = cumulative_m(pts, [g.len[k] / 10.0 for k in edges], bounds)
-    turns = _maneuvers_from_graph(g, edges, pts, bounds, cum)
+    cum = cumulative_m(pts, [leg[1] for leg in legs], bounds)
+    turns = _maneuvers_from_legs(g, legs, pts, bounds, cum)
     return Route(ok=True, source="offline",
                  source_detail=f"offline · {Path(g.path).name}",
-                 reason="", points=pts, maneuvers=turns,
-                 distance_m=total_length_m(g, edges),
-                 duration_s=total_time_s(g, edges), cum_m=cum,
-                 snap_from_m=ds, snap_to_m=dd,
+                 reason=note, points=pts, maneuvers=turns,
+                 distance_m=sum(leg[1] for leg in legs),
+                 duration_s=sum(leg[1] * 10.0 * SEC_PER_DM[leg[2]]
+                                for leg in legs),
+                 cum_m=cum, snap_from_m=ds, snap_to_m=dd,
                  elapsed_ms=(time.perf_counter() - t0) * 1000)
+
+
+def _same_block(g, a, b):
+    """The legs for a trip that never leaves one segment, or None."""
+    if a.seg < 0 or a.seg != b.seg:
+        return None
+    if a.frac <= b.frac and a.fwd >= 0:
+        leg = _mid_leg(g, a, b, a.fwd, True)
+    elif a.frac >= b.frac and a.bwd >= 0:
+        leg = _mid_leg(g, a, b, a.bwd, False)
+    else:
+        return None                       # one-way, the wrong way: go around
+    return [leg] if leg is not None else None
 
 
 # ------------------------------------------------------------ server route

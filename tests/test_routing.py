@@ -17,18 +17,20 @@ somewhere with no signal:
 3. **The arithmetic behind the guidance.** Distance along the route,
    distance to the next turn, and the formatting of both are what the rider
    actually reads at 60 mph. They are pure functions here so they can be
-   tested without 78 MB of graph.
+   tested without 86 MB of graph.
 
 Everything runs offline. The cases that need the real graph skip themselves,
 loudly, when it is not installed - a skipped test says "not checked here",
 which is true, while a test that quietly passes without its data does not.
 """
+import math
 import os
 import struct
 import sys
 import tempfile
 import threading
 import unittest
+from array import array
 from pathlib import Path
 from unittest import mock
 
@@ -85,7 +87,7 @@ class RoutingTestCase(unittest.TestCase):
 
     def setUp(self):
         self._env = os.environ.get(R.ENV_OVERRIDE)
-        # The real 78 MB graph now ships in assets/, so the bundled-asset
+        # The real 86 MB graph now ships in assets/, so the bundled-asset
         # search must be redirected or every "nothing installed" case finds
         # it and these tests assert against the shipping file.
         self._root = R.APP_ROOT
@@ -178,7 +180,7 @@ class TestLoader(RoutingTestCase):
         self.assertIn("truncated.rg", st["detail"])
 
     def test_loading_happens_once_even_when_asked_many_times(self):
-        """start_loading runs on every page open; it must not re-read 78 MB."""
+        """start_loading runs on every page open; it must not re-read 86 MB."""
         calls = []
         real_thread = threading.Thread
 
@@ -545,6 +547,448 @@ class TestGuidance(RoutingTestCase):
                          "no graph")
 
 
+# -------------------------------------- a whole graph, small enough to read
+#
+# The shipped Bay Area graph is 86 MB and is not on the CI box, so the two
+# things that most need testing - snapping to a point halfway down a block,
+# and refusing a banned turn - would otherwise only ever be checked by hand.
+# So build a nine-node lattice and write it out in the real file format.
+# Writing the format here rather than importing a helper from the module is
+# deliberate: if the loader and the builder drift apart, this catches it.
+
+def _pack_trie(bans, adj_to, adj_off, n_nodes):
+    """Banned directed-edge sequences -> the packed trie the router reads."""
+    children = [{}]
+    banned = [set()]
+    head = [0]
+    for seq in bans:
+        t = 0
+        for e in seq[:-1]:
+            nt = children[t].get(e)
+            if nt is None:
+                nt = len(children)
+                children.append({})
+                banned.append(set())
+                head.append(adj_to[e])
+                children[t][e] = nt
+            t = nt
+        banned[t].add(seq[-1])
+    ntr = len(children)
+    tr_off = array("I", bytes(4 * (ntr + 1)))
+    tr_edge = array("I")
+    tr_next = array("I")
+    for t in range(ntr):
+        tr_off[t] = len(tr_edge)
+        for e, c in children[t].items():
+            tr_edge.append(e)
+            tr_next.append(c)
+        for e in banned[t]:
+            tr_edge.append(e)
+            tr_next.append(0xFFFFFFFF)
+    tr_off[ntr] = len(tr_edge)
+    gate = bytearray(n_nodes)
+    for e in children[0]:
+        lo, hi = 0, n_nodes
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if adj_off[mid] <= e:
+                lo = mid + 1
+            else:
+                hi = mid
+        gate[lo - 1] = 1
+    return tr_off, tr_edge, tr_next, array("I", head), gate
+
+
+def _pack_graph(path, nodes, segs, bans=(), version=2, cell=400.0):
+    """Write a .rg file. Returns {(u, v): directed edge index}.
+
+    `nodes` is [(lat, lon)], `segs` is [(u, v, street name, one-way?, road
+    class)], and `bans` is [(edge, edge, ...)] - sequences that may not be
+    driven in order.
+    """
+    n = len(nodes)
+    strings = [""]
+    seg_pts = array("i")
+    seg_off = array("I", [0])
+    seg_name = array("I")
+    out_edges = [[] for _ in range(n)]
+    for sid, (u, v, name, oneway, cls) in enumerate(segs):
+        if name not in strings:
+            strings.append(name)
+        mid = ((nodes[u][0] + nodes[v][0]) / 2, (nodes[u][1] + nodes[v][1]) / 2)
+        for la, lo in (nodes[u], mid, nodes[v]):
+            seg_pts.append(int(round(la * 1e7)))
+            seg_pts.append(int(round(lo * 1e7)))
+        seg_off.append(len(seg_pts) // 2)
+        seg_name.append(strings.index(name))
+        ldm = max(1, int(R.haversine_m(nodes[u], nodes[v]) * 10))
+        out_edges[u].append((v, ldm, cls, sid))
+        if not oneway:
+            out_edges[v].append((u, ldm, cls, sid | 0x80000000))
+    e = sum(len(x) for x in out_edges)
+    adj_off = array("I", bytes(4 * (n + 1)))
+    adj_to = array("I")
+    adj_len = array("I")
+    adj_cls = array("B")
+    adj_seg = array("I")
+    index = {}
+    for i in range(n):
+        adj_off[i] = len(adj_to)
+        for (v, ldm, c, sid) in out_edges[i]:
+            index[(i, v)] = len(adj_to)
+            adj_to.append(v)
+            adj_len.append(ldm)
+            adj_cls.append(c)
+            adj_seg.append(sid)
+    adj_off[n] = len(adj_to)
+
+    olat = sum(q[0] for q in nodes) / n
+    olon = sum(q[1] for q in nodes) / n
+    my = 111132.92 - 559.82 * math.cos(2 * olat * math.pi / 180)
+    mx = 111412.84 * math.cos(olat * math.pi / 180)
+    xy = array("f", bytes(8 * n))
+    for i, (la, lo) in enumerate(nodes):
+        xy[2 * i] = (lo - olon) * mx
+        xy[2 * i + 1] = (la - olat) * my
+    minx, miny = min(xy[0::2]), min(xy[1::2])
+    gw = int((max(xy[0::2]) - minx) / cell) + 1
+    gh = int((max(xy[1::2]) - miny) / cell) + 1
+    ncell = gw * gh
+
+    def cell_of(x, y):
+        cx = min(gw - 1, max(0, int((x - minx) / cell)))
+        cy = min(gh - 1, max(0, int((y - miny) / cell)))
+        return cy * gw + cx
+
+    buckets = [[] for _ in range(ncell)]
+    for i in range(n):
+        buckets[cell_of(xy[2 * i], xy[2 * i + 1])].append(i)
+    grid_off = array("I", [0])
+    grid_nod = array("I")
+    for b in buckets:
+        grid_nod.extend(b)
+        grid_off.append(len(grid_nod))
+
+    sbuckets = [set() for _ in range(ncell)]
+    for sid in range(len(segs)):
+        for p in range(seg_off[sid], seg_off[sid + 1]):
+            x = (seg_pts[2 * p + 1] / 1e7 - olon) * mx
+            y = (seg_pts[2 * p] / 1e7 - olat) * my
+            sbuckets[cell_of(x, y)].add(sid)
+    sgrid_off = array("I", [0])
+    sgrid_seg = array("I")
+    for b in sbuckets:
+        sgrid_seg.extend(sorted(b))
+        sgrid_off.append(len(sgrid_seg))
+
+    tr_off, tr_edge, tr_next, tr_head, tr_gate = _pack_trie(
+        bans, adj_to, adj_off, n)
+
+    blob = bytearray()
+    str_off = array("I", [0])
+    for s in strings:
+        blob += s.encode()
+        str_off.append(len(blob))
+
+    with open(path, "wb") as f:
+        f.write(b"RGRAPH02" if version == 2 else b"RGRAPH01")
+        f.write(struct.pack("<5I", n, e, len(segs), len(seg_pts) // 2,
+                            len(blob)))
+        f.write(struct.pack("<3I", len(strings), gw, gh))
+        if version == 2:
+            f.write(struct.pack("<3I", len(tr_off) - 1, len(tr_edge),
+                                len(sgrid_seg)))
+        f.write(struct.pack("<7d", olat, olon, mx, my, minx, miny, cell))
+        for a in (xy, adj_off, adj_to, adj_len, adj_cls, adj_seg, seg_off,
+                  seg_name, seg_pts, str_off, grid_off, grid_nod):
+            a.tofile(f)
+        if version == 2:
+            for a in (sgrid_off, sgrid_seg, tr_off, tr_edge, tr_next, tr_head):
+                a.tofile(f)
+            f.write(bytes(tr_gate))
+        f.write(bytes(blob))
+    return index
+
+
+#   0 --- 1 --- 2      North Street
+#   |     |     |
+#   3 --- 4 --- 5      Middle Street
+#   |     |     |
+#   6 --- 7 --- 8      South Street
+#
+# ~220 m between neighbours, so "halfway down a block" is ~110 m from either
+# junction - far enough that snapping to the wrong one is a visible error.
+LAT0, LON0, STEP = 37.8000, -122.2700, 0.0020
+LATTICE = [(LAT0 - STEP * (i // 3), LON0 + STEP * (i % 3)) for i in range(9)]
+ROWS = ["North Street", "Middle Street", "South Street"]
+COLS = ["First Avenue", "Second Avenue", "Third Avenue"]
+RESIDENTIAL, SERVICE = 11, 13
+# The outer two avenues are slow, so that between any two corners there is
+# one clearly quickest way round rather than a tie the test cannot pin down.
+LATTICE_SEGS = (
+    [(r * 3 + c, r * 3 + c + 1, ROWS[r], False, RESIDENTIAL) for r in range(3)
+     for c in range(2)]
+    + [(r * 3 + c, (r + 1) * 3 + c, COLS[c], False,
+        RESIDENTIAL if c == 1 else SERVICE) for r in range(2)
+       for c in range(3)])
+BLOCK_EW = R.haversine_m(LATTICE[3], LATTICE[4])      # ~176 m
+BLOCK_NS = R.haversine_m(LATTICE[0], LATTICE[3])      # ~222 m
+CORNER = BLOCK_EW + BLOCK_NS                          # one turn, either way
+
+
+class LatticeTestCase(RoutingTestCase):
+    """A whole graph in a temp file, so offline routing is always exercised."""
+
+    def build(self, bans=(), version=2, segs=None):
+        path = Path(self._tmproot.name) / "lattice.rg"
+        idx = _pack_graph(path, LATTICE, segs or LATTICE_SEGS, bans, version)
+        os.environ[R.ENV_OVERRIDE] = str(path)
+        R.reset()
+        return R.Graph(path), idx
+
+    def edges(self):
+        """{(u, v): directed edge index} for the lattice, before any ban."""
+        return _pack_graph(Path(self._tmproot.name) / "probe.rg", LATTICE,
+                           LATTICE_SEGS)
+
+    def midpoint(self, a, b):
+        return ((LATTICE[a][0] + LATTICE[b][0]) / 2,
+                (LATTICE[a][1] + LATTICE[b][1]) / 2)
+
+
+class TestEdgeSnapping(LatticeTestCase):
+    def test_a_mid_block_fix_snaps_to_the_road_not_the_junction(self):
+        g, _ = self.build()
+        p = self.midpoint(3, 4)
+        _, node_err = g.snap(*p)
+        s = g.snap_edge(*p)
+        self.assertIsNotNone(s)
+        self.assertLess(s.dist_m, 1.0)
+        # the junction snap is half a block out, which is the whole problem
+        self.assertAlmostEqual(node_err, BLOCK_EW / 2, delta=1.0)
+        self.assertAlmostEqual(s.frac, 0.5, places=2)
+        self.assertEqual({s.u, s.v}, {3, 4})
+
+    def test_the_snap_carries_the_edges_in_both_directions(self):
+        g, idx = self.build()
+        s = g.snap_edge(*self.midpoint(3, 4))
+        self.assertEqual(s.fwd, idx[(3, 4)])
+        self.assertEqual(s.bwd, idx[(4, 3)])
+
+    def test_a_one_way_offers_only_the_legal_direction(self):
+        segs = [(u, v, nm, (u, v) == (3, 4), c)
+                for (u, v, nm, _, c) in LATTICE_SEGS]
+        g, idx = self.build(segs=segs)
+        s = g.snap_edge(*self.midpoint(3, 4))
+        self.assertEqual(s.fwd, idx[(3, 4)])
+        self.assertEqual(s.bwd, -1)
+
+    def test_the_offset_reported_is_the_distance_to_the_road(self):
+        """Not to the junction: it is what decides "you are off the map"."""
+        g, _ = self.build()
+        lat, lon = self.midpoint(3, 4)
+        s = g.snap_edge(lat + 0.0003, lon)        # ~33 m north of the road
+        self.assertAlmostEqual(s.dist_m, 33.0, delta=4.0)
+
+    def test_nothing_within_reach_is_none_not_a_wrong_answer(self):
+        g, _ = self.build()
+        self.assertIsNone(g.snap_edge(48.8584, 2.2945))
+
+    def test_a_route_begins_where_the_rider_actually_is(self):
+        g, _ = self.build()
+        start = self.midpoint(3, 4)
+        with self.no_server():
+            out = R.route(start, LATTICE[2], allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        self.assertLess(R.haversine_m(out.points[0], start), 1.0)
+        self.assertLess(out.snap_from_m, 1.0)
+
+    def test_the_first_instruction_points_the_way_the_rider_is_facing(self):
+        """The junction snap could only ever say "head" out of a junction."""
+        g, _ = self.build()
+        with self.no_server():
+            east = R.route(self.midpoint(3, 4), LATTICE[5], allow_server=False)
+            west = R.route(self.midpoint(4, 5), LATTICE[3], allow_server=False)
+        self.assertTrue(east.ok and west.ok)
+        self.assertIn("east", east.maneuvers[0].instruction)
+        self.assertIn("west", west.maneuvers[0].instruction)
+
+    def test_the_distances_still_add_up_with_part_edges_on_both_ends(self):
+        g, _ = self.build()
+        with self.no_server():
+            out = R.route(self.midpoint(3, 4), self.midpoint(4, 5),
+                          allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        self.assertAlmostEqual(sum(m.distance_m for m in out.maneuvers),
+                               out.distance_m, delta=0.5)
+        self.assertAlmostEqual(out.cum_m[-1], out.distance_m, delta=0.5)
+        self.assertEqual(len(out.cum_m), len(out.points))
+        # half of one block plus half of the next
+        self.assertAlmostEqual(out.distance_m, BLOCK_EW, delta=2.0)
+
+    def test_both_ends_on_one_block_is_the_length_between_them(self):
+        g, _ = self.build()
+        a = ((LATTICE[3][0] + LATTICE[4][0]) / 2,
+             LATTICE[3][1] + STEP * 0.25)
+        b = ((LATTICE[3][0] + LATTICE[4][0]) / 2,
+             LATTICE[3][1] + STEP * 0.75)
+        with self.no_server():
+            out = R.route(a, b, allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        self.assertAlmostEqual(out.distance_m, BLOCK_EW / 2, delta=2.0)
+        self.assertLess(R.haversine_m(out.points[0], a), 1.0)
+        self.assertLess(R.haversine_m(out.points[-1], b), 1.0)
+
+    def test_one_way_the_wrong_way_goes_round_the_block(self):
+        segs = [(u, v, nm, (u, v) == (3, 4), c)
+                for (u, v, nm, _, c) in LATTICE_SEGS]
+        g, _ = self.build(segs=segs)
+        a = (LATTICE[3][0], LATTICE[3][1] + STEP * 0.75)
+        b = (LATTICE[3][0], LATTICE[3][1] + STEP * 0.25)
+        with self.no_server():
+            out = R.route(a, b, allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        self.assertGreater(out.distance_m, 600.0)
+
+    def test_the_same_point_twice_is_said_plainly(self):
+        g, _ = self.build()
+        p = self.midpoint(3, 4)
+        with self.no_server():
+            out = R.route(p, p, allow_server=False)
+        self.assertFalse(out.ok)
+        self.assertIn("same place", out.reason)
+
+
+class TestTurnRestrictions(LatticeTestCase):
+    def test_without_the_ban_the_short_way_is_taken(self):
+        g, idx = self.build()
+        with self.no_server():
+            out = R.route(LATTICE[3], LATTICE[1], allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        self.assertAlmostEqual(out.distance_m, CORNER, delta=2.0)
+        self.assertIn("Middle Street", [m.street for m in out.maneuvers])
+
+    def test_a_banned_turn_is_not_taken(self):
+        idx = self.edges()
+        g, _ = self.build(bans=[(idx[(3, 4)], idx[(4, 1)])])
+        with self.no_server():
+            out = R.route(LATTICE[3], LATTICE[1], allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        # 3->4->1 is banned, so it has to go 3->0->1 (or the long way round)
+        self.assertNotIn("Middle Street",
+                         [m.street for m in out.maneuvers])
+        self.assertIn("First Avenue", [m.street for m in out.maneuvers])
+        # 3->0->1 is the same length, so the ban costs nothing here; what it
+        # must not do is leave the route unchanged
+        self.assertAlmostEqual(out.distance_m, CORNER, delta=2.0)
+
+    def test_the_ban_only_applies_to_the_approach_it_names(self):
+        """Banning left from the west must not ban the same left from the east."""
+        idx = self.edges()
+        g, _ = self.build(bans=[(idx[(3, 4)], idx[(4, 1)])])
+        with self.no_server():
+            out = R.route(LATTICE[5], LATTICE[1], allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        self.assertAlmostEqual(out.distance_m, CORNER, delta=2.0)
+        self.assertIn("Middle Street", [m.street for m in out.maneuvers])
+
+    def test_a_via_way_ban_needs_all_three_edges_in_order(self):
+        idx = self.edges()
+        g, _ = self.build(bans=[(idx[(3, 4)], idx[(4, 5)], idx[(5, 2)])])
+        with self.no_server():
+            straight = R.route(LATTICE[3], LATTICE[5], allow_server=False)
+            banned = R.route(LATTICE[3], LATTICE[2], allow_server=False)
+        # reaching 5 along the via way is still fine
+        self.assertTrue(straight.ok)
+        self.assertAlmostEqual(straight.distance_m, 2 * BLOCK_EW, delta=2.0)
+        # but carrying on to 2 from there is not, so it must go round
+        self.assertTrue(banned.ok, banned.reason)
+        self.assertAlmostEqual(banned.distance_m, 2 * BLOCK_EW + BLOCK_NS,
+                               delta=2.0)
+
+    def test_a_ban_is_honoured_from_a_mid_block_start_too(self):
+        """Re-routing mid-block is the case that matters, so test it there."""
+        idx = self.edges()
+        start = self.midpoint(3, 4)
+        self.build()
+        with self.no_server():
+            free = R.route(start, LATTICE[1], allow_server=False)
+        self.build(bans=[(idx[(3, 4)], idx[(4, 1)])])
+        with self.no_server():
+            out = R.route(start, LATTICE[1], allow_server=False)
+        self.assertTrue(free.ok and out.ok, out.reason)
+        # unbanned: carry on east half a block and turn left
+        self.assertAlmostEqual(free.distance_m, BLOCK_EW / 2 + BLOCK_NS,
+                               delta=2.0)
+        # banned: turn round, back to the corner behind, and up
+        self.assertAlmostEqual(out.distance_m,
+                               BLOCK_EW / 2 + BLOCK_NS + BLOCK_EW, delta=2.0)
+
+    def test_stranding_a_place_gets_a_route_and_a_warning_not_a_refusal(self):
+        """A ban that cuts the only way in must not read as "no such road"."""
+        segs = LATTICE_SEGS + [(8, 9, "Dead End", False, RESIDENTIAL)]
+        nodes = LATTICE + [(LAT0 - STEP * 3, LON0 + STEP * 2)]
+        path = Path(self._tmproot.name) / "strand.rg"
+        idx = _pack_graph(path, nodes, segs)
+        idx = _pack_graph(path, nodes, segs,
+                          bans=[(idx[(5, 8)], idx[(8, 9)]),
+                                (idx[(7, 8)], idx[(8, 9)])])
+        os.environ[R.ENV_OVERRIDE] = str(path)
+        R.reset()
+        with self.no_server():
+            out = R.route(LATTICE[0], nodes[9], allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        self.assertIn("banned", out.reason)
+
+    def test_two_searches_running_back_to_back_do_not_bleed(self):
+        idx = self.edges()
+        g, _ = self.build(bans=[(idx[(3, 4)], idx[(4, 1)])])
+        with self.no_server():
+            first = R.route(LATTICE[3], LATTICE[1], allow_server=False)
+            second = R.route(LATTICE[5], LATTICE[1], allow_server=False)
+            third = R.route(LATTICE[3], LATTICE[1], allow_server=False)
+        self.assertEqual(first.points, third.points)
+        self.assertNotEqual(first.points, second.points)
+
+
+class TestGraphVersions(LatticeTestCase):
+    def test_an_rgraph01_graph_still_loads_and_routes(self):
+        """The old format has no segment grid; junction snapping is the answer."""
+        g, _ = self.build(version=1)
+        self.assertEqual(g.version, 1)
+        self.assertIsNone(g.snap_edge(*self.midpoint(3, 4)))
+        self.assertEqual(g.ntrie, 0)
+        with self.no_server():
+            out = R.route(self.midpoint(3, 4), LATTICE[2], allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        self.assertEqual(out.source, "offline")
+        # it snapped to a junction, so the line starts a half-block away -
+        # which is exactly the gap the new format closes
+        self.assertAlmostEqual(
+            R.haversine_m(out.points[0], self.midpoint(3, 4)),
+            BLOCK_EW / 2, delta=1.0)
+
+    def test_the_new_format_announces_itself(self):
+        g, _ = self.build(version=2)
+        self.assertEqual(g.version, 2)
+        self.assertIsNotNone(g.sgrid_seg)
+
+    def test_a_graph_from_the_future_is_refused_by_name(self):
+        bad = Path(self._tmproot.name) / "x.rg"
+        bad.write_bytes(b"RGRAPH99" + struct.pack("<5I", 0, 0, 0, 0, 0))
+        with self.assertRaises(ValueError) as caught:
+            R.Graph(bad)
+        self.assertIn("RGRAPH02", str(caught.exception))
+
+    def test_a_truncated_new_format_graph_is_an_error_not_a_wrong_route(self):
+        path = Path(self._tmproot.name) / "cut.rg"
+        _pack_graph(path, LATTICE, LATTICE_SEGS)
+        whole = path.read_bytes()
+        path.write_bytes(whole[:len(whole) - 40])
+        with self.assertRaises(Exception):
+            R.Graph(path)
+
+
 # ------------------------------------------- the real graph, when installed
 
 GRAPH = R.graph_path()
@@ -654,6 +1098,131 @@ class TestOfflineRouting(RoutingTestCase):
         left_m, left_s = R.remaining(out, mid)
         self.assertLess(left_m, out.distance_m)
         self.assertGreater(left_m, 0)
+
+    def test_rerouting_from_the_middle_of_a_block_starts_there(self):
+        """The case that matters. A rider who has missed a turn is not at a
+        junction, and the new line has to begin under them."""
+        with mock.patch.object(R, "graph_path", lambda: GRAPH), self.no_server():
+            base = R.route(OAKLAND, FREMONT)
+            here = base.points[len(base.points) // 3]
+            again = R.route(here, FREMONT)
+        self.assertTrue(again.ok, again.reason)
+        if self.g.version >= 2:
+            self.assertLess(R.haversine_m(again.points[0], here), 2.0)
+        # and the two agree on what is left, which they cannot if one of
+        # them quietly started somewhere else
+        left, _ = R.remaining(base, here)
+        self.assertAlmostEqual(again.distance_m, left,
+                               delta=max(250.0, left * 0.05))
+
+
+@NEEDS_GRAPH
+class TestOfflineRestrictions(RoutingTestCase):
+    """Turn restrictions, against whatever graph is actually installed."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.g = R.Graph(GRAPH)
+        cls.banned = {}
+        if cls.g.version >= 2:
+            stack = [(0, ())]
+            while stack:
+                t, pre = stack.pop()
+                for c in range(cls.g.tr_off[t], cls.g.tr_off[t + 1]):
+                    e, nxt = cls.g.tr_edge[c], cls.g.tr_next[c]
+                    if nxt == cls.g.BANNED:
+                        seq = pre + (e,)
+                        cls.banned.setdefault(seq[0], []).append(seq)
+                    else:
+                        stack.append((nxt, pre + (e,)))
+
+    def setUp(self):
+        super().setUp()
+        if self.g.version < 2:
+            self.skipTest("the installed graph predates turn restrictions "
+                          "(RGRAPH01) - rebuild it to exercise them")
+
+    def violations(self, edges):
+        found = []
+        for i, k in enumerate(edges):
+            for seq in self.banned.get(k, ()):
+                if tuple(edges[i:i + len(seq)]) == seq:
+                    found.append(seq)
+        return found
+
+    def probe(self, seq, restrictions=True):
+        """Route from just before a banned sequence to just after it."""
+        src = _tail_node(self.g, seq[0])
+        dst = self.g.to[seq[-1]]
+        if src == dst:
+            return None
+        _cost, edges, _s, _n = self.g.search(
+            [(src, 0.0)], {dst: (0.0, -1)},
+            (self.g.xy[2 * dst], self.g.xy[2 * dst + 1]), "time",
+            restrictions=restrictions)
+        return edges
+
+    def sample(self, n=25):
+        import random
+        keys = sorted(self.banned)
+        return [self.banned[k][0]
+                for k in random.Random(4).sample(keys, min(n, len(keys)))]
+
+    def test_the_installed_graph_actually_carries_restrictions(self):
+        self.assertGreater(self.g.ntrie, 100)
+        self.assertGreater(len(self.banned), 100)
+
+    def test_no_route_takes_a_turn_the_map_forbids(self):
+        checked = 0
+        for seq in self.sample():
+            edges = self.probe(seq)
+            if edges is None:
+                continue
+            checked += 1
+            self.assertEqual(self.violations(edges), [],
+                             f"the search drove the banned sequence {seq}")
+        self.assertGreater(checked, 10, "too few cases were exercised")
+
+    def test_and_ignoring_them_would_have_taken_some_of_those_turns(self):
+        """Otherwise the test above only proves the sample was harmless."""
+        took = sum(1 for seq in self.sample()
+                   if self.violations(self.probe(seq, restrictions=False) or []))
+        self.assertGreater(took, 0)
+
+    def test_a_real_mid_block_fix_lands_on_the_road_not_the_corner(self):
+        mid = None
+        for sid in range(2000, 80000):
+            a, b = self.g.seg_off[sid], self.g.seg_off[sid + 1]
+            if b - a < 3:
+                continue
+            ends = ((self.g.geom[2 * a] / 1e7, self.g.geom[2 * a + 1] / 1e7),
+                    (self.g.geom[2 * (b - 1)] / 1e7,
+                     self.g.geom[2 * (b - 1) + 1] / 1e7))
+            if R.haversine_m(*ends) < 300:
+                continue
+            m = (a + b) // 2
+            here = (self.g.geom[2 * m] / 1e7, self.g.geom[2 * m + 1] / 1e7)
+            if self.g.snap_edge(*here) is not None:
+                mid = here
+                break
+        if mid is None:                                # pragma: no cover
+            self.skipTest("no long segment to stand in the middle of")
+        off = (mid[0] + 8.0 / 111132.0, mid[1])        # 8 m to one side
+        _node, junction_m = self.g.snap(*off)
+        self.assertLess(self.g.snap_edge(*off).dist_m, 12.0)
+        self.assertGreater(junction_m, 100.0)
+
+
+def _tail_node(g, k):
+    """Which node directed edge k leaves from (binary search in the CSR)."""
+    lo, hi = 0, g.n
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if g.off[mid] <= k:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo - 1
 
 
 if __name__ == "__main__":         # pragma: no cover
