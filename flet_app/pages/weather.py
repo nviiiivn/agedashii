@@ -16,13 +16,38 @@ empty hourly row that quietly shows today's single reading twelve times is
 worse than not having one; the page says outright that the server does not
 supply it.
 
-**Explore** draws a real map and pins real OSM data from the server's
-Overpass proxy. The proxy takes a raw Overpass QL string as the POST body -
-not JSON - and the bbox has to be attached to each statement
-(``node[amenity=fuel](s,w,n,e);``). Wrapping a union and bbox-ing the group
-(``(node[amenity=fuel];)(s,w,n,e)``) is what the website does and Overpass
-answers it with HTTP 400, which the proxy reports as "overpass failed". That
-is the whole reason POIs looked non-existent.
+The Bay tab draws the fourteen stations the server marks ``on_map`` as
+temperature-coloured pins on a real map, with a full-screen version behind
+the Full map button. The other seven are reference points - Mt Diablo,
+Boccardo Loop, Cupertino - and they are listed under their own heading
+rather than pinned, because fitting the map to them zooms the Bay stations
+into one blob. The colour scale is the website's, stop for stop, so a pin
+is the same colour in the browser and on the phone.
+
+**Rain** overlays RainViewer's radar on every map on the page, with frame
+stepping, playback and a timestamp. RainViewer is free, keyless and from
+here intermittently very slow - the first fetch took over 25 s and the next
+0.64 s - so the button says it is loading, refuses a second tap, and either
+lands or names the reason it did not. On the website that button used to go
+active instantly and then do nothing for twenty seconds.
+
+**Explore** draws a real map and does three things on it. It pins real OSM
+data from the server's Overpass proxy; the proxy takes a raw Overpass QL
+string as the POST body - not JSON - and the bbox has to be attached to
+each statement (``node[amenity=fuel](s,w,n,e);``). Wrapping a union and
+bbox-ing the group (``(node[amenity=fuel];)(s,w,n,e)``) is what the website
+does and Overpass answers it with HTTP 400, which the proxy reports as
+"overpass failed". That is the whole reason POIs looked non-existent. It
+searches places through Open-Meteo's keyless geocoder. And it reads the
+weather at any point you tap, from Open-Meteo directly, in the same shape
+and the same units the dashbored server asks for - so a tapped point and a
+named station are directly comparable, and get the same current-plus-three-
+days and no more.
+
+Rainviewer and Open-Meteo are not the dashbored server. A failure from
+either is reported as itself and never marks the app offline; greying out
+every other page over a dead radar tile would be worse than the radar being
+dead.
 
 Tiles follow xnav: the on-device MBTiles archive through the loopback tile
 server if one is installed, online tiles if not, and the map says which.
@@ -127,6 +152,69 @@ def _weekday(iso_date, index):
         return time.strftime("%a", time.strptime(iso_date, "%Y-%m-%d"))
     except (TypeError, ValueError):
         return "—"
+
+
+# ------------------------------------------------------- temperature colour
+# The website's scale, stop for stop: blue at 45F through green at 60-65,
+# amber at 70-75, red at 85. Kept identical so a pin on the phone and a pin
+# in the browser are the same colour for the same reading.
+TEMP_STOPS = ((45, "#2196f3"), (55, "#03a9f4"), (60, "#4caf50"),
+              (65, "#8bc34a"), (70, "#ffc107"), (75, "#ff9800"),
+              (80, "#ff5722"), (85, "#f44336"))
+
+
+def _lerp_hex(a, b, t):
+    ai, bi = int(a[1:], 16), int(b[1:], 16)
+    out = []
+    for shift in (16, 8, 0):
+        ac, bc = (ai >> shift) & 255, (bi >> shift) & 255
+        out.append(round(ac + (bc - ac) * t))
+    return "#" + "".join(f"{c:02x}" for c in out)
+
+
+def temp_color(f):
+    """The pin colour for a temperature in F, or grey when there isn't one.
+
+    Grey rather than the coldest blue: a station whose current temperature
+    the server omitted must not read as 45 degrees.
+    """
+    if f is None:
+        return "#888888"
+    try:
+        f = float(f)
+    except (TypeError, ValueError):
+        return "#888888"
+    if f <= TEMP_STOPS[0][0]:
+        return TEMP_STOPS[0][1]
+    if f >= TEMP_STOPS[-1][0]:
+        return TEMP_STOPS[-1][1]
+    for (t0, c0), (t1, c1) in zip(TEMP_STOPS, TEMP_STOPS[1:]):
+        if t0 <= f <= t1:
+            return _lerp_hex(c0, c1, (f - t0) / (t1 - t0))
+    return TEMP_STOPS[-1][1]
+
+
+def wetness(spot):
+    """"Dry" / "Maybe" / "Damp" / "Wet" for one spot, the website's buckets.
+
+    Both inputs are real: `current.precipitation` in mm and today's
+    `precipitation_probability_max`. Returns None when the server sent
+    neither, because "Dry" would then be a claim nobody made.
+    """
+    cur = spot.get("current") or {}
+    daily = spot.get("daily") or {}
+    precip = cur.get("precipitation")
+    pop = _at(daily.get("precipitation_probability_max") or [], 0)
+    if precip is None and pop is None:
+        return None
+    rain = float(precip or 0)
+    if rain > 0.1:
+        return "Wet"
+    if rain > 0:
+        return "Damp"
+    if pop is not None and pop >= 30:
+        return "Maybe"
+    return "Dry"
 
 
 # ------------------------------------------------------------------ weather
@@ -296,16 +384,504 @@ def _regional(spots, selected, on_pick):
 _focus = {"name": HOME_NAME}
 
 
+# ------------------------------------------------------------- rain radar
+# RainViewer's index is free and keyless, and from here intermittently very
+# slow: the first fetch took over 25 s and the next 0.64 s. The website's
+# Rain button used to go active instantly and then do nothing for twenty
+# seconds, which is the whole reason this is a state machine rather than a
+# boolean. The button says it is loading, refuses a second tap, and either
+# lands or says why it did not.
+#
+# `frames` is [{"time": epoch, "url": tile template}, ...], oldest first.
+_rain = {"on": False, "frames": None, "index": 0, "error": "",
+         "playing": False, "fetched_at": 0.0}
+
+# How long a fetched frame list is reused. RainViewer publishes about one
+# frame every ten minutes.
+RAIN_TTL = 300.0
+# Radar tiles only exist natively to zoom 7; past that they are scaled up.
+RAIN_MAX_NATIVE_ZOOM = 7
+RAIN_OPACITY = 0.55
+RAIN_LEGEND = (("light", "#00ffff"), ("moderate", "#00aaff"),
+               ("heavy", "#ff9500"), ("intense", "#ff00d4"))
+
+
+def rain_stamp(frames, index, now=None):
+    """"3 / 13 · 14:20 (10m ago)" for the frame on screen.
+
+    Pure, so the arithmetic is testable without a radar. Returns "" when
+    there is nothing to stamp, rather than a plausible-looking placeholder.
+    """
+    if not frames:
+        return ""
+    total = len(frames)
+    i = index % total
+    when = frames[i].get("time")
+    if when is None:
+        return f"{i + 1} / {total}"
+    now = time.time() if now is None else now
+    clock = time.strftime("%H:%M", time.localtime(when))
+    ago = int(round((now - when) / 60.0))
+    return f"{i + 1} / {total} · {clock} ({'now' if ago <= 0 else f'{ago}m ago'})"
+
+
+def _rain_layer():
+    """The current radar frame as a TileLayer, or None when rain is off."""
+    if not (_rain["on"] and _rain["frames"] and MAPS_AVAILABLE):
+        return None
+    frame = _rain["frames"][_rain["index"] % len(_rain["frames"])]
+    return fmap.TileLayer(
+        url_template=frame["url"], opacity=RAIN_OPACITY, tile_size=256,
+        max_native_zoom=RAIN_MAX_NATIVE_ZOOM, max_zoom=18,
+        user_agent_package_name="online.iamprettyfamous.nviidash")
+
+
+def _stack(base, overlays):
+    """Base tiles, then the radar frame if there is one, then the pins."""
+    layer = _rain_layer()
+    return [base] + ([layer] if layer else []) + list(overlays)
+
+
+def _rain_controls(page, restack):
+    """The Rain button, and when it is on the legend, frame steppers and stamp.
+
+    `restack` re-applies the layer stack to whichever maps are on screen and
+    updates the page. One control drives every map, the way the website's
+    single Rain button drives its mini, full and explore maps.
+    """
+    p = PAL()
+    # Everything is built whether or not rain is on and toggled with
+    # `.visible`, not built conditionally. Building the steppers only when
+    # the state says "on" means they do not exist when the state changes,
+    # and turning Rain on would light the button and reveal no controls
+    # until something else happened to repaint the page.
+    stamp = ft.Text(rain_stamp(_rain["frames"], _rain["index"]) if _rain["on"] else "",
+                    size=9.5, color=p["text2"], selectable=True)
+    note = ft.Text(_rain["error"], size=9.5, color=p["pink"], selectable=True,
+                   visible=bool(_rain["error"]))
+
+    label = ft.Text("Rain", size=11, weight=ft.FontWeight.W_600,
+                    color=p["text"] if _rain["on"] else p["text2"])
+    button = ft.Container(
+        padding=PAD(4, 10), border_radius=18, ink=True,
+        bgcolor=ft.Colors.with_opacity(0.20 if _rain["on"] else 0.06, p["cyan"]),
+        border=BRD(p["cyan"] if _rain["on"] else p["border"], 1),
+        tooltip="live rain radar from RainViewer",
+        content=ft.Row(spacing=5, tight=True, controls=[
+            ft.Icon(ft.Icons.RADAR, size=13, color=p["cyan"]), label]))
+
+    def paint():
+        on = _rain["on"]
+        label.color = p["text"] if on else p["text2"]
+        button.bgcolor = ft.Colors.with_opacity(0.20 if on else 0.06, p["cyan"])
+        button.border = BRD(p["cyan"] if on else p["border"], 1)
+        stamp.value = rain_stamp(_rain["frames"], _rain["index"]) if on else ""
+        note.value = _rain["error"]
+        note.color = p["pink"]
+        note.visible = bool(_rain["error"])
+        steppers.visible = on
+        legend.visible = on
+
+    async def toggle(e):
+        if _rain["on"]:
+            _rain.update(on=False, playing=False, error="")
+            paint()
+            restack()
+            return
+        fresh = (_rain["frames"] is not None
+                 and time.time() - _rain["fetched_at"] < RAIN_TTL)
+        if not fresh:
+            # Say it is loading and refuse a second tap before anything is
+            # awaited: the first fetch really can take half a minute.
+            note.value = "loading rain radar…"
+            note.color = p["text2"]
+            note.visible = True
+            button.disabled = True
+            page.update()
+            frames, err = await asyncio.to_thread(M.rainviewer_frames)
+            button.disabled = False
+            if err:
+                _rain.update(on=False, error=f"no rain radar - {err}")
+            elif not frames:
+                _rain.update(on=False, frames=[], fetched_at=time.time(),
+                             error="RainViewer answered, and is publishing no "
+                                   "radar frames right now")
+            else:
+                _rain.update(frames=frames, fetched_at=time.time(),
+                             index=len(frames) - 1)
+            if _rain["error"]:
+                paint()
+                page.update()
+                return
+        _rain.update(on=True, error="")
+        paint()
+        restack()
+
+    button.on_click = toggle
+
+    def step(delta):
+        def handler(e):
+            if not (_rain["on"] and _rain["frames"]):
+                return
+            _rain["index"] = (_rain["index"] + delta) % len(_rain["frames"])
+            paint()
+            restack()
+        return handler
+
+    async def play(e):
+        if _rain["playing"]:
+            _rain["playing"] = False
+            play_button.icon = ft.Icons.PLAY_ARROW
+            page.update()
+            return
+        if not (_rain["on"] and _rain["frames"]):
+            return
+        _rain["playing"] = True
+        play_button.icon = ft.Icons.PAUSE
+        page.update()
+        while _rain["playing"] and _rain["on"] and _rain["frames"]:
+            await asyncio.sleep(0.7)
+            if not (_rain["playing"] and _rain["on"]):
+                break
+            _rain["index"] = (_rain["index"] + 1) % len(_rain["frames"])
+            paint()
+            restack()
+        _rain["playing"] = False
+        play_button.icon = ft.Icons.PLAY_ARROW
+        page.update()
+
+    play_button = ft.IconButton(
+        ft.Icons.PAUSE if _rain["playing"] else ft.Icons.PLAY_ARROW,
+        icon_size=16, icon_color=p["cyan"], tooltip="play / pause",
+        on_click=play)
+
+    steppers = ft.Row(
+        spacing=4, visible=_rain["on"], wrap=True,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.IconButton(ft.Icons.CHEVRON_LEFT, icon_size=16, icon_color=p["cyan"],
+                          tooltip="previous frame", on_click=step(-1)),
+            play_button,
+            ft.IconButton(ft.Icons.CHEVRON_RIGHT, icon_size=16, icon_color=p["cyan"],
+                          tooltip="next frame", on_click=step(1)),
+            stamp,
+        ])
+    legend = ft.Row(spacing=8, wrap=True, visible=_rain["on"], controls=[
+        ft.Row(spacing=4, tight=True, controls=[
+            ft.Container(width=10, height=10, border_radius=3, bgcolor=colour),
+            ft.Text(name, size=9, color=p["text3"])])
+        for name, colour in RAIN_LEGEND])
+
+    return ft.Column(spacing=5, controls=[
+        ft.Row(spacing=6, wrap=True,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER,
+               controls=[button, steppers]),
+        legend, note,
+    ])
+
+
+# ------------------------------------------------------------- the Bay map
+
+# The mini map's height. Fixed rather than expanding because these panels
+# live in a scrollable stack, and a control that expands inside one has no
+# height to expand into.
+MINI_MAP_HEIGHT = 260
+FULL_MAP_HEIGHT = 520
+
+
+def _station_pin(p, spot, on_pick, *, big=False):
+    cur = spot.get("current") or {}
+    temp = cur.get("temperature_2m")
+    label, _icon, _ck = _wmo(cur.get("weather_code"))
+    gust = cur.get("wind_gusts_10m")
+    tip = (f"{spot.get('name', '?')} · {_n(temp)}°F · {label} · wind "
+           f"{_n(cur.get('wind_speed_10m'))} mph"
+           + (f" (g {_n(gust)})" if gust is not None else ""))
+    box = ft.Container(
+        padding=PAD(1, 5), border_radius=8, bgcolor=temp_color(temp),
+        border=ft.Border.all(1, ft.Colors.WHITE), tooltip=tip,
+        alignment=ft.Alignment(0, 0),
+        on_click=(lambda e, n=spot.get("name"): on_pick(n)) if on_pick else None,
+        content=ft.Text(f"{_n(temp)}°", size=10 if not big else 12,
+                        weight=ft.FontWeight.W_700, color=ft.Colors.BLACK))
+    return fmap.Marker(coordinates=fmap.MapLatitudeLongitude(spot["lat"], spot["lon"]),
+                       width=44 if big else 38, height=24 if big else 20,
+                       content=box)
+
+
+def _temp_legend(p):
+    return ft.Row(spacing=8, wrap=True, controls=[
+        ft.Row(spacing=3, tight=True, controls=[
+            ft.Container(width=10, height=10, border_radius=3, bgcolor=colour),
+            ft.Text(("≤" if t == TEMP_STOPS[0][0] else
+                     "≥" if t == TEMP_STOPS[-1][0] else "") + f"{t}°",
+                    size=9, color=p["text3"])])
+        for t, colour in TEMP_STOPS])
+
+
+def _mapped(spots):
+    """Only the stations the server marks as being on the map.
+
+    Seven of the twenty-one are reference points well outside the frame -
+    Mt Diablo, Boccardo Loop, Cupertino - and fitting the map to them
+    zooms it out until the Bay stations overlap into one blob.
+    """
+    return [s for s in spots
+            if s.get("on_map") is not False
+            and s.get("lat") is not None and s.get("lon") is not None]
+
+
+def _bounds(stations):
+    lats = [s["lat"] for s in stations]
+    lons = [s["lon"] for s in stations]
+    return (sum(lats) / len(lats), sum(lons) / len(lons),
+            max(lats) - min(lats), max(lons) - min(lons))
+
+
+def _zoom_for(span_lat, span_lon):
+    """A zoom that fits a span. Derived, so adding a station re-fits."""
+    span = max(span_lat, span_lon, 0.01)
+    zoom = 9.0
+    while span < 0.35 and zoom < 13:
+        span *= 2
+        zoom += 1
+    while span > 0.7 and zoom > 6:
+        span /= 2
+        zoom -= 1
+    return zoom
+
+
+def _bay_map(page, spots, on_pick, restack_holder):
+    """The station map: fourteen pins, a Full Map button and the rain toggle."""
+    p = PAL()
+    stations = _mapped(spots)
+    if not MAPS_AVAILABLE:
+        return card(ft.Column(spacing=6, controls=[
+            title("Map unavailable", 14),
+            sub("This build was made without flet-map, so the station map "
+                "cannot be drawn. The readings below are unaffected.", 11)]),
+            pad=14)
+    if not stations:
+        return card(sub("The server marked none of its spots as mapped, so "
+                        "there is nothing to pin.", 11), pad=12)
+
+    lat, lon, dlat, dlon = _bounds(stations)
+    local_url = tileserver.start(M.mbtiles_path())
+    offline = local_url is not None
+    base = fmap.TileLayer(
+        url_template=local_url or "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        user_agent_package_name="online.iamprettyfamous.nviidash")
+    pins = fmap.MarkerLayer(markers=[_station_pin(p, s, on_pick) for s in stations])
+
+    the_map = fmap.Map(
+        expand=True, initial_center=fmap.MapLatitudeLongitude(lat, lon),
+        initial_zoom=_zoom_for(dlat, dlon), min_zoom=5, max_zoom=18,
+        bgcolor=p["bg2"], layers=_stack(base, [pins]))
+
+    def restack():
+        the_map.layers = _stack(base, [pins])
+        page.update()
+
+    restack_holder.append(restack)
+
+    return card(ft.Column(spacing=8, controls=[
+        ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            title("Bay Area map", 13),
+            chip("offline tiles" if offline else "online tiles",
+                 p["green"] if offline else p["yellow"], ft.Icons.MAP, small=True),
+            ft.Container(expand=True),
+            ft.TextButton(content=ft.Text("Full map", size=11),
+                          icon=ft.Icons.FULLSCREEN,
+                          on_click=lambda e: _open_full_map(page, spots)),
+        ]),
+        ft.Container(height=MINI_MAP_HEIGHT, border_radius=10,
+                     clip_behavior=ft.ClipBehavior.HARD_EDGE, content=the_map),
+        _temp_legend(p),
+        sub(f"{len(stations)} mapped stations · tap a pin to read it below", 10),
+    ]))
+
+
+def _open_full_map(page, spots):
+    """A full-screen map with the temperature legend.
+
+    Checks for data before opening. The website's overlay used to add its
+    `open` class first, so with the forecasts still loading you got a
+    full-screen panel containing a title bar, a close button and nothing.
+    """
+    p = PAL()
+    stations = _mapped(spots or [])
+    if not MAPS_AVAILABLE or not stations:
+        page.show_dialog(ft.AlertDialog(
+            bgcolor=p["surface"],
+            title=ft.Text("No map to show", size=14, color=p["text"]),
+            content=ft.Text(
+                "This build has no map extension."
+                if not MAPS_AVAILABLE else
+                "The forecasts have not loaded, so there are no stations to "
+                "pin. Try again in a moment.", size=11, color=p["text2"])))
+        return
+
+    lat, lon, dlat, dlon = _bounds(stations)
+    base = fmap.TileLayer(
+        url_template=(tileserver.start(M.mbtiles_path())
+                      or "https://tile.openstreetmap.org/{z}/{x}/{y}.png"),
+        user_agent_package_name="online.iamprettyfamous.nviidash")
+    pins = fmap.MarkerLayer(
+        markers=[_station_pin(p, s, None, big=True) for s in stations])
+    the_map = fmap.Map(
+        expand=True, initial_center=fmap.MapLatitudeLongitude(lat, lon),
+        initial_zoom=_zoom_for(dlat, dlon), min_zoom=5, max_zoom=18,
+        bgcolor=p["bg2"], layers=_stack(base, [pins]))
+
+    dlg = ft.AlertDialog(
+        modal=True, bgcolor=p["surface"],
+        title=ft.Row(spacing=8, controls=[
+            ft.Icon(ft.Icons.MAP, size=16, color=p["accent"]),
+            ft.Text("Bay Area weather map", size=14, color=p["text"], expand=True)]),
+        content=ft.Container(
+            width=760, height=FULL_MAP_HEIGHT,
+            content=ft.Column(spacing=8, expand=True, controls=[
+                ft.Container(expand=True, border_radius=10,
+                             clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                             content=the_map),
+                _temp_legend(p),
+            ])))
+    dlg.actions = [ft.TextButton("Close",
+                                 on_click=lambda e: page.pop_dialog())]
+    page.show_dialog(dlg)
+
+
+# ------------------------------------------------------------- spot tiles
+
+def _mini_forecast(p, spot, days=3):
+    """The compact per-spot 3-day row the website puts on every tile."""
+    daily = spot.get("daily") or {}
+    dates = daily.get("time") or []
+    if not dates:
+        return None
+    codes = daily.get("weather_code") or []
+    mx = daily.get("temperature_2m_max") or []
+    mn = daily.get("temperature_2m_min") or []
+    pop = daily.get("precipitation_probability_max") or []
+
+    def day(i):
+        _label, icon, ckey = _wmo(_at(codes, i))
+        return ft.Column(spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                         controls=[
+            ft.Text(_weekday(dates[i], i), size=8.5, color=p["text3"]),
+            ft.Icon(icon, size=13, color=p[ckey]),
+            ft.Text(f"{_n(_at(mx, i))}°/{_n(_at(mn, i))}°", size=9, color=p["text2"]),
+            ft.Text(f"{_n(_at(pop, i))}%", size=8.5, color=p["cyan"]),
+        ])
+
+    return ft.Row(spacing=10, controls=[day(i) for i in range(min(days, len(dates)))])
+
+
+def _spot_tile(p, spot, selected, on_pick):
+    """One station, with everything the website's tile shows."""
+    cur = spot.get("current") or {}
+    label, icon, ckey = _wmo(cur.get("weather_code"))
+    gust = cur.get("wind_gusts_10m")
+    wind = _n(cur.get("wind_speed_10m")) + " mph"
+    if gust is not None:
+        wind += f" g{_n(gust)}"
+    wet = wetness(spot)
+    on = spot.get("name") == selected
+
+    def stat(name, value, colour=None):
+        return ft.Row(spacing=4, tight=True, controls=[
+            ft.Text(name, size=9, color=p["text3"]),
+            ft.Text(value, size=10, weight=ft.FontWeight.W_600,
+                    color=colour or p["text"])])
+
+    rows = [
+        ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.Icon(icon, size=18, color=p[ckey]),
+            ft.Text(f"{_n(cur.get('temperature_2m'))}°", size=20,
+                    weight=ft.FontWeight.W_700, color=p["text"]),
+            ft.Column(spacing=0, expand=True, controls=[
+                ft.Text(spot.get("name", "?"), size=11.5,
+                        weight=ft.FontWeight.W_600, color=p["text"],
+                        no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Text(f"{spot.get('region', '')} · {label}".strip(" ·"), size=9,
+                        color=p["text3"], no_wrap=True,
+                        overflow=ft.TextOverflow.ELLIPSIS),
+            ]),
+        ]),
+        ft.Row(spacing=10, wrap=True, controls=[
+            stat("feels", f"{_n(cur.get('apparent_temperature'))}°"),
+            stat("wind", wind),
+            stat("hum", f"{_n(cur.get('relative_humidity_2m'))}%"),
+        ] + ([stat("sky", wet, p["cyan"] if wet != "Dry" else p["green"])]
+             if wet else [])),
+    ]
+    forecast = _mini_forecast(p, spot)
+    if forecast is not None:
+        rows.append(forecast)
+
+    return ft.Container(
+        col={"xs": 12, "md": 6}, padding=PAD(8, 10), border_radius=10, ink=True,
+        on_click=lambda e, n=spot.get("name"): on_pick(n),
+        bgcolor=ft.Colors.with_opacity(0.10, p["accent"]) if on else p["bg2"],
+        border=BRD(p["accent"] if on else
+                   (p["cyan"] if wet in ("Wet", "Damp") else p["border"]), 1),
+        content=ft.Column(spacing=6, controls=rows))
+
+
+def _all_spots(p, spots, selected, on_pick):
+    """Every spot, mapped first and then the reference points, as the website
+    splits them."""
+    on_map = _mapped(spots)
+    off_map = [s for s in spots if s not in on_map]
+    blocks = [
+        ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            title("All spots", 13), ft.Container(expand=True),
+            sub("tap one to read it above", 10)]),
+        ft.ResponsiveRow(columns=12, spacing=8, run_spacing=8,
+                         controls=[_spot_tile(p, s, selected, on_pick)
+                                   for s in on_map]),
+    ]
+    if off_map:
+        blocks += [
+            ft.Divider(height=1, color=p["border"]),
+            ft.Row(spacing=6, controls=[
+                ft.Icon(ft.Icons.WRONG_LOCATION, size=13, color=p["text3"]),
+                ft.Text("Reference spots — not mapped", size=10.5,
+                        color=p["text3"])]),
+            ft.ResponsiveRow(columns=12, spacing=8, run_spacing=8,
+                             controls=[_spot_tile(p, s, selected, on_pick)
+                                       for s in off_map]),
+        ]
+    blocks.append(sub(
+        f"{len(spots)} spots · {len(on_map)} mapped + {len(off_map)} reference "
+        f"· temps °F · winds mph · 3-day forecast · precip % = chance", 10))
+    blocks.append(sub(
+        "Current conditions and a 3-day daily forecast are everything "
+        "/api/weather/multi returns. It sends no hourly series, so there is "
+        "no hour-by-hour strip to show.", 10))
+    return ft.Column(spacing=8, controls=blocks)
+
+
 def _bay(page):
     p = PAL()
     spots, err = _spots()
     reload_page = rebuilder(page, build)
+    # Filled in by whichever map panels get built, so the rain toggle can
+    # restack every one of them without knowing which are visible.
+    restackers = []
 
-    header = ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-        title("Bay Area", 15), ft.Container(expand=True),
-        ft.IconButton(ft.Icons.REFRESH, icon_color=p["accent"], icon_size=20,
-                      tooltip="re-read from the server",
-                      on_click=lambda e: reload_page()),
+    def restack_all():
+        for fn in restackers:
+            fn()
+        page.update()
+
+    header = ft.Column(spacing=6, controls=[
+        ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            title("Bay Area", 15), ft.Container(expand=True),
+            ft.IconButton(ft.Icons.REFRESH, icon_color=p["accent"], icon_size=20,
+                          tooltip="re-read from the server",
+                          on_click=lambda e: reload_page()),
+        ]),
+        _rain_controls(page, restack_all),
     ])
 
     if err:
@@ -330,22 +906,12 @@ def _bay(page):
 
     spot = _pick(spots, _focus["name"])
 
-    def regional_block():
-        return ft.Column(spacing=8, controls=[
-            ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-                title("All spots", 13), ft.Container(expand=True),
-                sub("wind · rain · temp", 10)]),
-            _regional(spots, _focus["name"], pick),
-            sub("Current conditions and a 3-day daily forecast are everything "
-                "/api/weather/multi returns. It sends no hourly series, so "
-                "there is no hour-by-hour strip to show.", 10),
-        ])
-
     return panels.layout("weather", {
         "header": lambda: header,
+        "map": lambda: _bay_map(page, spots, pick, restackers),
         "hero": lambda: _hero(spot),
         "forecast": lambda: _forecast(spot),
-        "regional": regional_block,
+        "regional": lambda: card(_all_spots(p, spots, _focus["name"], pick)),
     })
 
 
@@ -401,6 +967,19 @@ _POI_LIMIT = 120
 
 _explore = {"cats": {"fuel"}, "center": HOME, "zoom": 13.0,
             "pois": [], "note": "", "error": ""}
+
+# The Explore map's height. Fixed for the same reason the Bay map's is:
+# these panels sit in a scrollable stack, where an expanding control has
+# nothing to expand into.
+EXPLORE_MAP_HEIGHT = 320
+
+# What tapping the map, or picking a search result, last turned up:
+# {"name", "lat", "lon", "current", "daily"} or an error.
+_point = {"name": "", "lat": None, "lon": None, "data": None,
+          "error": "", "busy": False}
+
+# The place search box.
+_search = {"text": "", "results": None, "error": "", "busy": False}
 
 
 def _bbox_for(lat, lon, zoom):
@@ -529,6 +1108,10 @@ def _explore_tab(page):
     status = ft.Text("", size=11, color=p["text2"], selectable=True, expand=True)
     results = ft.Column(spacing=5, scroll=ft.ScrollMode.AUTO)
     marker_layer = fmap.MarkerLayer(markers=[])
+    point_layer = fmap.MarkerLayer(markers=[])
+    base_layer = fmap.TileLayer(
+        url_template=url_template,
+        user_agent_package_name="online.iamprettyfamous.nviidash")
 
     the_map = fmap.Map(
         expand=True,
@@ -536,9 +1119,15 @@ def _explore_tab(page):
         initial_zoom=_explore["zoom"], min_zoom=3, max_zoom=18,
         bgcolor=p["bg2"],
         on_position_change=lambda e: _remember_camera(e),
-        layers=[fmap.TileLayer(url_template=url_template,
-                               user_agent_package_name="online.iamprettyfamous.nviidash"),
-                marker_layer])
+        on_tap=lambda e: page.run_task(_tapped, e),
+        layers=_stack(base_layer, [marker_layer, point_layer]))
+
+    def restack():
+        the_map.layers = _stack(base_layer, [marker_layer, point_layer])
+
+    def restack_and_update():
+        restack()
+        page.update()
 
     def _remember_camera(e):
         cam = getattr(e, "camera", None)
@@ -566,6 +1155,8 @@ def _explore_tab(page):
 
     def redraw():
         marker_layer.markers = [pin(q) for q in _explore["pois"]]
+        point_layer.markers = ([_tapped_pin(p)] if _point["lat"] is not None else [])
+        restack()
         centre = _explore["center"]
         rows = sorted(_explore["pois"],
                       key=lambda q: _haversine_mi(centre, (q["lat"], q["lon"])))
@@ -577,6 +1168,33 @@ def _explore_tab(page):
         else:
             status.value = _explore["note"]
             status.color = p["text2"]
+        detail.controls = [_point_card(p)]
+
+    async def _load_point(lat, lon, name):
+        """Fetch current + 3-day for an arbitrary point, saying so first.
+
+        Open-Meteo is a third party, not the dashbored server, so a failure
+        here is reported as itself and never marks the app offline.
+        """
+        _point.update(name=name, lat=lat, lon=lon, data=None, error="", busy=True)
+        redraw()
+        page.update()
+        data, err = await asyncio.to_thread(M.point_forecast, lat, lon)
+        _point["busy"] = False
+        if err:
+            _point.update(data=None, error=f"no forecast for this point - {err}")
+        else:
+            _point.update(data=data, error="")
+        redraw()
+        page.update()
+
+    async def _tapped(e):
+        coords = getattr(e, "coordinates", None)
+        lat = getattr(coords, "latitude", None)
+        lon = getattr(coords, "longitude", None)
+        if lat is None or lon is None:
+            return
+        await _load_point(lat, lon, f"{lat:.3f}, {lon:.3f}")
 
     async def search(e=None):
         if not _explore["cats"]:
@@ -685,25 +1303,158 @@ def _explore_tab(page):
     search_button = ft.FilledButton("Search this area", height=36,
                                     icon=ft.Icons.SEARCH, on_click=search)
 
+    # ---------------------------------------------------------- place search
+    detail = ft.Column(spacing=8)
+    found = ft.Column(spacing=5)
+    place_box = ft.TextField(
+        hint_text="Search a city or place…", value=_search["text"], dense=True,
+        filled=True, text_size=12, expand=True, border_color=p["border"],
+        focused_border_color=p["accent"], color=p["text"])
+    place_note = ft.Text(_search["error"] or "", size=10,
+                         color=p["pink"] if _search["error"] else p["text2"],
+                         selectable=True)
+
+    def draw_found():
+        found.controls = []
+        for r in (_search["results"] or []):
+            where = ", ".join(x for x in (r["admin1"], r["country"]) if x)
+            found.controls.append(ft.Container(
+                padding=PAD(5, 9), border_radius=8, ink=True, bgcolor=p["bg2"],
+                border=BRD(p["border"], 1),
+                on_click=lambda e, r=r: page.run_task(_goto_place, r),
+                content=ft.Column(spacing=0, controls=[
+                    ft.Text(r["name"], size=11.5, color=p["text"]),
+                    ft.Text(f"{where} · {r['lat']:.3f}, {r['lon']:.3f}", size=9,
+                            color=p["text3"]),
+                ])))
+        if _search["results"] == []:
+            found.controls.append(sub("No matches.", 10.5))
+
+    async def _goto_place(r):
+        _search["results"] = None
+        draw_found()
+        _explore["center"] = (r["lat"], r["lon"])
+        try:
+            # move_to is a coroutine: not awaiting it leaves the map where it
+            # was and warns to stderr where nobody looks.
+            await the_map.move_to(
+                destination=fmap.MapLatitudeLongitude(r["lat"], r["lon"]),
+                zoom=max(_explore["zoom"], 10.0))
+        except Exception as exc:                          # noqa: BLE001
+            _explore["error"] = f"could not move the map - {exc}"
+        await _load_point(r["lat"], r["lon"], r["name"])
+
+    async def do_place_search(e=None):
+        text = (place_box.value or "").strip()
+        _search["text"] = text
+        if len(text) < 2:
+            _search.update(results=None, error="type at least two letters")
+            place_note.value = _search["error"]
+            place_note.color = p["pink"]
+            draw_found()
+            page.update()
+            return
+        # Open-Meteo's geocoder is a third party and can be slow; say so
+        # before awaiting it and refuse a second submit meanwhile.
+        _search["error"] = ""
+        place_note.value = "searching…"
+        place_note.color = p["text2"]
+        place_button.disabled = True
+        page.update()
+        places, err = await asyncio.to_thread(M.geocode, text)
+        place_button.disabled = False
+        if err:
+            _search.update(results=None, error=f"place search failed - {err}")
+            place_note.value = _search["error"]
+            place_note.color = p["pink"]
+        else:
+            _search.update(results=places, error="")
+            place_note.value = (f"{len(places)} match"
+                                f"{'' if len(places) == 1 else 'es'}"
+                                if places else "")
+            place_note.color = p["text2"]
+        draw_found()
+        page.update()
+
+    place_box.on_submit = do_place_search
+    place_button = ft.IconButton(ft.Icons.SEARCH, icon_color=p["accent"],
+                                 tooltip="search places", on_click=do_place_search)
+
     rebuild_chips()
+    draw_found()
     if not _explore["pois"] and not _explore["error"]:
         _explore["note"] = "pick categories, then search this area"
     redraw()
 
-    return ft.Column(spacing=8, expand=True, controls=[
-        ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-            chip("offline maps" if offline else "online maps",
-                 p["green"] if offline else p["yellow"], ft.Icons.MAP, small=True),
-            ft.Container(expand=True),
-            *([picker] if place_names else []),
-        ]),
-        chip_row,
-        ft.Container(expand=True, border_radius=12,
-                     clip_behavior=ft.ClipBehavior.HARD_EDGE, content=the_map),
-        ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-               controls=[search_button, status]),
-        ft.Container(height=190, content=results),
-    ])
+    return panels.layout("weather.explore", {
+        "search": lambda: card(ft.Column(spacing=6, controls=[
+            ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                   controls=[place_box, place_button]),
+            place_note,
+            found,
+            sub("Tap anywhere on the map for that point's weather.", 10),
+        ])),
+        "cats": lambda: card(ft.Column(spacing=8, controls=[
+            ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                   controls=[
+                chip("offline maps" if offline else "online maps",
+                     p["green"] if offline else p["yellow"], ft.Icons.MAP,
+                     small=True),
+                ft.Container(expand=True),
+                *([picker] if place_names else []),
+            ]),
+            chip_row,
+            _rain_controls(page, restack_and_update),
+        ])),
+        "map": lambda: ft.Container(
+            height=EXPLORE_MAP_HEIGHT, border_radius=12,
+            clip_behavior=ft.ClipBehavior.HARD_EDGE, content=the_map),
+        "point": lambda: detail,
+        "results": lambda: card(ft.Column(spacing=6, controls=[
+            ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                   controls=[search_button, status]),
+            results,
+        ])),
+    })
+
+
+def _tapped_pin(p):
+    """A pin on whatever point was last tapped or picked from the search."""
+    return fmap.Marker(
+        coordinates=fmap.MapLatitudeLongitude(_point["lat"], _point["lon"]),
+        width=26, height=26,
+        content=ft.Container(
+            width=22, height=22, border_radius=11,
+            bgcolor=temp_color(((_point["data"] or {}).get("current") or {})
+                               .get("temperature_2m")),
+            border=ft.Border.all(2, ft.Colors.WHITE),
+            alignment=ft.Alignment(0, 0), tooltip=_point["name"],
+            content=ft.Icon(ft.Icons.PLACE, size=12, color=ft.Colors.BLACK)))
+
+
+def _point_card(p):
+    """Current conditions and three days for a tapped point, or why not."""
+    if _point["lat"] is None:
+        return card(sub("Tap the map, or search a place, for its weather.", 11),
+                    pad=12)
+    where = f"{_point['lat']:.3f}, {_point['lon']:.3f}"
+    if _point["busy"]:
+        return card(ft.Row(spacing=8, controls=[
+            ft.ProgressRing(width=14, height=14, stroke_width=2),
+            sub(f"reading {_point['name']} ({where})…", 11)]), pad=12)
+    if _point["error"]:
+        return card(ft.Column(spacing=4, controls=[
+            ft.Text(_point["name"], size=12, color=p["text"]),
+            ft.Text(_point["error"], size=10.5, color=p["pink"], selectable=True),
+        ]), pad=12)
+    # A tapped point is named by its own coordinates, so do not print them
+    # twice; a searched place has a real name and the coordinates belong
+    # beside it.
+    spot = {"name": _point["name"],
+            "region": "tapped point" if _point["name"] == where else where,
+            "current": (_point["data"] or {}).get("current") or {},
+            "daily": (_point["data"] or {}).get("daily") or {}}
+    return ft.Column(spacing=8, controls=[_hero(spot), _forecast(spot)])
 
 
 def _poi_row(p, poi, miles):
