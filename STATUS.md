@@ -1,4 +1,4 @@
-# agedashii — board
+# Agedashii — board
 
 Updated 2026-09-20 17:50. Branch `app-config`, head `11e2ee9`.
 **282 app tests green. 66 website tests green.**

@@ -98,22 +98,15 @@ async def main(page):
         second pill of the same weight next to it would have left two
         equals and no answer to "what is this app called".
 
-        So the gradient moves to the mark on the left, the product name is
-        set in plain type at the largest size in the bar, and the owner
-        becomes a small outlined badge after it - the shape a profile chip
-        has everywhere else. This matches the website's topbar exactly,
-        which is the point: the same three parts in the same order.
+        So the product name is set in plain type at the largest size in the
+        bar and the owner becomes a small outlined badge after it - the
+        shape a profile chip has everywhere else. The rainbow dot that used
+        to lead the row is gone at her request. This matches the website's
+        topbar exactly, which is the point.
         """
         p = PAL()
         return ft.Row(spacing=8, tight=True, controls=[
-            ft.Container(
-                width=10, height=10, border_radius=10,
-                gradient=ft.LinearGradient(
-                    colors=[ORANGE, PINK, CYAN],
-                    begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0)),
-                shadow=ft.BoxShadow(blur_radius=8, color=PINK),
-            ),
-            ft.Text("agedashii", size=15, weight=ft.FontWeight.W_800,
+            ft.Text("Agedashii", size=15, weight=ft.FontWeight.W_800,
                     color=p["text"],
                     style=ft.TextStyle(letter_spacing=0.4)),
             ft.Container(

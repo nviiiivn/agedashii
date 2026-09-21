@@ -1583,7 +1583,7 @@ def _gpx(name, points):
     import time as _t
     head = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<gpx version="1.1" creator="agedashii" xmlns="http://www.topografix.com/GPX/1/1">\n'
+        '<gpx version="1.1" creator="Agedashii" xmlns="http://www.topografix.com/GPX/1/1">\n'
         f"  <metadata><name>{_h.escape(name)}</name></metadata>\n"
         f"  <trk><name>{_h.escape(name)}</name><trkseg>\n")
     rows = []

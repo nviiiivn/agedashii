@@ -447,7 +447,7 @@ def _ai(page):
     def paint(extra=None):
         if not _AI["messages"]:
             stream.controls = [card(ft.Column(spacing=4, controls=[
-                title("agedashii AI", 13),
+                title("Agedashii AI", 13),
                 sub("Ask about the homelab. The machines, their containers and "
                     "their services are described to the model with every "
                     "message.", 11)]), pad=12)]

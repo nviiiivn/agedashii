@@ -1,4 +1,4 @@
-# agedashii
+# Agedashii
 
 Companion app for [dashbored](https://git.alola.lol) — nvii's homelab dashboard.
 Built with [Flet](https://flet.dev) (Python → Flutter). One codebase builds an

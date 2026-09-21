@@ -125,14 +125,20 @@ jobs:
           exec "\$HERE/usr/bin/$BINNAME" "\$@"
           EOF
           chmod +x AppDir/AppRun
+          # Name is what the desktop search shows; StartupWMClass lets the
+          # window manager match the running window back to this entry so it
+          # does not appear twice in a dock.
           cat > AppDir/$APP.desktop <<EOF
           [Desktop Entry]
           Type=Application
-          Name=$APP
-          Comment=Dashbored companion
+          Name=Agedashii
+          GenericName=Homelab dashboard
+          Comment=Homelab, rides, food and weather - offline first
           Exec=$BINNAME
           Icon=$APP
-          Categories=Utility;
+          Categories=Utility;Network;
+          Keywords=dashboard;homelab;nvii;agedashii;
+          StartupWMClass=$BINNAME
           Terminal=false
           EOF
           # An icon is mandatory. Use the app's own if the build produced one,
@@ -195,71 +201,79 @@ jobs:
           path: dist/web/**
           if-no-files-found: error
 
-  macos-ios:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-
-      - name: Install flet
-        run: pip install "flet==${FLET_VERSION}" "flet-cli==${FLET_VERSION}"
-
-      - name: Build macOS app
-        run: flet build macos --yes -o dist/macos --exclude .git dist build .venv
-
-      # Unsigned iOS build for sideloading. With no provisioning profile
-      # configured, flet passes --no-codesign through to flutter
-      # (flet_cli/commands/build.py), which is exactly what AltStore /
-      # Sideloadly want: they re-sign with a free Apple ID on the way in. No
-      # paid Developer Program account involved.
-      - name: Build iOS (unsigned, for sideloading)
-        run: flet build ipa --yes -o dist/ipa --exclude .git dist build .venv
-
-      # flutter build ipa --no-codesign often stops at the .app/.xcarchive and
-      # never emits a .ipa, because packaging is normally the signing step's
-      # job. Sideloaders want a .ipa, which is just a zip with the app inside
-      # Payload/ - so build one if it is missing.
-      - name: Package .ipa if the unsigned build only produced an .app
-        run: |
-          set -eu
-          if find dist/ipa -name '*.ipa' | grep -q .; then
-            echo "flet already produced an .ipa, nothing to do"
-            exit 0
-          fi
-          app="$(find dist/ipa -maxdepth 4 -name 'Runner.app' -o -maxdepth 4 -name '*.app' | head -1)"
-          if [ -z "$app" ]; then
-            echo "no .app found under dist/ipa - listing what is there:" >&2
-            find dist/ipa | head -40 >&2
-            exit 1
-          fi
-          echo "packaging $app"
-          staging="$(mktemp -d)"
-          mkdir -p "$staging/Payload"
-          cp -R "$app" "$staging/Payload/"
-          (cd "$staging" && zip -qry agedashii-unsigned.ipa Payload)
-          mv "$staging/agedashii-unsigned.ipa" dist/ipa/
-
-      - name: List build output
-        run: |
-          echo "--- tree ---"; find dist -maxdepth 3 | head -60
-          echo "--- sizes ---"; du -sh dist/* || true
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agedashii-macos
-          path: dist/macos/**
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agedashii-ios-unsigned-ipa
-          path: dist/ipa/**/*.ipa
-          if-no-files-found: error
+  # macos-ios is disabled. This repo is private, so Actions minutes are
+  # metered, and macOS runners bill at a 10x multiplier - one macOS job cost
+  # more quota than the entire Linux + Android job. Six builds in a day put
+  # run 35664385514 into a state where both jobs started and died instantly
+  # with zero steps and no logs, which is what exhausting the allowance
+  # looks like. The owner only needs the Linux build for her laptop.
+  #
+  # To bring it back: delete this comment and un-indent the block below.
+  # macos-ios:
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  # 
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: ${{ env.PYTHON_VERSION }}
+  # 
+  #     - uses: subosito/flutter-action@v2
+  #       with:
+  #         flutter-version: ${{ env.FLUTTER_VERSION }}
+  #         channel: stable
+  # 
+  #     - name: Install flet
+  #       run: pip install "flet==${FLET_VERSION}" "flet-cli==${FLET_VERSION}"
+  # 
+  #     - name: Build macOS app
+  #       run: flet build macos --yes -o dist/macos --exclude .git dist build .venv
+  # 
+  #     # Unsigned iOS build for sideloading. With no provisioning profile
+  #     # configured, flet passes --no-codesign through to flutter
+  #     # (flet_cli/commands/build.py), which is exactly what AltStore /
+  #     # Sideloadly want: they re-sign with a free Apple ID on the way in. No
+  #     # paid Developer Program account involved.
+  #     - name: Build iOS (unsigned, for sideloading)
+  #       run: flet build ipa --yes -o dist/ipa --exclude .git dist build .venv
+  # 
+  #     # flutter build ipa --no-codesign often stops at the .app/.xcarchive and
+  #     # never emits a .ipa, because packaging is normally the signing step's
+  #     # job. Sideloaders want a .ipa, which is just a zip with the app inside
+  #     # Payload/ - so build one if it is missing.
+  #     - name: Package .ipa if the unsigned build only produced an .app
+  #       run: |
+  #         set -eu
+  #         if find dist/ipa -name '*.ipa' | grep -q .; then
+  #           echo "flet already produced an .ipa, nothing to do"
+  #           exit 0
+  #         fi
+  #         app="$(find dist/ipa -maxdepth 4 -name 'Runner.app' -o -maxdepth 4 -name '*.app' | head -1)"
+  #         if [ -z "$app" ]; then
+  #           echo "no .app found under dist/ipa - listing what is there:" >&2
+  #           find dist/ipa | head -40 >&2
+  #           exit 1
+  #         fi
+  #         echo "packaging $app"
+  #         staging="$(mktemp -d)"
+  #         mkdir -p "$staging/Payload"
+  #         cp -R "$app" "$staging/Payload/"
+  #         (cd "$staging" && zip -qry agedashii-unsigned.ipa Payload)
+  #         mv "$staging/agedashii-unsigned.ipa" dist/ipa/
+  # 
+  #     - name: List build output
+  #       run: |
+  #         echo "--- tree ---"; find dist -maxdepth 3 | head -60
+  #         echo "--- sizes ---"; du -sh dist/* || true
+  # 
+  #     - uses: actions/upload-artifact@v4
+  #       with:
+  #         name: agedashii-macos
+  #         path: dist/macos/**
+  #         if-no-files-found: error
+  # 
+  #     - uses: actions/upload-artifact@v4
+  #       with:
+  #         name: agedashii-ios-unsigned-ipa
+  #         path: dist/ipa/**/*.ipa
+  #         if-no-files-found: error
