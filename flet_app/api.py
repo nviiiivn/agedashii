@@ -1386,9 +1386,106 @@ def _journal_tree_without(rel):
 # --------------------------------------------------------------------- garage
 GARAGE_RECORD_TYPES = ("mileage", "services", "expenses")
 
+# The three note folders the server will create a markdown file in. It
+# rejects anything else with HTTP 400 "bad section" (BIKE_SUBDIRS), so the
+# picker offers exactly these rather than a free-text box that can only fail.
+GARAGE_NOTE_SECTIONS = ("Notes", "Mods", "Refs")
+
+# The fields each record type actually has, in the order the website's form
+# and table use them, and which of them are numbers.
+#
+# This is here rather than in the page because the app was writing
+# `{"label": ..., "odo": ..., "amount": ...}` for all three types. `label`
+# is read by nothing - not the website's tables, not the server's stats -
+# and `amount` only exists on expenses, so a service logged from the app
+# showed up on the website as a date, an odometer and four blank columns,
+# and contributed nothing to "total spent". Naming the schema once means
+# the app and the website cannot drift again without this constant changing.
+GARAGE_RECORD_FIELDS = {
+    "mileage": ("date", "odo", "gallons", "price_per_gal", "cost", "notes"),
+    "services": ("date", "odo", "type", "parts_cost", "labor_cost", "notes"),
+    "expenses": ("date", "category", "vendor", "amount", "notes"),
+}
+GARAGE_NUMERIC_FIELDS = frozenset((
+    "odo", "gallons", "price_per_gal", "cost", "parts_cost", "labor_cost",
+    "amount"))
+
+# The spec sheet, in the website's order. `garageSaveSpec` sends all sixteen
+# every time - it is a whole-object write - so a key left out here would be
+# erased from the server's _BIKE.json the first time the app saved.
+GARAGE_SPEC_FIELDS = ("year", "make", "model", "nickname", "cc", "condition",
+                      "reg_expires", "vin", "plate", "color", "purchased",
+                      "purchase_price", "odo_at_purchase", "odo_current",
+                      "insurance", "notes")
+# Kept as numbers when they parse as one, exactly as the website does, so a
+# year does not come back from the server as the string "1993".
+GARAGE_SPEC_NUMERIC = frozenset(("year", "cc", "odo_at_purchase",
+                                 "odo_current", "purchase_price"))
+
 
 def _garage_records_path(bike, rtype):
     return f"/api/garage/records?bike={urllib.parse.quote(bike)}&type={rtype}"
+
+
+def garage_tree():
+    """The server's bikes: label, per-type counts and the note folders.
+
+    Deliberately not `M.BIKES`. That accessor is in `_MAP`, so when
+    `garage_bikes()` returns None - which is what "no server" looks like -
+    module `__getattr__` substitutes `mock.BIKES`: two invented Hondas with
+    invented odometers and an invented "running" status. This returns None
+    and lets the page say so.
+    """
+    d = _get("/api/garage/tree")
+    if not isinstance(d, dict):
+        return None
+    return d.get("bikes") or []
+
+
+def garage_stats(bike):
+    """Aggregates for one bike, or None. Values may legitimately be null.
+
+    `mpg_avg`, `cost_per_mile`, `miles_since_service` and
+    `days_since_service` are null until there is enough logged to compute
+    them, and null is not zero: "0 miles since service" is a claim that the
+    bike was serviced today.
+    """
+    d = _get(f"/api/garage/stats?bike={urllib.parse.quote(bike)}")
+    return d if isinstance(d, dict) else None
+
+
+def garage_spec(bike):
+    """The spec sheet for one bike, or None. `{}` means "none saved yet"."""
+    d = _get(f"/api/garage/spec?bike={urllib.parse.quote(bike)}")
+    if not isinstance(d, dict):
+        return None
+    spec = d.get("spec")
+    return spec if isinstance(spec, dict) else {}
+
+
+def garage_note_new(bike, section, title):
+    """Create a markdown note under Notes/Mods/Refs. (ok, path-or-message).
+
+    Never coalesced, for the same reason journal_new is not: the server
+    names the file, and two notes written offline are two notes.
+    """
+    if section not in GARAGE_NOTE_SECTIONS:
+        return False, f"unknown section {section!r}"
+    if not (title or "").strip():
+        return False, "title required"
+    if not (bike or "").strip():
+        return False, "pick a bike"
+    res = _queue_write("/api/garage/new",
+                       params={"bike": bike, "sub": section,
+                               "title": title.strip()},
+                       invalidate=("/api/garage/tree",))
+    if not res.ok:
+        return False, res.message
+    if res.queued:
+        return True, QUEUED_MESSAGE
+    # /api/garage/new answers {"path": rel} and carries no "ok" key, so the
+    # path is the only confirmation there is that the file exists.
+    return True, (res.response or {}).get("path", "created")
 
 
 def garage_records(bike, rtype):
@@ -1438,15 +1535,18 @@ def garage_save(rel, content):
 def garage_spec_save(bike, spec):
     """Save a bike's spec sheet. Coalesced per bike - it is a whole-object write.
 
-    Not applied to the cached /api/garage/spec response: nothing in the app
-    reads that endpoint yet, so the shape the server wraps it in is unknown
-    and inventing one would be sample data by another name. Marked stale
-    instead, exactly as the old code popped it.
+    The edit is now applied to the cached `/api/garage/spec` response too.
+    It could not be before, because nothing in the app read that endpoint
+    and the wrapper shape was unknown; the Spec tab reads it now, and the
+    server's answer has been curled - `{"spec": {...}}`. Without this, a
+    spec edited with the radio off saved into the outbox and then re-read as
+    the old values, which looks exactly like the write being lost.
     """
     spec_path = f"/api/garage/spec?bike={urllib.parse.quote(bike)}"
     return _queue_write("/api/garage/spec/save", params={"bike": bike},
-                        body=json.dumps(spec), coalesce_key=f"garage:spec:{bike}",
-                        invalidate=(spec_path,)).pair
+                        body=json.dumps(spec), local={spec_path: {"spec": dict(spec)}},
+                        coalesce_key=f"garage:spec:{bike}",
+                        invalidate=()).pair
 
 
 # ---------------------------------------------------------------------- trips
@@ -1498,6 +1598,389 @@ def journal():
                         "path": f"{c.get('path') or c.get('name', '')}/{f.get('path', '')}",
                         "name": f.get("name", "")})
     return out
+
+
+# ------------------------------------------------------------------- the lab
+#
+# Everything below reads or drives the machines. Three rules run through it:
+#
+# * A request the *server* answered with an error is not the same thing as the
+#   server being unreachable. `_get_said` keeps them apart, because `_get`
+#   collapses both into None and additionally marks the whole app offline -
+#   which is plainly wrong when the answer was "Gitea HTTP 404: Not Found".
+# * Nothing here is ever queued for later. Waking, rebooting or restarting a
+#   unit is an instruction about *now*; replaying one an hour later when the
+#   signal comes back would act on a machine nobody asked about at that
+#   moment. They refuse offline and say why.
+# * `dotfile_save` is the exception, and goes through the outbox: it is a
+#   document, the newest copy is the one to send, and the server applies it
+#   whenever it arrives.
+
+def _get_said(path, timeout=6):
+    """GET `path` -> (data, error). `error` is the server's own words, or None.
+
+    Unlike `_get` this never consults or fills the store and never flips the
+    connection status on an HTTP status code. A 404 from /api/projects/tree
+    means "no such repo", not "the phone has no signal", and treating it as
+    the latter took the whole app offline mid-browse.
+    """
+    req = urllib.request.Request(config.SERVER_URL + path, method="GET")
+    try:
+        with config._opener.open(req, timeout=timeout) as r:
+            raw = r.read().decode()
+    except urllib.error.HTTPError as e:
+        said = _server_said(e)
+        if e.code in _GATEWAY_CODES:
+            config._remember(config.SERVER_URL, False, config._describe(e))
+        return None, said or config._describe(e)
+    except Exception as e:  # noqa: BLE001 - the connection really did fail
+        detail = config._describe(e)
+        config._remember(config.SERVER_URL, False, detail)
+        return None, detail
+    config._remember(config.SERVER_URL, True, "connected")
+    try:
+        data = json.loads(raw or "{}")
+    except ValueError:
+        return None, "responded, but not with dashbored JSON"
+    if isinstance(data, dict) and data.get("error"):
+        return data, str(data["error"])
+    return data, None
+
+
+def _live_post(path, *, json_body=None, body=None, timeout=20):
+    """POST now or not at all -> (data, error). Never queued. See the note above."""
+    if not _worth_trying():
+        return None, (config.STATUS.get("detail")
+                      or "no connection to the server, and this cannot be queued")
+    data = json.dumps(json_body).encode() if json_body is not None else _body_bytes(body)
+    headers = {"Content-Type": "application/json"} if json_body is not None else {}
+    req = urllib.request.Request(config.SERVER_URL + path, data=data,
+                                 headers=headers, method="POST")
+    try:
+        with config._opener.open(req, timeout=timeout) as r:
+            raw = r.read().decode()
+    except urllib.error.HTTPError as e:
+        said = _server_said(e)
+        if e.code in _GATEWAY_CODES:
+            config._remember(config.SERVER_URL, False, config._describe(e))
+        return None, said or config._describe(e)
+    except Exception as e:  # noqa: BLE001
+        detail = config._describe(e)
+        config._remember(config.SERVER_URL, False, detail)
+        return None, detail
+    config._remember(config.SERVER_URL, True, "connected")
+    try:
+        out = json.loads(raw or "{}")
+    except ValueError:
+        return None, "responded, but not with dashbored JSON"
+    if isinstance(out, dict) and out.get("error"):
+        return out, str(out["error"])
+    return out, None
+
+
+def dashboard():
+    """Raw /api/dashboard: {machine id: {display, color, widgets: {...}}}.
+
+    The timeout is generous because the server SSHes to every machine to build
+    it. Shared with `machines()` through the store, so asking for both costs
+    one request.
+    """
+    d = _get("/api/dashboard", timeout=25)
+    return d if isinstance(d, dict) else None
+
+
+def machine_widget(dash, mid, name):
+    """One widget dict for one machine, or {}. Never raises on a odd payload."""
+    m = (dash or {}).get(mid)
+    if not isinstance(m, dict):
+        return {}
+    w = (m.get("widgets") or {}).get(name)
+    return w if isinstance(w, dict) else {}
+
+
+def widget_alive(w):
+    """Whether a widget carries data rather than an excuse.
+
+    SP3 answers every widget with ``{"error": "unreachable"}``, and that is a
+    non-empty dict - so `bool(w)` called it alive and the machine showed a
+    green light while it was down. Same shape, same trap, in every widget.
+    """
+    return bool(w) and not w.get("error")
+
+
+def machine_config():
+    """/api/config: {id: {display, host, user, color}}. Hosts for SSH and power."""
+    d = _get("/api/config", timeout=8)
+    return d if isinstance(d, dict) else None
+
+
+def docker_list():
+    """/api/docker_list -> (hosts, error).
+
+    Shape, verified against the live server: ``{mid: {"display", "color",
+    "containers": [{"name", "image", "state", "status", "ports"}]}}``. `ports`
+    is docker's own one-line string, not a dict.
+    """
+    return _get_said("/api/docker_list", timeout=30)
+
+
+def docker_ports(raw):
+    """Readable published ports from docker's ``ps`` string.
+
+    IPv4 and IPv6 publish the same mapping twice ("0.0.0.0:8080->80/tcp,
+    :::8080->80/tcp"); showing it once is the whole point. A dict is accepted
+    too in case a caller ever passes docker's JSON shape.
+    """
+    if not raw:
+        return ""
+    if isinstance(raw, dict):
+        return ", ".join(str(k) for k in raw)
+    seen = []
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        host, sep, rest = part.rpartition(":")
+        mapped = part
+        if sep and "->" in rest:
+            out_port, _, inner = rest.partition("->")
+            mapped = f"{out_port}->{inner}"
+        if mapped not in seen:
+            seen.append(mapped)
+    return ", ".join(seen)
+
+
+POWER_ACTIONS = ("wake", "shutdown", "reboot")
+
+
+def power(mid, action):
+    """Wake / shut down / reboot a machine now. Returns (ok, message).
+
+    Live only. The server answers 200 ``{"ok": true, "output": ...}`` even
+    when the SSH call reported "WoL tools not installed", so the output is
+    handed back verbatim rather than summarised into a success.
+    """
+    if action not in POWER_ACTIONS:
+        return False, f"unknown power action '{action}'"
+    if not mid:
+        return False, "no machine given"
+    data, err = _live_post(f"/api/power/{action}/{urllib.parse.quote(mid)}")
+    if err:
+        return False, err
+    return True, str((data or {}).get("output") or "").strip() or "(the server said nothing)"
+
+
+SERVICE_ACTIONS = ("start", "stop", "restart", "status")
+
+
+def service_control(host, service, action):
+    """docker-then-systemctl on one machine. Returns (ok, output).
+
+    ``ok`` from this endpoint means "the SSH call completed", including when
+    it completed by printing "Unit caddy.service could not be found" - so the
+    caller must show the output, not a tick.
+    """
+    if action not in SERVICE_ACTIONS:
+        return False, f"unknown service action '{action}'"
+    if not host or not service:
+        return False, "machine and unit name are both required"
+    data, err = _live_post("/api/service/control",
+                           json_body={"host": host, "service": service,
+                                      "action": action}, timeout=45)
+    if err:
+        return False, err
+    return True, str((data or {}).get("output") or "").strip() or "(no output)"
+
+
+def run_command(host, command, timeout=40):
+    """Run one command over the server's SSH. Returns (output, error).
+
+    The body is the command itself, not JSON - that is what /api/run reads.
+    """
+    if not host or not (command or "").strip():
+        return None, "machine and command are both required"
+    data, err = _live_post("/api/run?host=" + urllib.parse.quote(host),
+                           body=command.strip(), timeout=timeout)
+    if err:
+        return None, err
+    return str((data or {}).get("output") or ""), None
+
+
+def docker_logs(host, container, lines=80):
+    """The last `lines` of a container's log, or (None, why)."""
+    if not container:
+        return None, "no container named"
+    return run_command(host, f"docker logs --tail {int(lines)} {container}")
+
+
+def dotfile_read(host, path):
+    """One dotfile's contents from a machine. Returns (text, error)."""
+    if not host or not path:
+        return None, "machine and path are both required"
+    data, err = _get_said(
+        f"/api/dotfile/read?host={urllib.parse.quote(host)}"
+        f"&path={urllib.parse.quote(path)}", timeout=20)
+    if err:
+        return None, err
+    if not isinstance(data, dict):
+        return None, "the server sent no file"
+    return str(data.get("content") or ""), None
+
+
+def dotfile_save(host, path, content):
+    """Write a dotfile back. Queued, because it is a document, not an order.
+
+    Coalesced per (machine, path): the app holds no copy of the file, so the
+    queued one is the only one and the newest wins.
+    """
+    if not host or not path:
+        return False, "machine and path are both required"
+    return _queue_write("/api/dotfile/save",
+                        params={"host": host, "path": path}, body=content,
+                        coalesce_key=f"dotfile:{host}:{path}").pair
+
+
+# ----------------------------------------------------------------- the extras
+def projects_list():
+    """Every repo Gitea knows, raw -> (list, error).
+
+    Kept raw on purpose: `projects()` above flattens to three fields for the
+    old list, and the detail view needs full_name, default_branch and the
+    counts the flattening threw away.
+    """
+    d, err = _get_said("/api/projects", timeout=15)
+    if err:
+        return None, err
+    return (d, None) if isinstance(d, list) else (None, "the server sent no repo list")
+
+
+def repo_owner_name(repo):
+    """(owner, name) for a repo row, from full_name and falling back to owner.login."""
+    full = str((repo or {}).get("full_name") or "")
+    if "/" in full:
+        owner, _, name = full.partition("/")
+        return owner, name
+    owner = ((repo or {}).get("owner") or {}).get("login") or ""
+    return str(owner), str((repo or {}).get("name") or "")
+
+
+def project_tree(owner, repo):
+    """/api/projects/tree -> ({info, branch, tree, commits}, error)."""
+    if not owner or not repo:
+        return None, "owner and repo are both required"
+    data, err = _get_said(
+        f"/api/projects/tree?owner={urllib.parse.quote(owner)}"
+        f"&repo={urllib.parse.quote(repo)}", timeout=20)
+    if err:
+        return None, err
+    return (data, None) if isinstance(data, dict) else (None, "the server sent no tree")
+
+
+def project_file(owner, repo, path):
+    """One file out of a repo -> (text, error). The server base64-decodes it."""
+    if not (owner and repo and path):
+        return None, "owner, repo and path are all required"
+    data, err = _get_said(
+        f"/api/projects/file?owner={urllib.parse.quote(owner)}"
+        f"&repo={urllib.parse.quote(repo)}&path={urllib.parse.quote(path)}", timeout=20)
+    if err:
+        return None, err
+    if not isinstance(data, dict):
+        return None, "the server sent no file"
+    return str(data.get("decoded") or ""), None
+
+
+def future_curated():
+    """/api/future/curated -> (dict of named lists, error).
+
+    Every value is a list of {name, note, lat, lon, ...} except
+    ``events_stale_h``, a float saying how old the scraped events are.
+    """
+    d, err = _get_said("/api/future/curated", timeout=20)
+    if err:
+        return None, err
+    return (d, None) if isinstance(d, dict) else (None, "the server sent no curated lists")
+
+
+# ------------------------------------------------------------------------- ai
+AI_PROVIDERS = (("ollama", "Ollama (LAN)"), ("openrouter", "OpenRouter (free)"),
+                ("zen", "OpenCode Zen (free)"))
+
+# The website sends this with every message; without it the model has no idea
+# what machines it is being asked about.
+AI_SYSTEM = ("You are NVII, a helpful AI assistant with context about this "
+             "homelab. The lab includes: Tower (blavksaba), Pi 5 (ai-tp), Yoga "
+             "workstation (void), Media Pi (lil-faegola), SP3 downloads box. "
+             "Be concise and helpful.")
+
+
+def ai_models(provider):
+    """Model ids for a hosted provider -> (list, error).
+
+    Ollama is not one of these: its models are per-machine and already in the
+    dashboard payload, under widgets.ollama.models.
+    """
+    if provider == "ollama":
+        return None, "ollama models come from the machine, not from this endpoint"
+    d, err = _get_said("/api/ai/models?provider=" + urllib.parse.quote(provider or ""),
+                       timeout=12)
+    if err:
+        return None, err
+    models = (d or {}).get("models") if isinstance(d, dict) else d
+    if not isinstance(models, list) or not models:
+        return None, "the server listed no models for this provider"
+    return [str(m) if isinstance(m, str) else str(m.get("id") or m.get("name") or "")
+            for m in models if m], None
+
+
+def ollama_models(dash, mid):
+    """Model names installed on one machine, from the dashboard payload."""
+    w = machine_widget(dash, mid, "ollama")
+    if not widget_alive(w):
+        return []
+    return [str(m.get("name") or "") for m in (w.get("models") or [])
+            if isinstance(m, dict) and m.get("name")]
+
+
+def ai_say(provider, model, messages, host=None):
+    """One turn of chat -> (reply, error). The server's own words on failure.
+
+    `messages` are {role, content}. The system prompt is added here so every
+    caller gets the same one. Ollama goes to a different endpoint and needs
+    the machine to run on; the hosted providers do not take one.
+
+    Live only, and deliberately: a queued question answered tomorrow is not an
+    answer, and the reply would have nowhere to land.
+    """
+    norm = [{"role": "system", "content": AI_SYSTEM}]
+    for m in messages or []:
+        norm.append({"role": m.get("role", "user"),
+                     "content": m.get("content", m.get("text", ""))})
+    if provider == "ollama":
+        if not host:
+            return None, "pick which machine should run the model"
+        payload = {"host": host, "model": model, "messages": norm}
+        data, err = _live_post("/api/ollama/chat", json_body=payload, timeout=120)
+    else:
+        payload = {"provider": provider, "model": model, "messages": norm}
+        data, err = _live_post("/api/ai/chat", json_body=payload, timeout=120)
+    if err:
+        return None, err
+    d = data or {}
+    reply = d.get("response") or d.get("content")
+    if not reply:
+        msg = d.get("message")
+        if isinstance(msg, dict):
+            reply = msg.get("content")
+        elif isinstance(msg, str):
+            reply = msg
+    if not reply:
+        choices = d.get("choices") or []
+        if choices and isinstance(choices[0], dict):
+            reply = (choices[0].get("message") or {}).get("content")
+    if not reply:
+        return None, "the provider answered, but with no text in it"
+    return str(reply), None
 
 
 def STATUS_LIVE():
