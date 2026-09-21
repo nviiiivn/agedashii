@@ -564,3 +564,56 @@ class PanelLayoutReachesTheScreen(unittest.TestCase):
         for k in panels.panel_keys("home"):
             prefs.set_panel_hidden("home", k, True)
         self.assertEqual(self._spans(self._home()), [])
+
+
+class PanelLayoutSurvivesARestart(unittest.TestCase):
+    """The layout editor wrote to memory only.
+
+    prefs.save() listed nine fixed keys by hand and none of the per-surface
+    panel keys, so reordering a card, resizing it or hiding it was lost the
+    moment the app restarted - which is every time you open it.
+    """
+
+    class FakeStore:
+        def __init__(self):
+            self.data = {}
+
+        async def set(self, k, v):
+            self.data[k] = v
+
+        async def get(self, k):
+            return self.data.get(k)
+
+    def setUp(self):
+        prefs._V = prefs._defaults()
+
+    def test_a_resized_hidden_reordered_surface_comes_back(self):
+        import asyncio
+        from flet_app import panels
+
+        prefs.set_panel_width("home", "machines", "half")
+        prefs.set_panel_hidden("home", "nowplaying", True)
+        prefs.move_panel("home", "wat2do", -3)
+        before = (prefs.panels("home"), prefs.panel_width("home", "machines"))
+
+        store = self.FakeStore()
+        self.assertTrue(asyncio.run(prefs.save(store)))
+
+        # Restart: a fresh process starts from the shipped defaults.
+        prefs._V = prefs._defaults()
+        self.assertEqual(prefs.panels("home"), panels.panel_keys("home"))
+
+        asyncio.run(prefs.load(store))
+        self.assertEqual((prefs.panels("home"), prefs.panel_width("home", "machines")),
+                         before)
+
+    def test_every_surface_is_persisted_not_just_home(self):
+        import asyncio
+        from flet_app import panels
+
+        store = self.FakeStore()
+        asyncio.run(prefs.save(store))
+        for surface in panels.SURFACES:
+            for part in ("order", "hidden", "width"):
+                with self.subTest(surface=surface, part=part):
+                    self.assertIn(prefs._pkey(surface, part), store.data)

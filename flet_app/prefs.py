@@ -296,6 +296,17 @@ def _pkey(surface, part):
     return f"nvii.panels.{surface}.{part}"
 
 
+def _panel_keys_for_storage():
+    """Every per-surface panel key, for load() and save() to walk.
+
+    Derived from panels.SURFACES rather than listed by hand, so a surface
+    added by a page is persisted without anyone remembering to come here.
+    """
+    from . import panels as _panels
+    return [_pkey(s, part) for s in _panels.SURFACES
+            for part in ("order", "hidden", "width")]
+
+
 def _surface_keys(surface):
     from . import panels as _panels
     return _panels.panel_keys(surface)
@@ -523,7 +534,11 @@ async def load(prefs):
     if prefs is None:
         return False
     read_any = False
-    for key in _defaults():
+    # Every fixed key, plus the three per-surface panel keys. Without these
+    # the layout editor wrote to memory only: reorder a card, resize it,
+    # hide it, restart the app, and it was all back to the shipped order.
+    keys = list(_defaults()) + _panel_keys_for_storage()
+    for key in keys:
         try:
             value = await prefs.get(key)
         except Exception:  # noqa: BLE001 - storage is optional, not required
@@ -561,6 +576,11 @@ async def save(prefs):
         KEY_REFRESH_SECS: refresh_seconds(),
         KEY_TRIP_TAGS: [f"{a}|{b}|{c}" for a, b, c in trip_tags()],
     }
+    # Per-surface panel layout. Written for every surface, including the
+    # ones left at their defaults, so switching a card back to full width
+    # or un-hiding it persists as the absence it is.
+    for key in _panel_keys_for_storage():
+        payload[key] = _V.get(key) or []
     try:
         for key, value in payload.items():
             await prefs.set(key, value)
