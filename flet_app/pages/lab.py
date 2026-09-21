@@ -420,7 +420,9 @@ def _machines(page):
             if conf.get("host"):
                 body.append(_fact("Address", f"{conf.get('user') or '?'}@{conf['host']}"))
             body.append(power_row(mid, display))
-            body.append(w.control)
+            # No w.control here: it wraps one shared ft.Text, and a second
+            # machine going down would put the same control in two trees.
+            # One status line sits under the whole stack instead.
             return card(ft.Column(spacing=8, controls=body))
 
         gauges = [_gauge(sys_w.get("cpu_percent"), "CPU"),
@@ -524,9 +526,11 @@ def _machines(page):
     def machine_stack():
         if not ids:
             return card(sub("The server listed no machines.", 11), pad=12)
-        return ft.ResponsiveRow(columns=12, spacing=10, run_spacing=10, controls=[
-            ft.Container(col={"xs": 12, "lg": 6}, content=machine_card(mid))
-            for mid in ids])
+        return ft.Column(spacing=10, controls=[
+            ft.ResponsiveRow(columns=12, spacing=10, run_spacing=10, controls=[
+                ft.Container(col={"xs": 12, "lg": 6}, content=machine_card(mid))
+                for mid in ids]),
+            w.control])
 
     # Not `offline_banner`, which says "showing sample data". Nothing on this
     # tab is sample data any more - it is the store's copy of what the server

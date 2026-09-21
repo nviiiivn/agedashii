@@ -54,7 +54,10 @@ def build(page):
 # Module level so a repaint does not throw you back to the repo list.
 _PROJ = {"owner": None, "repo": None, "tree": None, "info": None,
          "commits": None, "file": None, "text": None, "error": None,
-         "query": ""}
+         # A failed *file* read keeps its own key. Sharing "error" with the
+         # tree meant one unreadable file made the next repaint declare the
+         # whole repository unopenable.
+         "file_error": None, "query": ""}
 
 
 def _fmt_bytes(n):
@@ -71,7 +74,8 @@ def _fmt_bytes(n):
 
 def _close_repo():
     _PROJ.update({"owner": None, "repo": None, "tree": None, "info": None,
-                  "commits": None, "file": None, "text": None, "error": None})
+                  "commits": None, "file": None, "text": None, "error": None,
+                  "file_error": None})
 
 
 def _tree_groups(tree):
@@ -278,7 +282,7 @@ def _repo_detail(page):
             viewer.controls.append(sub("Pick a file to read it here.", 11))
         elif _PROJ["text"] is None:
             viewer.controls.append(
-                ft.Text(_PROJ["error"] or "the server sent nothing", size=11,
+                ft.Text(_PROJ["file_error"] or "the server sent nothing", size=11,
                         color=p["red"], selectable=True))
         else:
             text = _PROJ["text"]
@@ -302,7 +306,7 @@ def _repo_detail(page):
         async def handler(e):
             text, ferr = M.project_file(owner, repo, path)
             _PROJ["file"], _PROJ["text"] = path, text
-            _PROJ["error"] = ferr
+            _PROJ["file_error"] = ferr
             paint_file()
             page.update()
         return handler
