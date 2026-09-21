@@ -72,6 +72,10 @@ SYNC_POLL_SECS = 20
 
 
 async def main(page):
+    # Without this the window, the taskbar and alt-tab all say "flet" - the
+    # framework's own default. It is the first thing anyone sees and it was
+    # never set.
+    page.title = "Agedashii"
     apply_theme(page)
 
     # Persistent storage is a Flet *service*: constructing it inside the page
@@ -89,36 +93,23 @@ async def main(page):
     body = ft.Container(expand=True, padding=PAD(12, 12))
 
     def brand_chip():
-        """The product mark, then whose copy this is.
+        """The product name in the gradient pill, and nothing else.
 
-        These are two different kinds of name and the topbar now says so.
-        "agedashii" is the application; "NVII" is the owner, and used to be
-        the only thing here - a gradient pill that read as the product's
-        name because nothing else was competing for the job. Putting a
-        second pill of the same weight next to it would have left two
-        equals and no answer to "what is this app called".
-
-        So the product name is set in plain type at the largest size in the
-        bar and the owner becomes a small outlined badge after it - the
-        shape a profile chip has everywhere else. The rainbow dot that used
-        to lead the row is gone at her request. This matches the website's
-        topbar exactly, which is the point.
+        This started as "NVII" in an orange-pink-cyan pill. When the app was
+        renamed the pill was split into a mark, a plain product name and an
+        NVII badge - which left the name looking like ordinary text and the
+        badge looking like the brand. Her call, and she is right: the pill
+        is the identity, so the identity goes in it. NVII is gone from the
+        bar entirely; it is her name, not the app's, and it was only ever
+        here because the app had no name of its own.
         """
-        p = PAL()
-        return ft.Row(spacing=8, tight=True, controls=[
-            ft.Text("Agedashii", size=15, weight=ft.FontWeight.W_800,
-                    color=p["text"],
-                    style=ft.TextStyle(letter_spacing=0.4)),
-            ft.Container(
-                padding=PAD(2, 7), border_radius=20,
-                bgcolor=ft.Colors.with_opacity(0.10, p["text2"]),
-                border=BRD(p["border"], 1),
-                tooltip="Signed in as nvii",
-                content=ft.Text("NVII", size=10, weight=ft.FontWeight.W_700,
-                                color=p["text2"],
-                                style=ft.TextStyle(letter_spacing=1.2)),
-            ),
-        ])
+        return ft.Container(
+            padding=PAD(4, 12), border_radius=10,
+            gradient=ft.LinearGradient(colors=[ORANGE, PINK, CYAN],
+                                       begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0)),
+            content=ft.Text("Agedashii", size=13, weight=ft.FontWeight.W_800,
+                            color="#0d1117"),
+        )
 
     def machine_dots():
         """One load meter per machine. Tapping one opens that machine in Lab.
@@ -571,7 +562,24 @@ async def main(page):
     S.sync_watcher = page.run_task(watch_outbox)
 
 # ft.app() is deprecated since 0.80 and removed in 0.90; ft.run() is the same
-# call. view=None keeps this headless (serves over HTTP) rather than trying to
-# open a desktop window - this host is a headless Pi. For a desktop window use
-# view=ft.AppView.FLET_APP, which is what `flet build linux/macos` produces.
-ft.run(main, view=None, port=8550)
+# call.
+#
+# This used to hardcode `view=None, port=8550`, which serves the app over
+# HTTP instead of opening a window. That is right on the headless Pi and
+# wrong everywhere else: running it from source on a laptop produced no
+# window at all, and a second run died with "address already in use"
+# because the port was fixed.
+#
+# So: open a real window when there is a display, serve headless when there
+# is not, and let either be overridden.
+#
+#   AGEDASHII_HEADLESS=1   force the HTTP server (the Pi does this)
+#   AGEDASHII_PORT=8551    pin the port; 0 or unset lets the OS pick a free
+#                          one, so two copies cannot collide
+if __name__ == "__main__":
+    import os as _os
+
+    _headless = _os.environ.get("AGEDASHII_HEADLESS") == "1" or not (
+        _os.environ.get("DISPLAY") or _os.environ.get("WAYLAND_DISPLAY"))
+    _port = int(_os.environ.get("AGEDASHII_PORT") or (8550 if _headless else 0))
+    ft.run(main, view=None if _headless else ft.AppView.FLET_APP, port=_port)
