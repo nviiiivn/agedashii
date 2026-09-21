@@ -34,7 +34,9 @@ from .. import api as M
 from .. import panels
 from ..ui import PAL, PAD, BRD, card, chip, sub, title
 from ._forms import offline_banner
+from .lab import _tabs
 from . import _wat2do_parts as W
+from . import future
 
 try:                      # optional: the app still runs without the extension
     import flet_map as fmap
@@ -77,6 +79,20 @@ def _num(v):
 
 
 def build(page):
+    """Present | Future, the two sub-views the website's Wat2Do page has.
+
+    Future Finds is `future.py`, imported rather than reimplemented - it was
+    built against /api/future/{scan,gems,photos,sv} yesterday and is already
+    at parity. It is also still reachable from Extras, which is where it was
+    first mounted; the website keeps it here, next to the day it is planning
+    for, so here is where it belongs. Nothing is duplicated: both tabs call
+    the same module, and only one page renders at a time.
+    """
+    return _tabs(page, [("Present", _present(page)),
+                        ("Future", future.build(page))], key="wat2do")
+
+
+def _present(page):
     p = PAL()
 
     if not _S["date"]:
@@ -458,7 +474,7 @@ def build(page):
         _S["spots"] = W.spots_from(elems, allowed_ids=allowed)[:60]
         poi_note.value = (f"{len(_S['spots'])} spots within "
                           f"{W.miles(radius()):.1f} mi of home"
-                          if _S["spots"] else "Nothing found nearby.")
+                          if _S["spots"] else W.empty_scan_note(elems, failed))
         if failed:
             # Say the list is short rather than let it look complete.
             poi_note.value += (" · Overpass dropped "
@@ -679,23 +695,28 @@ def build(page):
         mission_note.value = "rolling the dice..."
         repaint()
         venues = _S["venues"]
+        dropped = []
         if not venues:
             wanted = (W.VENUE_CATS["indoor"] if ctx["indoor"]
                       else W.VENUE_CATS["outdoor"] + W.VENUE_CATS["indoor"])
-            venues, failed = await asyncio.to_thread(
+            venues, dropped = await asyncio.to_thread(
                 W.overpass, [c for c in W.POI_CATS if c["id"] in wanted], ctx["radius"])
             if venues is None:
                 mission_note.value = "mission roll failed - Overpass did not answer."
                 _S["mission_note"] = mission_note.value
                 repaint()
                 return
-            if failed:
+            if dropped:
                 mission_note.value = ("rolling from a short list - Overpass dropped "
-                                      + ", ".join(W.CAT_BY_ID[i]["label"] for i in failed))
+                                      + ", ".join(W.CAT_BY_ID[i]["label"] for i in dropped))
             _S["venues"] = venues
         venue = W.pick_venue(venues, ctx)
         if not venue:
-            mission_note.value = "no venues found around home - try a wider day."
+            # Same distinction the POI scan draws: an Overpass that answers
+            # with no elements at all is describing its own database, not
+            # the neighbourhood, and "try a wider day" sends you looking for
+            # a problem that is not yours.
+            mission_note.value = W.empty_scan_note(venues, dropped)
             _S["mission_note"] = mission_note.value
             _S["mission"] = None
             paint_mission()

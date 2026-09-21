@@ -693,6 +693,29 @@ def overpass(cats, radius, timeout=35, chunk=POI_CHUNK, budget=80):
     return out, failed
 
 
+def empty_scan_note(elements, failed):
+    """What to say when a scan succeeded and still found nothing.
+
+    "Nothing found nearby" is the website's answer to both of the cases
+    below, and for one of them it is false. Measured 2026-09-21: the mirror
+    the server reached answered a 4 km cafe-and-restaurant query around home
+    with ``"elements": []`` and a generator timestamp of "117180" - an
+    instance running on an empty extract. There are, in fact, cafes within
+    4 km of Vulcan Lofts.
+
+    So: Overpass returning literally no elements at all, having raised no
+    error, is a statement about the mirror rather than about Oakland.
+    Elements that did come back but carry no name, or no tag this app
+    classifies, really is nothing worth showing.
+    """
+    if elements:
+        return "Nothing nearby that Overpass has a name for."
+    if failed:
+        return "Overpass answered with nothing, and dropped the rest."
+    return ("Overpass returned no data at all - the mirror it reached looks "
+            "empty, which is not the same as the area being empty.")
+
+
 def osm_notes(bbox):
     """Open OSM community notes in a bbox 'south,west,north,east', or None."""
     d = M._get(f"/api/wat2do/notes?bbox={urllib.parse.quote(bbox)}", timeout=25)
