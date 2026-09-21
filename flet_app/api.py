@@ -731,7 +731,10 @@ def machines():
     out = []
     for mid, m in d.items():
         w = (m.get("widgets") or {}).get("system") or {}
-        online = bool(w)
+        # An unreachable machine answers {"error": "unreachable"}, which is a
+        # non-empty dict - so bool(w) called it online, and SP3 showed a live
+        # status dot and a live row on Home while it was down.
+        online = bool(w) and not w.get("error")
         ram = "—"
         try:
             if w.get("mem_total"):
@@ -740,7 +743,8 @@ def machines():
             pass
         osname = (w.get("greeting") or "").replace("OS:", "").split("·")[0].strip()[:28]
         out.append({"id": mid, "display": m.get("display", mid), "color": m.get("color", "#58a6ff"),
-                    "online": online, "os": osname or "—", "uptime": w.get("uptime", "—"),
+                    "online": online, "error": str(w.get("error") or ""),
+                    "os": osname or "—", "uptime": w.get("uptime", "—"),
                     "cpu": w.get("cpu", "—"), "ram": ram, "temp": w.get("temp", "—"),
                     "docker": "", "host": ""})
     return out

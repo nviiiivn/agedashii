@@ -86,10 +86,42 @@ async def main(page):
         )
 
     def machine_dots():
+        """One dot per machine: coloured when up, hollow when down, and each
+        one opens that machine in Lab.
+
+        They used to be 8px circles with no label and no handler, and they
+        lied: api.machines() called a host online whenever its system widget
+        was non-empty, and an unreachable host answers {"error":
+        "unreachable"} - which is non-empty. SP3 was down and lit.
+        """
         p = PAL()
-        return ft.Row(spacing=6, controls=[
-            ft.Container(width=8, height=8, border_radius=4, bgcolor=m["color"] if m["online"] else p["border"])
-            for m in M.MACHINES])
+
+        def go(mid):
+            def handler(e):
+                # Lab's first tab is Machines; _tabs reads its starting
+                # index out of _TAB_INDEX.
+                _TAB_INDEX["lab"] = 0
+                render("lab")
+            return handler
+
+        def one(m):
+            up = m["online"]
+            why = m.get("error") or ""
+            tip = f"{m['display']} - " + (
+                f"up, {m.get('uptime', '')}".strip().rstrip(",") if up
+                else (f"down ({why})" if why else "down"))
+            return ft.Container(
+                width=16, height=16, border_radius=8, ink=True,
+                tooltip=tip + " - tap to open in Lab",
+                alignment=ft.Alignment(0, 0), on_click=go(m["id"]),
+                content=ft.Container(
+                    width=8, height=8, border_radius=4,
+                    bgcolor=m["color"] if up else None,
+                    # Hollow, not grey: a grey dot beside coloured ones still
+                    # reads as "a machine", where an empty ring reads as off.
+                    border=None if up else BRD(p["text3"], 1)))
+
+        return ft.Row(spacing=2, controls=[one(m) for m in M.MACHINES])
 
     # ------------------------------------------------------- the outbox chip
     # Reads heal themselves: api._wake re-probes behind the UI and a stale
