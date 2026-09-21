@@ -49,15 +49,76 @@ _TAB_INDEX = {}
 
 
 def _tabs(page, tabs, key=None):
+    """A tab bar. A tab's body may be a control, or a callable built on demand.
+
+    Lab passes callables, and the reason is the whole of the topbar-dot bug:
+    ``build()`` used to construct all five tabs before anything painted, and
+    four of them read the network. Timed against the live server on the Pi
+    that was 15.4 s cold and 12.4 s warm - Machines 6.1 s, Docker 4.1 s,
+    Qbit 3.1 s, Services 2.0 s - during which Flet's event loop is inside a
+    synchronous handler, the old frame stays on screen and further taps are
+    dropped. On the laptop, tapping a status dot ran for 9.84 s and swallowed
+    the next nine taps, which is exactly what "clicking does nothing" is.
+
+    So only the tab you are looking at is built now; the rest are built the
+    first time they are selected, and a background pass fills them in shortly
+    after the first paint so a swipe never lands on an empty page. Callers
+    that pass plain controls (every other page) are unchanged.
+    """
     p = PAL()
     selected = max(0, min(_TAB_INDEX.get(key, 0), len(tabs) - 1)) if key else 0
+    slots = [ft.Container(padding=PAD(10, 0)) for _ in tabs]
+    built = [False] * len(tabs)
 
-    def remember(e):
-        _TAB_INDEX[key] = e.control.selected_index
+    def fill(i):
+        if not (0 <= i < len(tabs)) or built[i]:
+            return False
+        built[i] = True
+        body = tabs[i][1]
+        try:
+            slots[i].content = body() if callable(body) else body
+        except Exception as e:  # noqa: BLE001 - one bad tab is not the page
+            slots[i].content = _error_card(f"{tabs[i][0]} could not be built.", e)
+        return True
+
+    fill(selected)
+    for i, (_label, body) in enumerate(tabs):
+        if not callable(body):
+            fill(i)
+
+    def on_change(e):
+        i = e.control.selected_index
+        if key is not None:
+            _TAB_INDEX[key] = i
+        if fill(i):
+            try:
+                page.update()
+            except Exception:  # noqa: BLE001 - torn down mid-switch
+                pass
+
+    async def fill_the_rest():
+        # Off the UI thread: building a tab means reading the server.
+        import asyncio
+        await asyncio.sleep(0)
+        changed = await asyncio.to_thread(
+            lambda: any([fill(i) for i in range(len(tabs))]))
+        if changed:
+            try:
+                page.update()
+            except Exception:  # noqa: BLE001
+                pass
+
+    if any(callable(body) for _label, body in tabs):
+        runner = getattr(page, "run_task", None)
+        if callable(runner):
+            try:
+                runner(fill_the_rest)
+            except Exception:  # noqa: BLE001 - no loop, on_change still fills
+                pass
 
     return ft.Tabs(
         length=len(tabs), selected_index=selected, animation_duration=150, expand=True,
-        on_change=remember if key else None,
+        on_change=on_change,
         content=ft.Column(spacing=0, expand=True, controls=[
             ft.TabBar(
                 tabs=[ft.Tab(label=t) for t, _ in tabs],
@@ -65,16 +126,17 @@ def _tabs(page, tabs, key=None):
                 label_color=p["accent"], unselected_label_color=p["text2"],
                 overlay_color=ft.Colors.with_opacity(0.08, p["accent"]),
             ),
-            ft.TabBarView(expand=True, controls=[
-                ft.Container(padding=PAD(10, 0), content=c) for _, c in tabs]),
+            ft.TabBarView(expand=True, controls=slots),
         ]),
     )
 
 
 def build(page):
-    return _tabs(page, [("Machines", _machines(page)), ("Network", _network()),
-                        ("Services", _services(page)), ("Docker", _docker(page)),
-                        ("Qbit", _qbit(page))],
+    return _tabs(page, [("Machines", lambda: _machines(page)),
+                        ("Network", lambda: _network()),
+                        ("Services", lambda: _services(page)),
+                        ("Docker", lambda: _docker(page)),
+                        ("Qbit", lambda: _qbit(page))],
                  key="lab")
 
 
@@ -296,6 +358,126 @@ def _gpu_name(raw):
     return str(raw or "").split(",")[0].strip()
 
 
+# Which machine the topbar dots asked for. main.py sets it on the way in so
+# a tap lands on that machine's own detail rather than dropping you at the
+# top of the Machines tab to go hunting.
+OPEN_MACHINE = {"id": None}
+
+
+def _rate(v):
+    """Bytes per second, where a measured 0 is a reading and None is not.
+
+    "0 B/s" means the interface is quiet. An em dash means the server has
+    only taken one sample of the counters so far and cannot yet say.
+    """
+    return "—" if v is None else _bytes(v) + "/s"
+
+
+def _gb(mb):
+    return "—" if mb is None else f"{mb / 1024:.1f} GB"
+
+
+def _pctv(v):
+    return "—" if v is None else f"{v:.0f}%"
+
+
+def _disk_line(d):
+    """One drive: its model, whether it spins, and how big it is."""
+    kind = "HDD" if d.get("rotational") else "SSD"
+    model = str(d.get("model") or "").strip() or str(d.get("name") or "?")
+    return f"{model} — {kind}, {_bytes(d.get('bytes'))}"
+
+
+def _facts_grid(pairs):
+    """Label/value pairs, two to a row on a phone and four on a desktop."""
+    return ft.ResponsiveRow(columns=12, spacing=10, run_spacing=8, controls=[
+        ft.Container(col={"xs": 6, "sm": 4, "lg": 3}, content=_fact(label, value))
+        for label, value in pairs])
+
+
+def _group(heading, pairs):
+    return ft.Column(spacing=5, controls=[
+        sub(heading.upper(), 9), _facts_grid(pairs)])
+
+
+def _machine_detail_body(d):
+    """Every field the owner asked for, for one machine, in groups.
+
+    Anything the machine did not answer is an em dash. That is not a
+    cosmetic choice: SP3 is down and answers {"error": "unreachable"} for
+    every widget, and a 0 here would read as an idle, healthy machine.
+    """
+    p = PAL()
+    rows = [
+        _group("Identity", [
+            ("Nickname", d["nickname"]),
+            ("Official name", d["name"]),
+            ("Type", d["machine_type"]),
+            ("Hostname", d["hostname"]),
+            ("Reached at", d["address"]),
+            ("IP", d["ip"]),
+        ]),
+        _group("System", [
+            ("OS", d["os"]),
+            ("OS base", d["os_base"]),
+            ("Kernel", d["kernel"]),
+            ("Uptime", d["uptime"]),
+        ]),
+        _group("Processor", [
+            ("CPU", d["cpu_name"]),
+            ("Cores", d["cpu_cores"]),
+            ("CPU load", _pctv(d["cpu_pct"])),
+            # The server sends "45C" already. The old card printed
+            # f"{temp}°C" and got "45C°C".
+            ("CPU temp", _temp(d["cpu_temp"]) or None),
+        ]),
+        _group("Memory", [
+            ("RAM", (f"{_gb(d['ram_used_mb'])} of {_gb(d['ram_total_mb'])}"
+                     if d["ram_total_mb"] else None)),
+            ("RAM load", _pctv(d["ram_pct"])),
+            ("RAM type", d["ram_type"]),
+        ]),
+        _group("Graphics", [
+            ("GPU", d["gpu_name"]),
+            ("GPU memory", (f"{_gb(d['gpu_mem_used_mb'])} of {_gb(d['gpu_mem_total_mb'])}"
+                            if d["gpu_mem_total_mb"] else None)),
+            ("GPU load", _pctv(d["gpu_pct"])),
+            ("GPU temp", _temp(d["gpu_temp"]) or None),
+        ]),
+        _group("Storage", [
+            ("Root filesystem", (f"{d['disk_used']} of {d['disk_total']}"
+                                 if d["disk_total"] else None)),
+            ("Disk used", _pctv(d["disk_pct"])),
+        ] + [(f"Drive {i + 1}", _disk_line(x)) for i, x in enumerate(d["disks"])]
+          + ([] if d["disks"] else [("Drives", None)])),
+        _group("Network", [
+            ("Down now", _rate(d["net_rx_rate"])),
+            ("Up now", _rate(d["net_tx_rate"])),
+            # /proc/net/dev counts from boot, so this is exactly "since it
+            # came up" - the same window as Uptime above.
+            ("Down this uptime", "—" if d["net_rx_total"] is None
+             else _bytes(d["net_rx_total"])),
+            ("Up this uptime", "—" if d["net_tx_total"] is None
+             else _bytes(d["net_tx_total"])),
+            ("Connections", d["net_connections"]),
+        ] + [(str(i.get("name") or "?"), f"{i.get('ip')} · {i.get('state')}")
+             for i in d["net_ifaces"]]),
+        _group("Running", [
+            ("Listening ports", d["services_listening"]),
+            ("Services up", (f"{d['units_running']} of {d['units_total']}"
+                             if d["units_total"] else None)),
+            ("Containers", (f"{d['containers_running']} of {d['containers_total']} running"
+                            if d["containers_total"] is not None else None)),
+        ]),
+    ]
+    out = []
+    for i, r in enumerate(rows):
+        if i:
+            out.append(ft.Divider(height=1, color=p["border"]))
+        out.append(r)
+    return ft.Column(spacing=8, controls=out)
+
+
 def _machines(page):
     p = PAL()
     w = Writer(page, _rebuild(page))
@@ -304,11 +486,52 @@ def _machines(page):
         return ft.Column(spacing=10, controls=[_unreachable_card("the machine list")])
 
     cfg = M.machine_config() or {}
-    docker, _docker_err = M.docker_list()
+    # NOT M.docker_list(). That SSHes to five hosts and took 6.17 s against
+    # the live server, which is most of the 9.84 s a topbar dot spent frozen
+    # before this page appeared. Home already learned this lesson; Lab had
+    # not. The store's copy paints now and `catch_up` fetches the real one
+    # behind the page.
+    docker = M._cached("/api/docker_list")
     ids = sorted(k for k in dash if isinstance(dash.get(k), dict))
+    # Sticky for as long as Lab is the page on screen; main.py clears it on
+    # the way to anywhere else. Clearing it here instead would work until
+    # the first repaint - a write, a theme change, docker arriving behind
+    # the page - and then quietly fold the card the owner had just opened.
+    wanted = OPEN_MACHINE.get("id") if OPEN_MACHINE.get("id") in dash else None
+
+    def repaint():
+        """Repaint from what we already hold. Deliberately not _rebuild.
+
+        Opening a card is a layout change, not new information: re-reading
+        the server for it would put a network round trip behind a disclosure
+        triangle, which is the mistake this whole change is undoing.
+        """
+        fn = getattr(S, "rerender", None)
+        if callable(fn):
+            fn()
+        else:
+            rebuilder(page, build)()
+
+    async def catch_up():
+        import asyncio
+        fresh, _err = await asyncio.to_thread(M.docker_list)
+        if isinstance(fresh, dict) and fresh != docker:
+            fn = getattr(S, "rerender", None)
+            if callable(fn):
+                fn()
+
+    if docker is None:
+        runner = getattr(page, "run_task", None)
+        if callable(runner):
+            try:
+                runner(catch_up)
+            except Exception:  # noqa: BLE001 - no loop; the count stays unknown
+                pass
 
     def containers_for(mid):
         host = (docker or {}).get(mid) or {}
+        if host.get("error"):
+            return None
         rows = [c for c in (host.get("containers") or []) if isinstance(c, dict)]
         if not rows:
             return None
@@ -394,22 +617,71 @@ def _machines(page):
                 out,
             ])])
 
+    def headline(detail, online, error):
+        """The collapsed card's one line. Cheap on purpose - see machine_card."""
+        if not online:
+            return ft.Text(str(error or "the server sent nothing for this machine"),
+                           size=11, color=p["red"], max_lines=1,
+                           overflow=ft.TextOverflow.ELLIPSIS)
+        bits = [f"CPU {_pctv(detail['cpu_pct'])}", f"RAM {_pctv(detail['ram_pct'])}"]
+        if _temp(detail["cpu_temp"]):
+            bits.append(_temp(detail["cpu_temp"]))
+        if detail["uptime"]:
+            bits.append("up " + detail["uptime"])
+        return ft.Text(" · ".join(bits), size=11, color=p["text2"],
+                       max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+
     def machine_card(mid):
+        """Collapsed by default; everything on demand, for one machine only.
+
+        This used to build every section of every card whether or not
+        anyone opened it: 1756 controls in this tab, about 350 a machine,
+        including 84 dotfile editors and four terminals nobody had asked
+        for. Python built it in 0.05 s and Flutter then had to lay the
+        whole thing out, which is why a topbar dot felt slow even after the
+        server reads came off the paint path - it navigates to the heaviest
+        screen in the app.
+
+        So the card is now a name, a state and one line of headline
+        numbers, and the gauges, the full field list, the processes, the
+        models, the dotfile editors, the terminal and the power buttons are
+        built only for the machine that is open. Which machine that is
+        lives in OPEN_MACHINE, so it survives a repaint - a write, a theme
+        change, docker arriving behind the page.
+        """
         m = dash[mid]
         sys_w = M.machine_widget(dash, mid, "system")
         online = M.widget_alive(sys_w)
         colour = m.get("color") or p["accent"]
         display = m.get("display") or mid
         conf = cfg.get(mid) or {}
+        is_open = mid == wanted
 
-        head = ft.Row([
-            dot(colour, dim=not online),
-            ft.Column(spacing=0, expand=True, controls=[
-                title(display, 14),
-                sub(str(sys_w.get("hostname") or mid), 10)]),
-            chip("online" if online else "offline",
-                 p["green"] if online else p["red"], small=True),
-        ])
+        def toggle(e):
+            OPEN_MACHINE["id"] = None if is_open else mid
+            repaint()
+
+        head = ft.Container(
+            ink=True, border_radius=8, on_click=toggle,
+            tooltip=("hide this machine's detail" if is_open
+                     else f"show everything about {display}"),
+            content=ft.Row([
+                dot(colour, dim=not online),
+                ft.Column(spacing=0, expand=True, controls=[
+                    title(display, 14),
+                    sub(str(sys_w.get("hostname") or mid), 10)]),
+                chip("online" if online else "offline",
+                     p["green"] if online else p["red"], small=True),
+                ft.Icon(ft.Icons.EXPAND_LESS if is_open else ft.Icons.EXPAND_MORE,
+                        size=20, color=p["text2"]),
+            ]))
+
+        if not is_open:
+            return card(ft.Column(spacing=6, controls=[
+                head, headline(M.machine_detail(dash, mid, cfg, docker),
+                               online, sys_w.get("error"))]))
+
+        detail = M.machine_detail(dash, mid, cfg, docker)
         body = [head, ft.Divider(height=1, color=p["border"])]
 
         if not online:
@@ -417,8 +689,7 @@ def _machines(page):
                 str(sys_w.get("error") or "the server sent nothing for this machine"),
                 size=12, color=p["red"], selectable=True))
             body.append(sub("Everything below is unknown while it is down - not zero.", 10))
-            if conf.get("host"):
-                body.append(_fact("Address", f"{conf.get('user') or '?'}@{conf['host']}"))
+            body.append(_machine_detail_body(detail))
             body.append(power_row(mid, display))
             # No w.control here: it wraps one shared ft.Text, and a second
             # machine going down would put the same control in two trees.
@@ -452,6 +723,8 @@ def _machines(page):
         if _gpu_name(sys_w.get("gpu")):
             facts.append(_fact("GPU", _gpu_name(sys_w.get("gpu"))))
         body.append(ft.Row(spacing=16, wrap=True, run_spacing=8, controls=facts))
+        body.append(ft.Divider(height=1, color=p["border"]))
+        body.append(_machine_detail_body(detail))
 
         procs = M.machine_widget(dash, mid, "processes")
         top = [x for x in (procs.get("cpu") or []) if isinstance(x, dict)][:6]
@@ -526,10 +799,14 @@ def _machines(page):
     def machine_stack():
         if not ids:
             return card(sub("The server listed no machines.", 11), pad=12)
+        # The machine a dot asked for goes first as well as opening, because
+        # Flet has no scroll-to-control and an expanded card four rows down
+        # on a phone is still a card you have to go looking for.
+        order = ([wanted] + [i for i in ids if i != wanted]) if wanted else ids
         return ft.Column(spacing=10, controls=[
             ft.ResponsiveRow(columns=12, spacing=10, run_spacing=10, controls=[
                 ft.Container(col={"xs": 12, "lg": 6}, content=machine_card(mid))
-                for mid in ids]),
+                for mid in order]),
             w.control])
 
     # Not `offline_banner`, which says "showing sample data". Nothing on this

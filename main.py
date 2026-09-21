@@ -98,42 +98,78 @@ async def main(page):
         )
 
     def machine_dots():
-        """One dot per machine: coloured when up, hollow when down, and each
-        one opens that machine in Lab.
+        """One load meter per machine. Tapping one opens that machine in Lab.
 
-        They used to be 8px circles with no label and no handler, and they
-        lied: api.machines() called a host online whenever its system widget
-        was non-empty, and an unreachable host answers {"error":
-        "unreachable"} - which is non-empty. SP3 was down and lit.
+        These have been reported dead twice. They are not: the handler fires
+        and always did. Proved by running the built app on the laptop at
+        DISPLAY=:1 and synthesising real pointer clicks with XTEST - a
+        16x16 ft.Container with no bgcolor, ink=True and a tooltip takes the
+        tap every time, because Flet's ink branch wraps it in a Material +
+        InkWell and InkResponse hit-tests with HitTestBehavior.opaque. A
+        controlled A/B of eight variants (transparent, ft.Colors.TRANSPARENT,
+        no ink, GestureDetector, IconButton, 36px) had all eight firing.
+
+        What was actually broken was what the tap *did*. `render("lab")`
+        built all five Lab tabs synchronously, and four of them read the
+        network - 9.84 s measured on the laptop, 15.4 s cold on the Pi. Flet
+        runs a sync on_click on its event loop, so for those ten seconds the
+        old frame stayed on screen and further taps were dropped: of
+        seventeen clicks swept across the dot row, two were handled and
+        fifteen vanished. Nothing moved, so the dot looked dead. Lab builds
+        one tab now and Machines no longer waits on docker.
+
+        While they were being fixed they were also given something to say.
+        They were on/off only, which for five machines is five bits; each is
+        now a ring filled to that machine's CPU load in its own colour, and
+        the tap lands on that machine's detail rather than the tab's top.
         """
         p = PAL()
+        size = 26
 
         def go(mid):
             def handler(e):
                 # Lab's first tab is Machines; _tabs reads its starting
-                # index out of _TAB_INDEX.
+                # index out of _TAB_INDEX, and lab.OPEN_MACHINE tells the
+                # Machines tab which card to put first and unfold.
                 _TAB_INDEX["lab"] = 0
+                lab.OPEN_MACHINE["id"] = mid
                 render("lab")
             return handler
 
         def one(m):
             up = m["online"]
+            load = m.get("load") if up else None
             why = m.get("error") or ""
-            tip = f"{m['display']} - " + (
-                f"up, {m.get('uptime', '')}".strip().rstrip(",") if up
-                else (f"down ({why})" if why else "down"))
+            if not up:
+                state = f"down ({why})" if why else "down"
+            elif load is None:
+                state = "up, load not reported"
+            else:
+                state = f"up, {load:.0f}% CPU"
+            tip = (f"{m['display']} - {state}"
+                   + (f", {m['uptime']}" if up and m.get("uptime") not in (None, "", "—") else "")
+                   + " - tap for its detail")
+            # A ring at 0 would be indistinguishable from an idle machine,
+            # so an unread load draws an empty track and no fill at all.
+            ring = ft.ProgressRing(
+                value=(load / 100.0) if load is not None else 0.0,
+                width=size, height=size, stroke_width=3,
+                color=m["color"] if (up and load is not None) else ft.Colors.TRANSPARENT,
+                bgcolor=ft.Colors.with_opacity(0.30 if up else 0.15, p["text3"]))
+            core = ft.Container(
+                width=8, height=8, border_radius=4,
+                bgcolor=m["color"] if up else None,
+                # Hollow, not grey: a grey dot beside coloured ones still
+                # reads as "a machine", where an empty ring reads as off.
+                border=None if up else BRD(p["text3"], 1))
             return ft.Container(
-                width=16, height=16, border_radius=8, ink=True,
-                tooltip=tip + " - tap to open in Lab",
-                alignment=ft.Alignment(0, 0), on_click=go(m["id"]),
-                content=ft.Container(
-                    width=8, height=8, border_radius=4,
-                    bgcolor=m["color"] if up else None,
-                    # Hollow, not grey: a grey dot beside coloured ones still
-                    # reads as "a machine", where an empty ring reads as off.
-                    border=None if up else BRD(p["text3"], 1)))
+                width=size, height=size, border_radius=size / 2, ink=True,
+                tooltip=tip, alignment=ft.Alignment(0, 0), on_click=go(m["id"]),
+                content=ft.Stack(width=size, height=size,
+                                 alignment=ft.Alignment(0, 0),
+                                 controls=[ring, core]))
 
-        return ft.Row(spacing=2, controls=[one(m) for m in M.MACHINES])
+        return ft.Row(spacing=1, tight=True, controls=[one(m) for m in M.MACHINES])
 
     # ------------------------------------------------------- the outbox chip
     # Reads heal themselves: api._wake re-probes behind the UI and a stale
@@ -438,6 +474,12 @@ async def main(page):
         if key not in visible:
             key = visible[0] if visible else "home"
         current[0] = key
+        if key != "lab":
+            # The machine a status dot asked to open stays open while Lab is
+            # on screen and is forgotten the moment you leave, so coming
+            # back to Lab later lands where you left it, not on whichever
+            # dot you tapped last week.
+            lab.OPEN_MACHINE["id"] = None
         paint_sync()
         if key == "home":
             c = home.build(page)
