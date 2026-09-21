@@ -324,8 +324,8 @@ class DealCards(unittest.TestCase):
 
 class GarageSurfacesAreRegistered(unittest.TestCase):
 
-    def test_both_stacks_are_arrangeable(self):
-        for surface in ("garage.home", "garage.flipper"):
+    def test_every_stack_is_arrangeable(self):
+        for surface in ("garage.home", "garage.mechanic", "garage.flipper"):
             self.assertIn(surface, panels.SURFACES)
             self.assertIn(surface, panels.SURFACE_LABELS)
             keys = panels.panel_keys(surface)

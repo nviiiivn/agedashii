@@ -101,6 +101,9 @@ SURFACES = {
         ("bikes", "Bike picker"), ("stats", "Stats"),
         ("detail", "Selected bike"),
     ],
+    "garage.mechanic": [
+        ("log", "Quick log"), ("fleet", "The fleet"), ("note", "Website note"),
+    ],
     "garage.flipper": [
         ("search", "Search & scan"), ("listings", "Scored listings"),
     ],
@@ -115,7 +118,8 @@ SURFACE_LABELS = {
     "trips.rides": "Trips - Rides", "trips.xnav": "Trips - xNav",
     "lab.machines": "Lab - Machines", "lab.services": "Lab - Services",
     "lab.docker": "Lab - Docker", "extras.projects": "Extras - Projects",
-    "garage.home": "Garage - Home", "garage.flipper": "Garage - Flipper",
+    "garage.home": "Garage - Home", "garage.mechanic": "Garage - Mechanic",
+    "garage.flipper": "Garage - Flipper",
 }
 
 

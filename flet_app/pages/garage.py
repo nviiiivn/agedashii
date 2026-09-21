@@ -851,8 +851,8 @@ def _mechanic(page):
         _state["bike"] = options[0][0]
     chosen_label = dict(options).get(_state["bike"], _state["bike"])
 
-    return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, controls=[
-        card(ft.Column(spacing=8, controls=[
+    return panels.layout("garage.mechanic", {
+        "log": lambda: card(ft.Column(spacing=8, controls=[
             title("Log against a bike", 14),
             sub(f"logging to {chosen_label}", 10),
             ft.Row(spacing=6, wrap=True, controls=[
@@ -860,15 +860,16 @@ def _mechanic(page):
                                 height=34, icon=ft.Icons.ADD, on_click=start(t))
                 for t in M.GARAGE_RECORD_TYPES]),
         ])),
-        card(ft.Column(spacing=8, controls=[
+        "fleet": lambda: card(ft.Column(spacing=8, controls=[
             title("The fleet", 13),
             ft.Column(spacing=6, controls=[bike_card(b) for b in bikes]),
         ])),
-        card(sub("The website's Mechanic tab is still a placeholder - "
-                 "\"content TBD\" - so this view is app-side only. Everything "
-                 "it writes lands in the same records the website reads.",
-                 10.5), pad=10),
-    ])
+        "note": lambda: card(
+            sub("The website's Mechanic tab is still a placeholder - "
+                "\"content TBD\" - so this view is app-side only. Everything "
+                "it writes lands in the same records the website reads.",
+                10.5), pad=10),
+    })
 
 
 # ---------------------------------------------------------------- flipper
