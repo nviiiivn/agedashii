@@ -964,9 +964,9 @@ def _foodzen_apply(mutate):
     queued = False
     for kind in sorted(changed):
         if kind not in _fz.KINDS:
-            # eatzen, bpm and custom_foods live in this state but /api/foodzen/save
-            # rejects them ("bad kind"), so queueing one would only poison the
-            # outbox. Same refusal as before, said out loud.
+            # A kind the server would reject must not reach the outbox: it can
+            # never land, so it would sit at the head of the queue forever.
+            # Refuse here and say so, rather than showing the write as applied.
             return False, f"saving {kind} failed - the server does not accept it"
         res = _foodzen_queue(kind, state[kind], state)
         if not res.ok:

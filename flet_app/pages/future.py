@@ -37,7 +37,10 @@ a delete for an id that never existed and leave the gem saved. It says
 
 **Nothing here is ever invented.** There is no mock Future data anywhere in
 the app, so with no server and no cached scan the page says so and shows an
-empty list, rather than a plausible one.
+empty list, rather than a plausible one. That is also why the offline notice
+is `not_connected` here rather than `_forms.offline_banner` - see its
+docstring; the shared one announces sample data that does not exist and
+writes that do not save, and neither is true on this page.
 """
 import asyncio
 import time
@@ -48,7 +51,6 @@ import flet as ft
 from .. import api as M
 from .. import config
 from ..ui import PAL, PAD, BRD, card, chip, title, sub
-from ._forms import offline_banner
 from ._wat2do_parts import HOME, haversine_m, miles
 
 GEMS_PATH = "/api/future/gems"
@@ -284,9 +286,12 @@ def delete_gem(gem_id):
     doc = _gems_doc()
     local = dict(doc)
     local["gems"] = [g for g in (doc.get("gems") or []) if g.get("id") != gem_id]
-    return M._queue_write("/api/future/gems/delete", json_body={"id": gem_id},
-                          timeout=15, local={GEMS_PATH: local},
-                          invalidate=(GEMS_PATH,)).pair
+    ok, msg = M._queue_write("/api/future/gems/delete", json_body={"id": gem_id},
+                             timeout=15, local={GEMS_PATH: local},
+                             invalidate=(GEMS_PATH,)).pair
+    # api._ok's word for every accepted write is "saved", which read as
+    # nonsense on the one write here that takes something away.
+    return ok, ("removed" if ok and msg == "saved" else msg)
 
 
 def photos(spot):
@@ -318,6 +323,26 @@ def street_view(spot):
 
 
 # ------------------------------------------------------------------- the page
+def not_connected(p, somedays):
+    """The offline notice for this tab, in the shape of `_forms.offline_banner`.
+
+    Not `offline_banner` itself, deliberately: its fixed wording is "Showing
+    sample data ... changes will not save", and on this page both halves are
+    false. There is no mock Future data anywhere in the app - offline you are
+    looking at this device's own copy of real answers, or at nothing - and a
+    gem saved here is queued in the outbox and does go, later. Saying
+    otherwise would be the exact lie the banner exists to prevent.
+    """
+    return card(ft.Row(spacing=8, controls=[
+        ft.Icon(ft.Icons.INFO_OUTLINE, size=16, color=p["yellow"]),
+        ft.Text("Not connected to the server. " + (
+            "Showing this device's copy; a gem you save is queued and sent "
+            "when signal is back." if somedays is not None else
+            "Nothing of Future is on this device yet, so there is nothing "
+            "to show - connect once and it will be here offline."),
+            size=11, color=p["text2"], expand=True)]), pad=10)
+
+
 # Survives a repaint so a scan is not thrown away every time the page
 # rebuilds - the same reason wat2do.py keeps its `_S`.
 _S = {"cats": list(DEFAULT_CATS), "dist": 50, "spots": None, "note": ""}
@@ -551,7 +576,7 @@ def build(page):
         saved_box.controls = [row(g, saved_row=True) for g in somedays]
 
     return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
-        *([] if live else [offline_banner(p, "the someday list")]),
+        *([] if live else [not_connected(p, somedays)]),
         card(ft.Column(spacing=8, controls=[
             ft.Row([title("Future Finds", 14), ft.Container(expand=True), count]),
             sub("Gems from the server's own California table, measured from "

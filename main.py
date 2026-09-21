@@ -84,7 +84,7 @@ async def main(page):
     sync_icon = ft.Icon(ft.Icons.CLOUD_UPLOAD, size=13)
     sync_text = ft.Text("", size=10, weight=ft.FontWeight.W_600)
     sync_chip = ft.Container(
-        padding=PAD(3, 8), border_radius=9, visible=False,
+        padding=PAD(3, 8), border_radius=9, visible=False, ink=True,
         content=ft.Row(spacing=5, tight=True,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                        controls=[sync_icon, sync_text]))

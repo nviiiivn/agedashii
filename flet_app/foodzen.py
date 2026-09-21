@@ -25,7 +25,13 @@ import time
 
 from .foodzen_catalog import CATALOG
 
-KINDS = ("templates", "lists", "need", "pantry", "recipes", "purchases")
+# Exactly the collections /api/foodzen/save accepts; anything else comes back
+# "bad kind" and queueing it would poison the outbox with a write that can
+# never land. Kept in step with the allowlist in dashbored-v3.py by hand -
+# verified against the live server, where all ten return 200 and an invented
+# kind returns 400.
+KINDS = ("templates", "lists", "need", "pantry", "recipes", "purchases",
+         "bpm", "eatzen", "nutrition_overrides", "custom_foods")
 
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun",
           "jul", "aug", "sep", "oct", "nov", "dec"]
