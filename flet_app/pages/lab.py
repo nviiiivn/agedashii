@@ -41,7 +41,7 @@ from ..ui import PAL, PAD, BRD, S, card, chip, title, sub, dot
 from .. import api as M
 from .. import config
 from .. import panels
-from ._forms import Writer, offline_banner, rebuilder
+from ._forms import Writer, rebuilder
 
 # Which tab each page was last looking at, so a write that repaints the page
 # does not silently throw you back to the first tab.
@@ -301,7 +301,7 @@ def _machines(page):
     w = Writer(page, _rebuild(page))
     dash = M.dashboard()
     if dash is None:
-        return ft.Column(spacing=10, controls=[_unreachable_card("the machines")])
+        return ft.Column(spacing=10, controls=[_unreachable_card("the machine list")])
 
     cfg = M.machine_config() or {}
     docker, _docker_err = M.docker_list()
@@ -444,6 +444,9 @@ def _machines(page):
         cts = containers_for(mid)
         if cts:
             facts.append(_fact("Containers", cts))
+        units, _unit_err = _units_for(dash, mid)
+        if units:
+            facts.append(_fact("Listening", f"{len(units)} processes"))
         if _gpu_name(sys_w.get("gpu")):
             facts.append(_fact("GPU", _gpu_name(sys_w.get("gpu"))))
         body.append(ft.Row(spacing=16, wrap=True, run_spacing=8, controls=facts))
@@ -525,7 +528,17 @@ def _machines(page):
             ft.Container(col={"xs": 12, "lg": 6}, content=machine_card(mid))
             for mid in ids])
 
-    banner = [] if M.STATUS_LIVE() else [offline_banner(p, "these machines")]
+    # Not `offline_banner`, which says "showing sample data". Nothing on this
+    # tab is sample data any more - it is the store's copy of what the server
+    # last said, which is a different and much more useful thing to be told.
+    banner = []
+    if not M.STATUS_LIVE():
+        banner = [card(ft.Row(spacing=8, controls=[
+            ft.Icon(ft.Icons.HISTORY, size=16, color=p["yellow"]),
+            ft.Text("Not connected. These readings are this device's copy of "
+                    "what the server last said, not live — and nothing here "
+                    "can be started, stopped or rebooted until it is back.",
+                    size=11, color=p["text2"], expand=True)]), pad=10)]
     return ft.Column(spacing=10, expand=True, controls=banner + [
         ft.Container(expand=True, content=panels.layout("lab.machines", {
             "portal": portal_panel, "machines": machine_stack}))])
@@ -658,6 +671,17 @@ def _network():
 
     if not cards:
         cards = [card(sub("The server listed no machines.", 11), pad=12)]
+    # Said out loud, not only in the module docstring: the website has a
+    # Things tab here and someone looking for it deserves to know where it
+    # went rather than assuming the app dropped a feature.
+    cards.append(card(ft.Column(spacing=4, controls=[
+        title("Where Things went", 13),
+        sub("The website keeps an IoT \"Things\" tab in this slot and it is "
+            "empty there too - there is no hub, no sensors and nothing but "
+            "machines in the server's config, so there is nothing to show. "
+            "This tab shows the network widget the server does send instead. "
+            "If an IoT source ever appears, Things comes back here.", 11)]),
+        pad=12))
     return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, controls=cards)
 
 
