@@ -15,7 +15,10 @@ def build(page):
                 ft.Container(expand=True),
                 ft.Column(spacing=0, horizontal_alignment=ft.CrossAxisAlignment.END, controls=[
                     ft.Text("Oakland", size=12, color=p["text2"]),
-                    ft.Text(f"H{w['h']}° / L{w['l']}°", size=12, color=p["text2"]),
+                    # api already formats these with the degree sign (and as
+                    # an em dash when there is no reading), so adding one
+                    # here printed "H63°° / L56°°" on the home card.
+                    ft.Text(f"H{w['h']} / L{w['l']}", size=12, color=p["text2"]),
                 ]),
             ]),
             ft.Row(spacing=6, controls=[
