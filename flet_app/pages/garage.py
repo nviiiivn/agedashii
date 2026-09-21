@@ -140,19 +140,53 @@ def _mechanic(page):
     ])
 
 def _flipper():
+    """Real listings from the server's scanner.
+
+    This used to render four invented bikes from mock.py behind a "sample
+    deals" chip. The server has a working scanner, and a made-up Honda
+    Nighthawk at $950 is not worth showing whatever it is labelled.
+    """
     p = PAL()
+    deals = M.flipper()
+    if deals is None:
+        return ft.Column(spacing=8, controls=[card(ft.Column(spacing=6, controls=[
+            title("Can't reach the scanner", 14),
+            sub("Flipper scans Craigslist and Reddit live, so there is "
+                "nothing to show without the server.", 11)]), pad=14)])
+    if not deals:
+        return ft.Column(spacing=8, controls=[card(ft.Column(spacing=6, controls=[
+            title("Nothing worth flagging", 14),
+            sub("The last scan found no listing it would score - what it did "
+                "find looked like wanted ads or placeholder prices.",
+                11)]), pad=14)])
+
     def deal(d):
-        c = p["green"] if d["flag"] == "BUY" else (p["yellow"] if d["flag"] == "WATCH" else p["red"])
+        score = d.get("score") or 0
+        c = p["green"] if score >= 80 else (p["yellow"] if score >= 60 else p["red"])
+        net = d.get("net_profit")
+        bits = [ft.Column(spacing=1, controls=[
+            sub("ask", 10),
+            ft.Text(f"${(d.get('price') or 0):,}", size=13, color=p["text"])])]
+        if net is not None:
+            bits.append(ft.Column(spacing=1, controls=[
+                sub("net", 10),
+                ft.Text(f"${net:,}", size=13,
+                        color=p["green"] if net >= 0 else p["red"])]))
+        bits.append(ft.Column(spacing=1, controls=[
+            sub("score", 10), ft.Text(str(score), size=13, color=c)]))
+        head = [title(str(d.get("title") or "untitled")[:70], 13),
+                ft.Container(expand=True)]
+        if d.get("pearl"):
+            head.append(chip("PEARL", p["green"], small=True))
         return card(ft.Column(spacing=5, controls=[
-            ft.Row([title(d["title"], 13), ft.Container(expand=True), chip(("BUY" if d["score"]>=80 else "WATCH"), c, small=True)]),
-            ft.Row(spacing=14, controls=[
-                ft.Column(spacing=1, controls=[sub("ask", 10), ft.Text(f"${d['price']:,}", size=13, color=p["text"])]),
-                ft.Column(spacing=1, controls=[sub("net", 10), ft.Text(f"${d['net']:,}", size=13, color=c)]),
-                ft.Column(spacing=1, controls=[sub("score", 10), ft.Text(str(d["score"]), size=13, color=c)]),
-            ]),
-            sub(d["flag"], 10),
+            ft.Row(head),
+            ft.Row(spacing=14, controls=bits),
+            sub(" · ".join(str(x) for x in (d.get("source"), d.get("region"),
+                                            d.get("severity")) if x), 10),
         ]), pad=10)
+
     return ft.Column(spacing=8, controls=[
-        ft.Row([chip(f"{len(M.FLIPPER)} sample deals", p["orange"], ft.Icons.SEARCH, small=True)]),
-        *[deal(d) for d in M.FLIPPER],
+        ft.Row([chip(f"{len(deals)} scored listings", p["orange"],
+                     ft.Icons.SEARCH, small=True)]),
+        *[deal(d) for d in deals[:25]],
     ])

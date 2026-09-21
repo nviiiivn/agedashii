@@ -29,7 +29,11 @@ WEATHER = {
     ],
 }
 
-NOWPLAYING = {"title": "Midnight City", "artist": "M83 · Hugo", "art_color": "#ff5e8a"}
+# Deliberately not a song. api.nowplaying() never returns None, so this is
+# only reachable if someone unwires it again - and a dashboard that invents a
+# track you are not playing is worse than one that admits it does not know.
+NOWPLAYING = {"title": "Nothing playing", "artist": "—", "playing": False,
+              "art_color": "#ff5e8a"}
 
 WAT2DO = {
     "date": "Fri, Sep 4",
@@ -101,15 +105,14 @@ PROJECTS = [
     {"name": "nvii-boilerplate", "lang": "JS", "desc": "first-run configurator"},
 ]
 
-AI_CHAT = [
-    {"role": "user", "text": "whats a good short ride tonight"},
-    {"role": "ai", "text": "Grizzly Peak loop — 34 mi, dry roads, sunset 7:24pm. Leave by 6 if you want the view from the top."},
-]
+# The chat starts empty. It used to open with a fabricated exchange that
+# looked like something you had actually asked.
+AI_CHAT = []
 
-OBLIGATIONS = [
-    {"t": "Renew motorcycle insurance", "due": "Sep 12", "urg": "high"},
-    {"t": "DMV appointment", "due": "Oct 02", "urg": "med"},
-]
+# No server store for these yet. Empty on purpose: the pages render an
+# honest "nothing tracked yet" instead of invented insurance renewals and
+# DMV appointments, which read as real deadlines.
+OBLIGATIONS = []
 
 # stubs so a mock-only swap never AttributeErrors (review finding)
 def ai_model():

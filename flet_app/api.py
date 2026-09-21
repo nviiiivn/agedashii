@@ -746,6 +746,59 @@ def machines():
     return out
 
 
+def flipper(query="motorcycle"):
+    """Real listings from the server's scanner, or None if it cannot be had.
+
+    Returns only the rows the server was willing to score - it now flags
+    non-listings (a $1 placeholder, a service ad, a Reddit question) with
+    `not_a_deal`, and those must never be shown as finds.
+    """
+    d = _get("/api/flipper/scan?query=" + urllib.parse.quote(query))
+    if d is None:
+        return None
+    return [x for x in (d.get("listings") or []) if x.get("score") is not None]
+
+
+def nowplaying():
+    """What Navidrome is actually playing, or an honest statement that it is
+    not.
+
+    This card showed a hardcoded "Midnight City - M83" to everyone forever,
+    because NOWPLAYING was never wired to a real source and fell through to
+    mock.py. The server has had a real Subsonic probe all along, arriving as
+    the `media` widget on whichever machine runs Navidrome.
+
+    Never returns None. Returning None would hand the card back to the mock
+    constant, which is the exact failure being fixed: a dashboard that
+    invents a song is worse than one that says nothing is playing.
+    """
+    d = _get("/api/dashboard")
+    if d is None:
+        return {"title": "Not connected", "artist": "no link to the server",
+                "playing": False}
+    media = None
+    for m in (d or {}).values():
+        w = (m.get("widgets") or {}).get("media")
+        if w:
+            media = w
+            break
+    if media is None:
+        return {"title": "No media source", "artist": "no Navidrome machine",
+                "playing": False}
+    if media.get("status") == "offline":
+        return {"title": "Navidrome offline", "playing": False,
+                "artist": str(media.get("error") or "unreachable")[:60]}
+    sessions = media.get("now_playing") or []
+    if media.get("status") != "playing" or not sessions:
+        return {"title": "Nothing playing", "artist": media.get("source") or "Navidrome",
+                "playing": False}
+    s = sessions[0]
+    artist = " · ".join(x for x in (s.get("artist"), s.get("album")) if x)
+    return {"title": s.get("title") or "Unknown track", "playing": True,
+            "artist": artist or (media.get("source") or "Navidrome"),
+            "image": s.get("image") or ""}
+
+
 def weather():
     d = _get("/api/weather")
     if d is None:
@@ -1430,7 +1483,7 @@ def ai_chat(provider, model, messages):
 _MAP = {"MACHINES": machines, "WEATHER": weather, "FEEDS": feeds,
         "WAT2DO": wat2do_state, "BIKES": garage_bikes, "TRIPS": trips,
         "RIDES": rides_list, "PROJECTS": projects, "FOODZEN": foodzen,
-        "JOURNAL": journal}
+        "JOURNAL": journal, "NOWPLAYING": nowplaying}
 
 
 def __getattr__(name):

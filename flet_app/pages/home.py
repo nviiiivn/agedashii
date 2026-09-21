@@ -30,15 +30,22 @@ def build(page):
 
     def nowplaying_card():
         n = M.NOWPLAYING
+        # Only look like a playing track when something is. This card used to
+        # show the same hardcoded song permanently, play icon and all.
+        playing = bool(n.get("playing"))
         return card(ft.Row(spacing=12, controls=[
             ft.Container(width=44, height=44, border_radius=8, bgcolor=p["bg2"],
                          border=BRD(p["border"], 1), alignment=ft.Alignment(0, 0),
-                         content=ft.Icon(ft.Icons.MUSIC_NOTE, color=p["pink"], size=22)),
+                         content=ft.Icon(ft.Icons.MUSIC_NOTE if playing else ft.Icons.MUSIC_OFF,
+                                         color=p["pink"] if playing else p["text2"], size=22)),
             ft.Column(spacing=2, expand=True, controls=[
-                ft.Text(n["title"], size=14, weight=ft.FontWeight.W_600, color=p["text"]),
+                ft.Text(n["title"], size=14,
+                        weight=ft.FontWeight.W_600 if playing else ft.FontWeight.W_400,
+                        color=p["text"] if playing else p["text2"]),
                 sub(n["artist"]),
             ]),
-            ft.Icon(ft.Icons.PLAY_CIRCLE, color=p["accent"], size=30),
+            ft.Icon(ft.Icons.PLAY_CIRCLE if playing else ft.Icons.PAUSE_CIRCLE_OUTLINE,
+                    color=p["accent"] if playing else p["text3"], size=30),
         ]))
 
     def machines_card():

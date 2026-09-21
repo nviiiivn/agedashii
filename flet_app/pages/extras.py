@@ -103,4 +103,16 @@ def _obl():
                 ft.Text(o["t"], size=13, color=p["text"]),
                 sub(o["due"], 10)]),
         ]), pad=10)
-    return ft.Column(spacing=8, controls=[row(o) for o in M.OBLIGATIONS])
+    items = M.OBLIGATIONS if isinstance(M.OBLIGATIONS, list) else []
+    if not items:
+        # There is no obligations store on the server - the website's own
+        # Obligations view says "coming soon". This used to show invented
+        # ones instead: "Renew motorcycle insurance, Sep 12" and a DMV
+        # appointment. Those are deadlines you might act on, and they were
+        # never real.
+        return ft.Column(spacing=8, controls=[card(ft.Column(spacing=6, controls=[
+            title("Nothing tracked yet", 14),
+            sub("There is no obligations store on the server yet, so this "
+                "shows nothing rather than inventing deadlines.", 11)]),
+            pad=14)])
+    return ft.Column(spacing=8, controls=[row(o) for o in items])
