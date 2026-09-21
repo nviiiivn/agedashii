@@ -55,12 +55,6 @@ JN_CATS = {
 
 JN_SORTS = (("new", "Newest first"), ("old", "Oldest first"), ("az", "A-Z"))
 
-# What the server calls a feed source, when it does not say. The server sends
-# its own labels and colours in `sources`, which always win; this only covers
-# a source added server-side before the app has heard of it.
-FEED_FALLBACK = {"label": None, "color": "#8b949e"}
-
-
 def build(page):
     """Tools is a FOLDER; FoodZen is a PAGE inside it with its own TABS.
 
@@ -152,7 +146,26 @@ def _feeds(page):
         if it.get("desc"):
             lines.append(ft.Text(it["desc"], size=10, color=p["text3"],
                                  max_lines=3, overflow=ft.TextOverflow.ELLIPSIS))
-        inner = ft.Column(spacing=5, controls=lines)
+        if it.get("tags"):
+            lines.append(ft.Row(spacing=4, wrap=True, controls=[
+                chip(str(tag), p["text3"], small=True) for tag in it["tags"][:4]]))
+        # 20 of the 76 items carry a real image URL; the rest get the icon the
+        # website falls back to. error_content matters - these are other
+        # people's servers, and a hotlink that 404s must not leave a hole.
+        thumb = ft.Container(
+            width=54, height=54, border_radius=8, bgcolor=p["bg2"],
+            alignment=ft.Alignment(0, 0),
+            clip_behavior=ft.ClipBehavior.HARD_EDGE,
+            content=(ft.Image(src=it["img"], width=54, height=54,
+                              fit=ft.BoxFit.COVER,
+                              error_content=ft.Icon(ft.Icons.IMAGE_NOT_SUPPORTED,
+                                                    size=18, color=p["text3"]))
+                     if it.get("img") else
+                     ft.Icon(ft.Icons.ROUTE if it.get("type") == "route"
+                             else ft.Icons.EVENT, size=20, color=p["text3"])))
+        inner = ft.Row(spacing=10, vertical_alignment=ft.CrossAxisAlignment.START,
+                       controls=[thumb, ft.Column(spacing=5, expand=True,
+                                                  controls=lines)])
         url = it.get("url")
         if not url:
             return card(inner, pad=10)
