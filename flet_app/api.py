@@ -2186,6 +2186,400 @@ def ai_chat(provider, model, messages):
     return r.get("response") or r.get("content") or r.get("message") or msg.get("content")
 
 
+# ===========================================================================
+# Parity block: Home overview, Feeds, Vault, Journal
+#
+# Everything below brings Home, Tools > Feeds, Tools > Vault and Tools >
+# Journal level with the website. It is a separate block of new functions
+# rather than edits to the readers above on purpose: several people were
+# working in this file at once, and widening `feeds()` or `weather()` under
+# them is the one kind of merge conflict this app can least afford to lose
+# quietly.
+#
+# Nothing here adds an UPPERCASE module constant that resolves data.
+# `__getattr__` at the bottom falls through to `mock` for any name this
+# module does not define, so a capitalised accessor missing from `_MAP`
+# renders sample data forever - that is how a hardcoded "now playing" song
+# survived for months. Lower-case functions cannot fall through it.
+# ===========================================================================
+
+def local_today():
+    """Today, where the phone is standing. Never UTC.
+
+    The website had eleven `toISOString().slice(0,10)` sites, and after about
+    4pm Pacific every one of them said tomorrow - Wat2Do opened the wrong
+    day's checklist. `time.strftime` with no struct formats localtime, which
+    is the whole point of this existing rather than being inlined.
+    """
+    return time.strftime("%Y-%m-%d")
+
+
+def feeds_full(force=False):
+    """The whole /api/feeds payload, not the first twenty items of it.
+
+    `feeds()` above trims to 20 rows of {src, tag, title, meta} for the old
+    card list. The website shows every item - 76 on the live server today -
+    filterable by type, each one a link, each with its source's own label and
+    colour, under a line naming any source that could not be reached. None of
+    that survives the trim, so this hands back the payload as sent:
+
+        {"ts": 1790021777.5,
+         "items": [{source, type, title, url, date, iso, desc, tags, img,
+                    location}, ...],
+         "errors": {source: why}, "sources": {source: {label, color}}}
+    """
+    path = "/api/feeds?force=1" if force else "/api/feeds"
+    d = _get(path, timeout=30 if force else 8)
+    if not isinstance(d, dict):
+        return None
+    return {"ts": d.get("ts"), "items": list(d.get("items") or []),
+            "errors": dict(d.get("errors") or {}),
+            "sources": dict(d.get("sources") or {})}
+
+
+def feed_types(items):
+    """Which filter chips have anything behind them, in the website's order.
+
+    The website ships All/Local/Events/Routes and grows an RSS chip only when
+    an RSS item turns up. A chip that filters to nothing is a dead control, so
+    a type with no items is left off rather than shown empty.
+    """
+    seen = {i.get("type") for i in (items or [])}
+    order = (("all", "All"), ("local", "Local"), ("event", "Events"),
+             ("route", "Routes"), ("rss", "RSS"))
+    return [(k, label) for k, label in order if k == "all" or k in seen]
+
+
+def feed_filter(items, kind="all"):
+    """The items one chip shows. 'all' is every item, in server order."""
+    if kind == "all":
+        return list(items or [])
+    return [i for i in (items or []) if i.get("type") == kind]
+
+
+# ---------------------------------------------------------------------- vault
+VAULT_LIBS = ("DeVault", "vault")
+VAULT_DEFAULT_HOST = "ai-tp"
+
+
+def vault_tree(host=VAULT_DEFAULT_HOST, lib="DeVault"):
+    """(tree, error). The tree is a list of {name, type, path[, children]}.
+
+    The server answers a bare JSON *array* on success and an object with an
+    `error` key otherwise - "no vault_path configured" for every machine but
+    ai-tp today, 404 "unknown machine" for a name it does not have. Those are
+    different from "this phone has no signal", and the page says which, so
+    they are kept apart here instead of both collapsing to None.
+
+    A file's `path` already comes back relative to the vault root, so it can
+    be handed straight to /api/vault/read and /api/vault/save.
+    """
+    d = _get(_qs("/api/vault/tree", {"host": host, "lib": lib}), timeout=15)
+    if d is None:
+        return None, (config.STATUS.get("detail") or "server unreachable")
+    if isinstance(d, dict):
+        return None, str(d.get("error") or "unexpected reply")
+    if not isinstance(d, list):
+        return None, "unexpected reply"
+    return d, None
+
+
+def vault_flatten(tree):
+    """A vault tree as [{depth, dir, name, path, parent}, ...], depth-first.
+
+    Flet has no <details>, so the browser's collapsible tree becomes an
+    indented list whose folders fold by path. `parent` is the path of the
+    enclosing folder ("" at the root) so a row can be hidden when any
+    ancestor is closed.
+    """
+    out = []
+
+    def walk(items, depth, parent):
+        for item in (items or []):
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name") or ""
+            path = item.get("path") or name
+            is_dir = item.get("type") == "dir"
+            out.append({"depth": depth, "dir": is_dir, "name": name,
+                        "path": path, "parent": parent})
+            if is_dir:
+                walk(item.get("children") or [], depth + 1, path)
+
+    walk(tree, 0, "")
+    return out
+
+
+def vault_visible(rows, open_dirs):
+    """The rows to draw given which folder paths are open.
+
+    A row shows when every folder above it is open. Checking only its
+    immediate parent would leave grandchildren on screen under a closed
+    grandparent, which is what collapsing is for.
+    """
+    opened = set(open_dirs or ())
+    closed = set()
+    out = []
+    for r in rows:
+        parent = r.get("parent") or ""
+        if parent and (parent in closed or parent not in opened):
+            if r["dir"]:
+                closed.add(r["path"])
+            continue
+        if r["dir"] and r["path"] not in opened:
+            closed.add(r["path"])
+        out.append(r)
+    return out
+
+
+def vault_read(host, lib, rel):
+    """A vault note's text, or None. Never invents an empty file."""
+    if not host or not rel:
+        return None
+    d = _get(_qs("/api/vault/read", {"host": host, "lib": lib, "path": rel}),
+             timeout=15)
+    if not isinstance(d, dict) or d.get("error"):
+        return None
+    return d.get("content", "")
+
+
+def vault_write(host, rel, content, lib=None):
+    """Save an existing vault note, keeping this device's copy in step.
+
+    `vault_save` above is the blind composer's write: it never read the file,
+    so it caches nothing. This one is called from the viewer, which has just
+    read it, so the cached read is updated too - reopening the note with no
+    signal then shows what you saved rather than what it used to say.
+
+    Coalesced per (host, lib, path): it is a whole-file write, and the newest
+    one is the one to send.
+    """
+    if not host or not rel:
+        return False, "host and path required"
+    read_path = _qs("/api/vault/read", {"host": host, "lib": lib, "path": rel})
+    return _queue_write("/api/vault/save",
+                        params={"host": host, "path": rel, "lib": lib},
+                        body=content,
+                        local={read_path: {"path": rel, "content": content}},
+                        coalesce_key=f"vault:{host}:{lib}:{rel}").pair
+
+
+# -------------------------------------------------------------------- journal
+def journal_list():
+    """Journal entries with everything the list view needs, or None.
+
+    `journal()` above answers {cat, title, date, path, name} and is what the
+    JOURNAL constant resolves to; leaving it alone keeps that contract. The
+    website's list also needs the category *key* (to colour and filter by),
+    the excerpt (to search), and a sortable timestamp.
+
+    `_TEMPLATE.md` is skipped here as it is there: the server flags it
+    `tpl: true`, and it is scaffolding, not an entry.
+    """
+    d = _get("/api/journal/tree")
+    if not isinstance(d, dict):
+        return None
+    out = []
+    for c in (d.get("categories") or []):
+        base = c.get("path") or c.get("name", "")
+        for f in (c.get("children") or []):
+            if f.get("tpl") or f.get("name") == "_TEMPLATE.md":
+                continue
+            if f.get("type") not in (None, "file"):
+                continue
+            mtime = f.get("mtime") or ""
+            out.append({
+                "cat": c.get("name", ""),
+                "cat_label": c.get("label", c.get("name", "")),
+                "path": f"{base}/{f.get('path', '')}",
+                "name": f.get("name", ""),
+                "title": f.get("title") or journal_title_from(f.get("name", "")),
+                "excerpt": f.get("excerpt") or "",
+                "mtime": mtime, "date": mtime[:10],
+                "size": f.get("size") or 0, "ts": _journal_ts(mtime)})
+    return out
+
+
+def journal_title_from(filename):
+    """Title a `YYYY-MM-DD_some-slug.md` filename, the way the website does."""
+    stem = filename[:-3] if filename.endswith(".md") else filename
+    if len(stem) > 11 and stem[4:5] == "-" and stem[7:8] == "-" and stem[10:11] == "_":
+        stem = stem[11:]
+    return " ".join(w[:1].upper() + w[1:] for w in stem.replace("-", " ").split())
+
+
+def _journal_ts(mtime):
+    """Seconds since the epoch for an ISO mtime, or 0. Read as LOCAL time.
+
+    The server writes `2026-08-13T13:42:48` with no zone and means local time
+    on the server, which is this timezone. Reading it as UTC would shift every
+    entry seven hours and file this morning's note under yesterday - the same
+    bug the website had eleven times over.
+    """
+    if not mtime:
+        return 0.0
+    try:
+        return time.mktime(time.strptime(mtime[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def journal_template(category):
+    """The category's `_TEMPLATE.md` with YYYY-MM-DD replaced by today, or "".
+
+    The same prefill the website's compose form does. Empty string when the
+    template cannot be had: a blank body still makes a working entry, and a
+    failed fetch must not stop you writing one.
+    """
+    if category not in JOURNAL_CATEGORIES:
+        return ""
+    text = journal_read(f"{category}/_TEMPLATE.md")
+    return (text or "").replace("YYYY-MM-DD", local_today())
+
+
+def journal_stats(entries, now=None):
+    """(total, this week, this month, top category key) for the stat row."""
+    rows = list(entries or [])
+    now = time.time() if now is None else now
+    week_ago = now - 7 * 86400
+    lt = time.localtime(now)
+    month_start = time.mktime((lt.tm_year, lt.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+    counts = {}
+    for e in rows:
+        counts[e.get("cat", "")] = counts.get(e.get("cat", ""), 0) + 1
+    top = max(counts, key=lambda k: (counts[k], k)) if counts else ""
+    return (len(rows),
+            sum(1 for e in rows if (e.get("ts") or 0) >= week_ago),
+            sum(1 for e in rows if (e.get("ts") or 0) >= month_start),
+            top)
+
+
+def journal_filter(entries, cat="all", query="", sort="new"):
+    """Filter and sort the entry list exactly as the website's jnRenderList."""
+    rows = [e for e in (entries or []) if cat == "all" or e.get("cat") == cat]
+    q = (query or "").strip().lower()
+    if q:
+        rows = [e for e in rows
+                if q in (e.get("title") or "").lower()
+                or q in (e.get("excerpt") or "").lower()]
+    if sort == "az":
+        rows.sort(key=lambda e: (e.get("title") or "").lower())
+    elif sort == "old":
+        rows.sort(key=lambda e: e.get("ts") or 0)
+    else:
+        rows.sort(key=lambda e: e.get("ts") or 0, reverse=True)
+    return rows
+
+
+# ------------------------------------------------------------------- overview
+def overview():
+    """Home's stat strip and per-machine rows, or None when never fetched.
+
+    One /api/dashboard read - shared with `machines()` through the store, so
+    Home does not pay for it twice - plus the container count, which is asked
+    for separately and is allowed to fail on its own. The website shows an em
+    dash for that one tile rather than losing the whole strip.
+
+    `containers` is None when docker could not be read. The difference between
+    "nothing is running" and "we do not know" is exactly the kind of thing
+    this app is not allowed to smudge into a zero.
+    """
+    d = dashboard()
+    if not isinstance(d, dict):
+        return None
+    rows, online, services_up = [], 0, 0
+    for mid, m in d.items():
+        w = machine_widget(d, mid, "system")
+        up = widget_alive(w)
+        online += 1 if up else 0
+        for s in (machine_widget(d, mid, "services").get("services") or []):
+            if s.get("active"):
+                services_up += 1
+        rows.append({"id": mid, "display": (m or {}).get("display", mid),
+                     "color": (m or {}).get("color", "#58a6ff"), "online": up,
+                     "error": str(w.get("error") or ""),
+                     "cpu": _pct(w.get("cpu_percent")),
+                     "ram": _pct(w.get("memory_percent")),
+                     "disk": _pct(w.get("disk_percent")),
+                     "uptime": w.get("uptime") or ""})
+    rows.sort(key=lambda r: (not r["online"], r["display"].lower()))
+    return {"machines": rows, "online": online, "total": len(rows),
+            "services": services_up, "containers": docker_running()}
+
+
+def _pct(v):
+    try:
+        return int(round(float(v)))
+    except (TypeError, ValueError):
+        return None
+
+
+def docker_running():
+    """How many containers are running across every host, or None.
+
+    None means docker could not be read, which Home shows as an em dash.
+    A zero here would be a claim, and on this server it would be a false one.
+    """
+    d, err = docker_list()
+    if err or not isinstance(d, dict):
+        return None
+    n = 0
+    for m in d.values():
+        for c in ((m or {}).get("containers") or []):
+            if c.get("state") == "running":
+                n += 1
+    return n
+
+
+def weather_days(count=3):
+    """The next `count` days *including today*, or None.
+
+    `weather()` above starts at index 1 because its card is a "what is coming"
+    strip. Home's forecast row starts at today and labels it "Today", which is
+    what the website shows - and the live server only sends three days at all,
+    so skipping one there leaves two.
+    """
+    d = _get("/api/weather")
+    if not isinstance(d, dict):
+        return None
+    daily = d.get("daily") or {}
+    times = daily.get("time") or []
+    hi = daily.get("temperature_2m_max") or []
+    lo = daily.get("temperature_2m_min") or []
+    code = daily.get("weather_code") or []
+    today = local_today()
+    out = []
+    for i, t in enumerate(times[:count]):
+        # Labelled by the date itself, not by position. The website calls
+        # index 0 "Today" unconditionally; with a cached payload from
+        # yesterday - which this app keeps on purpose so the page works with
+        # no signal - that files yesterday's high under today's name.
+        try:
+            name = "Today" if t == today else time.strftime(
+                "%a", time.strptime(t, "%Y-%m-%d"))
+        except (ValueError, TypeError):
+            name = t
+        out.append({"day": name, "date": t,
+                    "hi": round(hi[i]) if i < len(hi) and hi[i] is not None else None,
+                    "lo": round(lo[i]) if i < len(lo) and lo[i] is not None else None,
+                    "code": code[i] if i < len(code) else None})
+    return out
+
+
+def weather_current():
+    """The raw `current` block, or None.
+
+    Home needs humidity and apparent temperature, which `weather()`'s summary
+    does not carry - and it must *not* claim a rain chance, because this
+    server sends no `hourly` block at all. See home.py.
+    """
+    d = _get("/api/weather")
+    if not isinstance(d, dict):
+        return None
+    cur = d.get("current")
+    return cur if isinstance(cur, dict) else None
+
+
 _MAP = {"MACHINES": machines, "WEATHER": weather, "FEEDS": feeds,
         "WAT2DO": wat2do_state, "BIKES": garage_bikes, "TRIPS": trips,
         "RIDES": rides_list, "PROJECTS": projects, "FOODZEN": foodzen,
