@@ -37,6 +37,7 @@ import urllib.request
 import flet as ft
 
 from .. import api as M
+from .. import panels
 from .. import config, tileserver
 from ..ui import BRD, PAD, PAL, card, chip, sub, title
 from ._forms import rebuilder
@@ -329,18 +330,23 @@ def _bay(page):
 
     spot = _pick(spots, _focus["name"])
 
-    return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, controls=[
-        header,
-        _hero(spot),
-        _forecast(spot),
-        ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-            title("All spots", 13), ft.Container(expand=True),
-            sub("wind · rain · temp", 10)]),
-        _regional(spots, _focus["name"], pick),
-        sub("Current conditions and a 3-day daily forecast are everything "
-            "/api/weather/multi returns. It sends no hourly series, so there "
-            "is no hour-by-hour strip to show.", 10),
-    ])
+    def regional_block():
+        return ft.Column(spacing=8, controls=[
+            ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                title("All spots", 13), ft.Container(expand=True),
+                sub("wind · rain · temp", 10)]),
+            _regional(spots, _focus["name"], pick),
+            sub("Current conditions and a 3-day daily forecast are everything "
+                "/api/weather/multi returns. It sends no hourly series, so "
+                "there is no hour-by-hour strip to show.", 10),
+        ])
+
+    return panels.layout("weather", {
+        "header": lambda: header,
+        "hero": lambda: _hero(spot),
+        "forecast": lambda: _forecast(spot),
+        "regional": regional_block,
+    })
 
 
 # ------------------------------------------------------------------ explore

@@ -31,6 +31,7 @@ import time as _time
 import flet as ft
 
 from .. import api as M
+from .. import panels
 from ..ui import PAL, PAD, BRD, card, chip, sub, title
 from ._forms import offline_banner
 from . import _wat2do_parts as W
@@ -941,14 +942,15 @@ def build(page):
     if not _S["deck"]:
         _run(page, _load_deck)
 
-    return ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO, controls=[
+    body = panels.layout("wat2do", {
+        "date": date_nav, "checklist": checklist_card, "vitals": vitals_card,
+        "weather": weather_card, "out": out_card, "today": today_card,
+    })
+    # The offline banner and the save status are chrome, not panels: they
+    # must not be hideable, or a failed write would have nowhere to show.
+    return ft.Column(spacing=10, expand=True, controls=[
         *([] if live else [offline_banner(p, "your day")]),
-        date_nav(),
-        checklist_card(),
-        vitals_card(),
-        weather_card(),
-        out_card(),
-        today_card(),
+        ft.Container(expand=True, content=body),
         ft.Container(padding=PAD(0, 4), content=status),
     ])
 

@@ -228,6 +228,94 @@ def home_panels():
     return [k for k in home_panel_order() if k not in hidden]
 
 
+# ---------------------------------------------------- per-surface panels
+# Home's six panels were the only thing in the app that could be reordered
+# or hidden, and nothing anywhere had a width. These generalise both to
+# every card stack. Keys are built per surface rather than kept in one dict
+# because SharedPreferences only round-trips list[str]: a nested mapping
+# would have to be encoded, and three flat lists are easier to reason about
+# when one comes back corrupt.
+
+def _pkey(surface, part):
+    return f"nvii.panels.{surface}.{part}"
+
+
+def _surface_keys(surface):
+    from . import panels as _panels
+    return _panels.panel_keys(surface)
+
+
+def panel_order(surface):
+    """Every panel key for `surface` in the owner's order, hidden included."""
+    return sanitise_order(_V.get(_pkey(surface, "order")), _surface_keys(surface))
+
+
+def hidden_panels(surface):
+    return sanitise_set(_V.get(_pkey(surface, "hidden")), _surface_keys(surface))
+
+
+def panels(surface):
+    """Panels to render for `surface`, in order, hidden ones removed."""
+    hidden = set(hidden_panels(surface))
+    return [k for k in panel_order(surface) if k not in hidden]
+
+
+def panel_width(surface, key):
+    """'full', 'half' or 'third'. Stored as "<panel>:<width>" strings.
+
+    An unrecognised width - from an older build, or a corrupt value - reads
+    as full rather than raising: the cost of being wrong here is a card
+    that is too wide, and the cost of raising is no page at all.
+    """
+    from . import panels as _panels
+    raw = _V.get(_pkey(surface, "width"))
+    if isinstance(raw, (list, tuple)):
+        for entry in raw:
+            if not isinstance(entry, str) or ":" not in entry:
+                continue
+            k, _, w = entry.partition(":")
+            if k == key and w in _panels.WIDTHS:
+                return w
+    return _panels.DEFAULT_WIDTH
+
+
+def set_panel_width(surface, key, width):
+    from . import panels as _panels
+    if key not in _surface_keys(surface) or width not in _panels.WIDTHS:
+        return False
+    kept = [e for e in (_V.get(_pkey(surface, "width")) or [])
+            if isinstance(e, str) and e.partition(":")[0] != key]
+    if width != _panels.DEFAULT_WIDTH:
+        kept.append(f"{key}:{width}")
+    _V[_pkey(surface, "width")] = kept
+    return True
+
+
+def move_panel(surface, key, delta):
+    _V[_pkey(surface, "order")] = move(panel_order(surface), key, delta)
+    return True
+
+
+def set_panel_hidden(surface, key, hidden):
+    keys = _surface_keys(surface)
+    if key not in keys:
+        return False
+    current = set(hidden_panels(surface))
+    if hidden:
+        current.add(key)
+    else:
+        current.discard(key)
+    _V[_pkey(surface, "hidden")] = [k for k in keys if k in current]
+    return True
+
+
+def reset_panels(surface):
+    """Back to the shipped order, everything visible, everything full width."""
+    for part in ("order", "hidden", "width"):
+        _V.pop(_pkey(surface, part), None)
+    return True
+
+
 def unit_system():
     """'imperial' (mi, °F) or 'metric' (km, °C)."""
     v = _V.get(KEY_UNITS)

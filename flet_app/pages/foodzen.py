@@ -15,6 +15,7 @@ through the outbox, so it all works offline and syncs later.
 import flet as ft
 
 from .. import api as M
+from .. import panels
 from ..ui import PAD, PAL, card, chip, sub, title
 from . import eatzen
 from .lab import _tabs
@@ -146,31 +147,40 @@ def _grocery(page):
             ft.TextButton("add all", on_click=run(M.foodzen_template_apply, t.get("id"))),
         ])
 
-    return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
-        card(ft.Column(spacing=6, controls=[
+    def templates_card():
+        return card(ft.Column(spacing=6, controls=[
             ft.Row([title("List templates", 13), ft.Container(expand=True),
                     ft.TextButton("save current list",
                                   on_click=run(M.foodzen_template_save))
                     if items else ft.Container()]),
             *([template_row(t) for t in templates] if templates
               else [sub("no templates yet - build a list, then save it as one", 11)]),
-        ])),
-        card(ft.Column(spacing=6, controls=[
+        ]))
+
+    def list_card():
+        return card(ft.Column(spacing=6, controls=[
             ft.Row([title("Grocery list"), ft.Container(expand=True),
                     chip(fz.get("list_name") or "new list", p["orange"], small=True)]),
             *([list_row(i) for i in items] if items
               else [sub("empty - add something below", 11)]),
             add_row("add an item...", M.foodzen_add),
-        ])),
-        _browse(run),
-        card(ft.Column(spacing=6, controls=[
+        ]))
+
+    def need_card():
+        return card(ft.Column(spacing=6, controls=[
             ft.Row([title("Need", 13), ft.Container(expand=True),
                     ft.TextButton("move all to list", on_click=run(M.foodzen_need_to_list))
                     if need_items else ft.Container()]),
             *([simple_row(n.get("name", ""), M.foodzen_need_remove, n.get("cat"))
                for n in need_items] if need_items else [sub("nothing needed", 11)]),
             add_row("need to restock...", M.foodzen_need_add),
-        ])),
+        ]))
+
+    return ft.Column(spacing=8, expand=True, controls=[
+        ft.Container(expand=True, content=panels.layout("foodzen.grocery", {
+            "templates": templates_card, "list": list_card,
+            "browse": lambda: _browse(run), "need": need_card,
+        })),
         ft.Container(padding=PAD(0, 4), content=status),
     ])
 
@@ -241,20 +251,27 @@ def _meals(page):
             sub(meta or "no details", 10),
         ]), pad=10)
 
-    return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
-        card(ft.Column(spacing=6, controls=[
+    def pantry_card():
+        return card(ft.Column(spacing=6, controls=[
             title("Pantry", 13),
             *([pantry_row(x) for x in pantry_items] if pantry_items
               else [sub("pantry empty", 11)]),
             add_row("already have...", M.foodzen_pantry_add),
-        ])),
-        card(ft.Column(spacing=6, controls=[
+        ]))
+
+    def recipes_card():
+        return card(ft.Column(spacing=6, controls=[
             ft.Row([title("Recipe vault", 13), ft.Container(expand=True),
                     chip(str(len(recipes)), p["accent"], small=True)]),
             *([recipe_row(r) for r in recipes[:40]] if recipes
               else [sub("no recipes saved - use Scrape to pull one in from a URL", 11)]),
-        ])),
-        _mealplan(recipes),
+        ]))
+
+    return ft.Column(spacing=8, expand=True, controls=[
+        ft.Container(expand=True, content=panels.layout("foodzen.meals", {
+            "pantry": pantry_card, "recipes": recipes_card,
+            "mealplan": lambda: _mealplan(recipes),
+        })),
         ft.Container(padding=PAD(0, 4), content=status),
     ])
 
@@ -457,24 +474,34 @@ def _expenses(page):
                      chip(f"{c}x", p["orange"], small=True)])
              for n, c in sorted(freq.items(), key=lambda kv: -kv[1])[:15]]
 
-    return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
-        card(ft.Column(spacing=8, controls=[
+    def receipt_card():
+        return card(ft.Column(spacing=8, controls=[
             title("Import receipt", 13),
             ft.Row(spacing=6, controls=[store, ft.Container(expand=True)]),
             body,
             ft.Row(spacing=6, controls=[
                 ft.FilledButton("Parse", height=34, on_click=do_parse)]),
             parsed,
-        ])),
-        card(ft.Column(spacing=6, controls=[
+        ]))
+
+    def spending_card():
+        return card(ft.Column(spacing=6, controls=[
             ft.Row([title("Spending", 13), ft.Container(expand=True),
                     chip(f"${total:,.2f} · {len(purchases)} orders",
                          p["green"], small=True)]),
             *(spend_rows or [sub("no purchases saved yet", 11)]),
-        ])),
-        card(ft.Column(spacing=6, controls=[
+        ]))
+
+    def radar_card():
+        return card(ft.Column(spacing=6, controls=[
             ft.Row([title("Freq radar", 13), ft.Container(expand=True)]),
             *(radar or [sub("nothing bought twice yet", 11)]),
-        ])),
+        ]))
+
+    return ft.Column(spacing=8, expand=True, controls=[
+        ft.Container(expand=True, content=panels.layout("foodzen.expenses", {
+            "receipt": receipt_card, "spending": spending_card,
+            "radar": radar_card,
+        })),
         ft.Container(padding=PAD(0, 4), content=status),
     ])

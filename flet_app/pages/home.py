@@ -1,6 +1,7 @@
 import flet as ft
 from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
 from .. import api as M
+from .. import panels
 from .. import prefs
 
 def build(page):
@@ -102,14 +103,10 @@ def build(page):
             sub(__import__("datetime").date.today().strftime("%a, %b %-d") + " · Vulcan Lofts"),
         ])
 
-    # Which panels appear, and in what order, is the owner's choice in
-    # Settings. Keys match prefs.HOME_PANEL_KEYS; an unknown key is skipped
-    # rather than crashing the whole page.
-    builders = {"greeting": greeting, "weather": weather_card,
-                "nowplaying": nowplaying_card, "machines": machines_card,
-                "actions": actions_row, "wat2do": wat2do_mini}
-    panels = [builders[k]() for k in prefs.home_panels() if k in builders]
-    if not panels:                      # everything hidden: say so, don't show a void
-        panels = [sub("Every panel is hidden. Settings \u2192 Home panels.", 11)]
-    return ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO,
-                     controls=panels)
+    # Order, visibility and width all come from Settings now, through the
+    # shared surface machinery - Home was the only page that had any of it.
+    return panels.layout("home", {
+        "greeting": greeting, "weather": weather_card,
+        "nowplaying": nowplaying_card, "machines": machines_card,
+        "actions": actions_row, "wat2do": wat2do_mini,
+    })

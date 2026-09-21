@@ -19,7 +19,7 @@ preference means.
 import flet as ft
 from ..ui import PAL, PAD, BRD, card, chip, title, sub, S, apply_theme
 from ..theme_data import THEMES, THEME_NAMES
-from .. import api, config, prefs
+from .. import api, config, panels, prefs
 
 
 def server_card(page):
@@ -240,32 +240,73 @@ def layout_card(page, saver, on_layout=None):
     ]))
 
 
-def home_card(page, saver):
-    """Show, hide and reorder the panels on the Home screen."""
+def panels_card(page, saver, on_layout=None):
+    """Reorder, hide and resize the cards on any surface.
+
+    Replaces the Home-only editor. "Surface" is one scrollable stack of
+    cards - the Home page, the Weather tab, each of FoodZen's tabs - so a
+    page's tabs are edited separately, which is the only way tabs and
+    panels can both be arranged.
+
+    Width is the new part: nothing in the app could be resized. It applies
+    from tablet width up; on a phone every card is full width whatever is
+    set here, because a third-width card at 400px cannot be read.
+    """
     p = PAL()
+    surfaces = list(panels.SURFACES)
+    chosen = [surfaces[0]]
     rows = ft.Column(spacing=0)
 
     def paint():
-        order = prefs.home_panel_order()
-        rows.controls = [row(k, i, order) for i, k in enumerate(order)]
+        surface = chosen[0]
+        order = prefs.panel_order(surface)
+        labels = panels.panel_labels(surface)
+        hidden = set(prefs.hidden_panels(surface))
+        rows.controls = [row(surface, k, i, order, labels, hidden)
+                         for i, k in enumerate(order)]
 
-    def row(key, i, order):
-        hidden = key in set(prefs.hidden_home_panels())
+    def row(surface, key, i, order, labels, hidden_set):
+        hidden = key in hidden_set
+        width = prefs.panel_width(surface, key)
 
         async def up(e):
-            prefs.move_home_panel(key, -1)
+            prefs.move_panel(surface, key, -1)
             paint()
             await saver.commit("order saved")
+            if on_layout:
+                on_layout()
 
         async def down(e):
-            prefs.move_home_panel(key, +1)
+            prefs.move_panel(surface, key, +1)
             paint()
             await saver.commit("order saved")
+            if on_layout:
+                on_layout()
 
         async def toggle(e):
-            prefs.set_home_panel_hidden(key, not hidden)
+            prefs.set_panel_hidden(surface, key, not hidden)
             paint()
             await saver.commit("saved")
+            if on_layout:
+                on_layout()
+
+        def set_width(w):
+            async def handler(e):
+                prefs.set_panel_width(surface, key, w)
+                paint()
+                await saver.commit(f"{labels.get(key, key)} set to {panels.WIDTH_LABELS[w]}")
+                if on_layout:
+                    on_layout()
+            return handler
+
+        width_buttons = [
+            ft.Container(
+                padding=PAD(7, 3), border_radius=6, ink=True,
+                bgcolor=ft.Colors.with_opacity(0.16, p["accent"]) if w == width else None,
+                on_click=set_width(w), tooltip=f"{panels.WIDTH_LABELS[w]} width",
+                content=ft.Text(panels.WIDTH_LABELS[w], size=11,
+                                color=p["accent"] if w == width else p["text3"]))
+            for w in panels.WIDTH_ORDER]
 
         return ft.Container(
             padding=PAD(2, 0),
@@ -273,17 +314,37 @@ def home_card(page, saver):
             content=ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
                 *_arrows(i == 0, i == len(order) - 1, up, down),
                 ft.Container(expand=True, content=ft.Text(
-                    prefs.HOME_PANEL_LABELS.get(key, key), size=13,
+                    labels.get(key, key), size=13,
                     color=p["text3"] if hidden else p["text"])),
+                ft.Row(spacing=2, controls=width_buttons),
                 _icon_toggle(ft.Icons.VISIBILITY_OFF if hidden else ft.Icons.VISIBILITY,
-                             not hidden, "Show this panel" if hidden else "Hide this panel",
+                             not hidden, "Show this card" if hidden else "Hide this card",
                              toggle),
             ]))
 
+    def pick_surface(e):
+        value = getattr(e.control, "value", None) or getattr(e, "data", None)
+        if value in panels.SURFACES:
+            chosen[0] = value
+            paint()
+            page.update()
+
+    async def reset(e):
+        prefs.reset_panels(chosen[0])
+        paint()
+        await saver.commit("layout reset")
+        if on_layout:
+            on_layout()
+
     paint()
     return card(ft.Column(spacing=8, controls=[
-        title("Home panels", 15),
-        sub("What the Home screen stacks, top to bottom.", 10),
+        ft.Row([title("Card layout", 15), ft.Container(expand=True),
+                ft.TextButton("Reset this page", on_click=reset)]),
+        sub("Reorder, hide and resize the cards on each screen. Widths apply "
+            "on a tablet or desktop; a phone always stacks full width.", 10),
+        _dropdown(p, surfaces[0],
+                  [(k, panels.SURFACE_LABELS.get(k, k)) for k in surfaces],
+                  pick_surface, width=260),
         rows,
     ]))
 
@@ -498,7 +559,7 @@ def build(page, on_theme=None, on_layout=None):
         group("Themes", keys),
         saver.control,
         layout_card(page, saver, on_layout=on_layout),
-        home_card(page, saver),
+        panels_card(page, saver, on_layout=on_layout),
         units_card(page, saver),
         health_card(page, saver),
         data_card(page, saver),

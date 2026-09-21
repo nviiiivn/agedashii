@@ -411,3 +411,138 @@ class DrawerSubpagesMatchTheRealTabs(unittest.TestCase):
         for label, path, _depth in subpages["lab"]:
             group, index = path[-1]
             self.assertEqual(expected[group][index], label)
+
+
+class PanelLayout(unittest.TestCase):
+    """Reorder, hide and resize the cards on any surface.
+
+    Before this, Home's six panels were the only thing that could be
+    rearranged and nothing anywhere had a width.
+    """
+
+    SURFACE = "home"
+
+    def setUp(self):
+        from flet_app import panels
+        self.panels = panels
+        prefs._V = prefs._defaults()
+        prefs.reset_panels(self.SURFACE)
+
+    def test_defaults_are_shipped_order_all_visible_all_full(self):
+        keys = self.panels.panel_keys(self.SURFACE)
+        self.assertEqual(prefs.panels(self.SURFACE), keys)
+        for k in keys:
+            self.assertEqual(prefs.panel_width(self.SURFACE, k), "full")
+
+    def test_width_round_trip(self):
+        self.assertTrue(prefs.set_panel_width(self.SURFACE, "machines", "half"))
+        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), "half")
+        # Others are untouched.
+        self.assertEqual(prefs.panel_width(self.SURFACE, "weather"), "full")
+
+    def test_a_width_back_to_full_is_not_stored(self):
+        # Keeps the stored list to the panels actually customised, so a
+        # renamed panel leaves no junk behind.
+        prefs.set_panel_width(self.SURFACE, "machines", "half")
+        prefs.set_panel_width(self.SURFACE, "machines", "full")
+        self.assertEqual(prefs._V[prefs._pkey(self.SURFACE, "width")], [])
+
+    def test_unknown_width_or_panel_is_refused(self):
+        self.assertFalse(prefs.set_panel_width(self.SURFACE, "machines", "huge"))
+        self.assertFalse(prefs.set_panel_width(self.SURFACE, "nope", "half"))
+        self.assertFalse(prefs.set_panel_hidden(self.SURFACE, "nope", True))
+
+    def test_a_corrupt_width_reads_as_full_rather_than_raising(self):
+        # Losing a layout is an annoyance; a page that will not build is not.
+        prefs._V[prefs._pkey(self.SURFACE, "width")] = [
+            "machines:garbage", "not-a-pair", 42, None]
+        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), "full")
+
+    def test_hide_and_reorder(self):
+        prefs.set_panel_hidden(self.SURFACE, "nowplaying", True)
+        self.assertNotIn("nowplaying", prefs.panels(self.SURFACE))
+        # Hiding must not drop it from the editor's list.
+        self.assertIn("nowplaying", prefs.panel_order(self.SURFACE))
+        prefs.move_panel(self.SURFACE, "wat2do", -3)
+        self.assertEqual(prefs.panel_order(self.SURFACE)[2], "wat2do")
+
+    def test_reset_puts_everything_back(self):
+        prefs.set_panel_width(self.SURFACE, "machines", "third")
+        prefs.set_panel_hidden(self.SURFACE, "weather", True)
+        prefs.move_panel(self.SURFACE, "wat2do", -4)
+        prefs.reset_panels(self.SURFACE)
+        self.assertEqual(prefs.panels(self.SURFACE),
+                         self.panels.panel_keys(self.SURFACE))
+        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), "full")
+
+    def test_every_surface_declares_unique_keys(self):
+        for surface, entries in self.panels.SURFACES.items():
+            with self.subTest(surface=surface):
+                keys = [k for k, _ in entries]
+                self.assertEqual(len(keys), len(set(keys)))
+                self.assertIn(surface, self.panels.SURFACE_LABELS)
+
+    def test_surfaces_are_independent(self):
+        prefs.set_panel_width("home", "machines", "half")
+        self.assertEqual(prefs.panel_width("weather", "hero"), "full")
+        prefs.set_panel_hidden("weather", "hero", True)
+        self.assertIn("machines", prefs.panels("home"))
+
+
+class PanelLayoutReachesTheScreen(unittest.TestCase):
+    """The preference has to change what is drawn, not just what is stored."""
+
+    def setUp(self):
+        prefs._V = prefs._defaults()
+        for s in ("home",):
+            prefs.reset_panels(s)
+
+    def _spans(self, control):
+        out = []
+
+        def walk(c):
+            if type(c).__name__ == "ResponsiveRow":
+                out.extend(getattr(x, "col", {}).get("md") for x in c.controls)
+            for k in ("controls", "content"):
+                v = getattr(c, k, None)
+                if isinstance(v, list):
+                    for y in v:
+                        walk(y)
+                elif v is not None and hasattr(v, "__dict__"):
+                    walk(v)
+
+        walk(control)
+        return out
+
+    def _home(self):
+        from flet_app.pages import home
+
+        class Stub:
+            controls = []
+            services = []
+            drawer = None
+            theme = None
+            theme_mode = None
+
+            def update(self):
+                pass
+
+            def add(self, *a):
+                pass
+
+        return home.build(Stub())
+
+    def test_default_is_six_full_width_cards(self):
+        self.assertEqual(self._spans(self._home()), [12] * 6)
+
+    def test_half_width_and_hidden_show_up_in_the_render(self):
+        prefs.set_panel_width("home", "machines", "half")
+        prefs.set_panel_width("home", "actions", "half")
+        prefs.set_panel_hidden("home", "nowplaying", True)
+        self.assertEqual(self._spans(self._home()), [12, 12, 6, 6, 12])
+
+    def test_hiding_everything_says_so_instead_of_rendering_a_void(self):
+        from flet_app import panels
+        for k in panels.panel_keys("home"):
+            prefs.set_panel_hidden("home", k, True)
+        self.assertEqual(self._spans(self._home()), [])
