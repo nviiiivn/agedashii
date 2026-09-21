@@ -346,39 +346,6 @@ def _forecast(spot):
     return ft.Row(spacing=8, controls=[day(i) for i in range(len(dates))])
 
 
-def _regional(spots, selected, on_pick):
-    """Every spot the server forecasts, so a ride can be aimed at the sun."""
-    p = PAL()
-
-    def row(s):
-        cur = s.get("current") or {}
-        daily = s.get("daily") or {}
-        label, icon, ckey = _wmo(cur.get("weather_code"))
-        pop = _at(daily.get("precipitation_probability_max") or [], 0)
-        is_sel = s.get("name") == selected
-        return ft.Container(
-            padding=PAD(7, 10), border_radius=9,
-            bgcolor=ft.Colors.with_opacity(0.10, p["accent"]) if is_sel else p["surface"],
-            border=BRD(p["accent"] if is_sel else p["border"], 1),
-            on_click=lambda e, n=s.get("name"): on_pick(n),
-            content=ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-                ft.Icon(icon, size=17, color=p[ckey]),
-                ft.Column(spacing=0, expand=True, controls=[
-                    ft.Text(s.get("name", "?"), size=12, weight=ft.FontWeight.W_600,
-                            color=p["text"], no_wrap=True,
-                            overflow=ft.TextOverflow.ELLIPSIS),
-                    ft.Text(f"{s.get('region', '')} · {label}", size=9, color=p["text3"],
-                            no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
-                ]),
-                ft.Text(f"{_n(cur.get('wind_speed_10m'))} mph", size=10, color=p["text3"]),
-                ft.Text(f"{_n(pop)}%", size=10, color=p["cyan"]),
-                ft.Text(f"{_n(cur.get('temperature_2m'))}°", size=16,
-                        weight=ft.FontWeight.W_700, color=p["text"]),
-            ]))
-
-    return ft.Column(spacing=5, controls=[row(s) for s in spots])
-
-
 # The spot the Bay tab is currently focused on. Module level so a refresh or a
 # tab switch does not throw the choice away.
 _focus = {"name": HOME_NAME}
