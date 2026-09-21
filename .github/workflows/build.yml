@@ -96,20 +96,6 @@ jobs:
       - name: Disk after Linux
         run: df -h / | tail -1
 
-      # Also produces the PWA. This is the only free route onto an iPhone:
-      # installing a real iOS build needs an Apple Developer Program account,
-      # so "Add to Home Screen" from this build is the no-cost path.
-      # The web target is excluded from the offline map and routing graph.
-      # Baking 117 MB into a Pyodide web bundle killed the runner (exit 143,
-      # OOM, seven minutes after splash generation) and took the AppImage
-      # down with it. A browser build should not ship a 78 MB routing graph
-      # as a download anyway - on the web the app talks to the server.
-      # continue-on-error so a web failure can never again block the five
-      # artifacts that matter on a phone or a laptop.
-      - name: Build web (PWA)
-        continue-on-error: true
-        run: flet build web --yes -o dist/web --exclude assets/maps .git dist build .venv
-
       # flet build linux emits a folder (binary + lib/ + data/ + site-packages),
       # not a single runnable file. AppImage wraps that folder into one
       # double-clickable executable, which is what people actually expect a
@@ -161,7 +147,13 @@ jobs:
             AppDir "dist/appimage/$APP-x86_64.AppImage"
           ls -la dist/appimage
 
-      - name: List build output
+      # Upload before the web build, not after. The web target is the one
+      # that gets OOM-killed, and a killed runner does not run later steps -
+      # continue-on-error cannot rescue it, because the whole process group
+      # dies. With the uploads last, run 35546541917 finished the APK and the
+      # Linux build, died on web, and published nothing at all. Anything
+      # already built is now safely off the runner before that risk is taken.
+      - name: List build output so far
         run: |
           echo "--- tree ---"; find dist -maxdepth 3 | head -60
           echo "--- sizes ---"; du -sh dist/* || true
@@ -179,16 +171,28 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
+        with:
+          name: nvii-dash-linux-appimage
+          path: dist/appimage/*.AppImage
+          if-no-files-found: error
+
+      # Last, because it is the step that kills the runner. Also produces the
+      # PWA, which is the free route onto an iPhone: installing a real iOS
+      # build needs an Apple Developer Program account, so "Add to Home
+      # Screen" from this build is the no-cost path. Excluded from the
+      # offline map and routing graph - baking 117 MB into a Pyodide bundle
+      # is what caused the OOM, and a browser build should not ship a 78 MB
+      # routing graph as a download anyway; on the web the app talks to the
+      # server.
+      - name: Build web (PWA)
+        continue-on-error: true
+        run: flet build web --yes -o dist/web --exclude assets/maps .git dist build .venv
+
+      - uses: actions/upload-artifact@v4
         if: hashFiles('dist/web/**') != ''
         with:
           name: nvii-dash-web-pwa
           path: dist/web/**
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: nvii-dash-linux-appimage
-          path: dist/appimage/*.AppImage
           if-no-files-found: error
 
   macos-ios:
