@@ -64,7 +64,7 @@ import flet as ft
 from .. import api as M
 from .. import panels
 from .. import config, tileserver
-from ..ui import BRD, PAD, PAL, card, chip, sub, title
+from ..ui import BRD, PAD, PAL, S, card, chip, sub, title
 from ._forms import rebuilder
 from .lab import _tabs
 
@@ -219,16 +219,36 @@ def wetness(spot):
 
 # ------------------------------------------------------------------ weather
 
+WX_PATH = "/api/weather/multi"
+
+# What the last background read of WX_PATH did. `error` is only ever set by a
+# read that actually ran, so a page painted before the first fetch can say it
+# is reading rather than claiming the server is down.
+_WX = {"busy": False, "error": ""}
+
+
 def _spots():
     """The server's 21 Bay Area forecasts, or (None, why-not).
 
     Deliberately not ``M.WEATHER``: that accessor substitutes ``mock.WEATHER``
     whenever the server is unreachable, so the page would draw last winter's
     invented Oakland forecast and look perfectly healthy while offline.
+
+    Deliberately not ``M._get`` either, which is what this used to be. With
+    nothing cached ``_get`` fetches inline, and ``/api/weather/multi`` takes
+    about a second against the live server: measured against a cold store
+    that one call was 1.09 s of this page's 1.09 s build. Flet runs the
+    handler that builds a page synchronously on its event loop, so for that
+    whole second the old frame stays up and every tap is dropped - which is
+    what "the app is super slow" actually is. The store answers in under a
+    millisecond and ``_catch_up`` does the fetch behind the page.
+
+    Returns (spots, error). Both None is the third state - nothing stored yet
+    and no read has failed - and is not an error; see ``_bay``.
     """
-    d = M._get("/api/weather/multi", timeout=8)
+    d = M._cached(WX_PATH)
     if d is None:
-        return None, (config.STATUS.get("detail") or "server unreachable")
+        return None, (_WX["error"] or None)
     if isinstance(d, dict):
         if d.get("error"):
             return None, str(d["error"])
@@ -236,6 +256,53 @@ def _spots():
     if not isinstance(d, list) or not d:
         return None, "the server returned no forecasts"
     return d, None
+
+
+def _repaint(page):
+    """Repaint from what is already held. Deliberately not ``rebuilder``.
+
+    Opening a spot, or a forecast landing behind the page, is not a reason to
+    invalidate every cached answer in the app and re-read the lot - which is
+    what ``rebuilder`` does, because it is meant for writes.
+    """
+    fn = getattr(S, "rerender", None)
+    if callable(fn):
+        fn()
+        return
+    try:
+        page.update()
+    except Exception:            # noqa: BLE001 - not mounted, or torn down
+        pass
+
+
+def _catch_up(page):
+    """Read WX_PATH off the wire behind the page. True if that was scheduled.
+
+    Repaints only when the answer or the error actually changed, so the
+    repaint it triggers cannot schedule a repaint of its own for ever.
+    """
+    async def run():
+        if _WX["busy"]:
+            return
+        _WX["busy"] = True
+        had, had_error = M._cached(WX_PATH), _WX["error"]
+        try:
+            fresh = await asyncio.to_thread(M._get, WX_PATH, 8)
+        finally:
+            _WX["busy"] = False
+        _WX["error"] = ("" if fresh is not None else
+                        (config.STATUS.get("detail") or "server unreachable"))
+        if fresh != had or _WX["error"] != had_error:
+            _repaint(page)
+
+    runner = getattr(page, "run_task", None)
+    if not callable(runner):
+        return False
+    try:
+        runner(run)
+    except Exception:            # noqa: BLE001 - no loop; we keep what we have
+        return False
+    return True
 
 
 def _pick(spots, name):
@@ -743,8 +810,11 @@ def _mini_forecast(p, spot, days=3):
     return ft.Row(spacing=10, controls=[day(i) for i in range(min(days, len(dates)))])
 
 
-def _spot_tile(p, spot, selected, on_pick):
-    """One station, with everything the website's tile shows."""
+def _spot_tile(p, spot, selected, on_pick, on_toggle=None):
+    """One station, with everything the website's tile shows.
+
+    Built only for a spot whose chevron is open - see ``_spot_row``.
+    """
     cur = spot.get("current") or {}
     label, icon, ckey = _wmo(cur.get("weather_code"))
     gust = cur.get("wind_gusts_10m")
@@ -773,7 +843,10 @@ def _spot_tile(p, spot, selected, on_pick):
                         color=p["text3"], no_wrap=True,
                         overflow=ft.TextOverflow.ELLIPSIS),
             ]),
-        ]),
+        ] + ([ft.IconButton(ft.Icons.EXPAND_LESS, icon_size=15,
+                            icon_color=p["text2"], tooltip="collapse this spot",
+                            on_click=lambda e, n=spot.get("name"): on_toggle(n))]
+             if on_toggle else [])),
         ft.Row(spacing=10, wrap=True, controls=[
             stat("feels", f"{_n(cur.get('apparent_temperature'))}°"),
             stat("wind", wind),
@@ -794,18 +867,71 @@ def _spot_tile(p, spot, selected, on_pick):
         content=ft.Column(spacing=6, controls=rows))
 
 
-def _all_spots(p, spots, selected, on_pick):
+# Which spots in the All spots list are opened out to their full tile.
+# Module level so picking a spot, stepping a radar frame or a fresh forecast
+# landing behind the page does not fold them all back up again.
+_OPEN_SPOTS = set()
+
+
+def _spot_row(p, spot, selected, on_pick, on_toggle):
+    """One station in a line: temperature, name, sky, and a chevron.
+
+    The website's tile - feels-like, wind, humidity, wetness and a 3-day
+    strip - is still here, in ``_spot_tile``, one tap away on the chevron.
+    It stopped being the default because twenty-one of them were 790 of this
+    page's 1130 controls, and everything on it for the *selected* spot is
+    already on screen above in the hero card and the forecast strip.
+    """
+    cur = spot.get("current") or {}
+    temp = cur.get("temperature_2m")
+    label, _icon, ckey = _wmo(cur.get("weather_code"))
+    wet = wetness(spot)
+    name = spot.get("name", "?")
+    on = name == selected
+    is_open = name in _OPEN_SPOTS
+    return ft.Container(
+        col={"xs": 12, "md": 6}, padding=PAD(5, 9), border_radius=9, ink=True,
+        on_click=lambda e, n=name: on_pick(n),
+        tooltip=f"read {name} in the card above",
+        bgcolor=ft.Colors.with_opacity(0.10, p["accent"]) if on else p["bg2"],
+        border=BRD(p["accent"] if on else
+                   (p["cyan"] if wet in ("Wet", "Damp") else p["border"]), 1),
+        content=ft.Row(spacing=7, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                       controls=[
+            ft.Text(f"{_n(temp)}°", size=14, weight=ft.FontWeight.W_700,
+                    color=temp_color(temp)),
+            ft.Text(name, size=11.5, color=p["text"], expand=True, no_wrap=True,
+                    overflow=ft.TextOverflow.ELLIPSIS),
+            ft.Text(f"{label} · {wet}" if wet else label, size=9,
+                    color=p[ckey] if wet is None else p["text3"], no_wrap=True,
+                    overflow=ft.TextOverflow.ELLIPSIS),
+            ft.IconButton(ft.Icons.EXPAND_LESS if is_open else ft.Icons.EXPAND_MORE,
+                          icon_size=15, icon_color=p["text2"],
+                          tooltip=("hide the detail" if is_open else
+                                   f"wind, humidity and 3 days for {name}"),
+                          on_click=lambda e, n=name: on_toggle(n)),
+        ]))
+
+
+def _all_spots(p, spots, selected, on_pick, on_toggle):
     """Every spot, mapped first and then the reference points, as the website
-    splits them."""
+    splits them. Collapsed to a line each; the chevron opens the full tile."""
     on_map = _mapped(spots)
     off_map = [s for s in spots if s not in on_map]
+
+    def cells(group):
+        return ft.ResponsiveRow(
+            columns=12, spacing=8, run_spacing=8,
+            controls=[(_spot_tile(p, s, selected, on_pick, on_toggle)
+                       if s.get("name") in _OPEN_SPOTS
+                       else _spot_row(p, s, selected, on_pick, on_toggle))
+                      for s in group])
+
     blocks = [
         ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
             title("All spots", 13), ft.Container(expand=True),
-            sub("tap one to read it above", 10)]),
-        ft.ResponsiveRow(columns=12, spacing=8, run_spacing=8,
-                         controls=[_spot_tile(p, s, selected, on_pick)
-                                   for s in on_map]),
+            sub("tap one to read it above · chevron for its detail", 10)]),
+        cells(on_map),
     ]
     if off_map:
         blocks += [
@@ -814,9 +940,7 @@ def _all_spots(p, spots, selected, on_pick):
                 ft.Icon(ft.Icons.WRONG_LOCATION, size=13, color=p["text3"]),
                 ft.Text("Reference spots — not mapped", size=10.5,
                         color=p["text3"])]),
-            ft.ResponsiveRow(columns=12, spacing=8, run_spacing=8,
-                             controls=[_spot_tile(p, s, selected, on_pick)
-                                       for s in off_map]),
+            cells(off_map),
         ]
     blocks.append(sub(
         f"{len(spots)} spots · {len(on_map)} mapped + {len(off_map)} reference "
@@ -832,6 +956,10 @@ def _bay(page):
     p = PAL()
     spots, err = _spots()
     reload_page = rebuilder(page, build)
+    # Always, not only when there is nothing yet: `_get` off the UI thread is
+    # how this page stays current without ever making the first paint wait
+    # for Open-Meteo. It repaints only if the answer changed.
+    fetching = _catch_up(page)
     # Filled in by whichever map panels get built, so the rain toggle can
     # restack every one of them without knowing which are visible.
     restackers = []
@@ -851,25 +979,29 @@ def _bay(page):
         _rain_controls(page, restack_all),
     ])
 
-    if err:
-        return ft.Column(spacing=10, controls=[
-            header,
-            card(ft.Column(spacing=6, controls=[
-                ft.Row(spacing=8, controls=[
-                    ft.Icon(ft.Icons.CLOUD_OFF, size=18, color=p["pink"]),
-                    ft.Text("No weather", size=14, weight=ft.FontWeight.W_600,
-                            color=p["text"])]),
-                ft.Text(err, size=11, color=p["pink"], selectable=True),
-                sub(f"asked {config.SERVER_URL}/api/weather/multi", 10),
-            ]), pad=14),
-        ])
+    if spots is None:
+        return ft.Column(spacing=10, controls=[header, _nothing_yet(p, err, fetching)])
 
     if not any(s.get("name") == _focus["name"] for s in spots):
         _focus["name"] = spots[0].get("name")
 
+    def repaint():
+        """Which spot is in the hero card, and which are open, are layout.
+
+        Deliberately not `reload_page`: that is `rebuilder`, which marks
+        every cached answer in the app stale and re-reads. Putting a network
+        round trip behind a disclosure triangle is the mistake this whole
+        change is undoing.
+        """
+        _repaint(page)
+
     def pick(name):
         _focus["name"] = name
-        reload_page()
+        repaint()
+
+    def toggle(name):
+        _OPEN_SPOTS.symmetric_difference_update({name})
+        repaint()
 
     spot = _pick(spots, _focus["name"])
 
@@ -878,8 +1010,40 @@ def _bay(page):
         "map": lambda: _bay_map(page, spots, pick, restackers),
         "hero": lambda: _hero(spot),
         "forecast": lambda: _forecast(spot),
-        "regional": lambda: card(_all_spots(p, spots, _focus["name"], pick)),
+        "regional": lambda: card(_all_spots(p, spots, _focus["name"], pick,
+                                            toggle)),
     })
+
+
+def _nothing_yet(p, err, fetching):
+    """The card for a page with no forecast on it, saying which kind of none.
+
+    Three different states, and calling them all "No weather" is how a page
+    that is simply still reading looks broken.
+    """
+    if err:
+        return card(ft.Column(spacing=6, controls=[
+            ft.Row(spacing=8, controls=[
+                ft.Icon(ft.Icons.CLOUD_OFF, size=18, color=p["pink"]),
+                ft.Text("No weather", size=14, weight=ft.FontWeight.W_600,
+                        color=p["text"])]),
+            ft.Text(err, size=11, color=p["pink"], selectable=True),
+            sub(f"asked {config.SERVER_URL}{WX_PATH}", 10),
+        ]), pad=14)
+    if fetching or _WX["busy"]:
+        return card(ft.Row(spacing=10, controls=[
+            ft.ProgressRing(width=15, height=15, stroke_width=2),
+            ft.Column(spacing=2, expand=True, controls=[
+                ft.Text("Reading the forecast", size=13,
+                        weight=ft.FontWeight.W_600, color=p["text"]),
+                sub(f"{config.SERVER_URL}{WX_PATH} · it lands here when it "
+                    f"arrives", 10)])]), pad=14)
+    return card(ft.Column(spacing=6, controls=[
+        ft.Text("No forecast stored yet", size=13, weight=ft.FontWeight.W_600,
+                color=p["text"]),
+        sub(f"Nothing has been read from {config.SERVER_URL}{WX_PATH} on this "
+            f"device, and nothing is reading it now. Hit refresh above.", 10),
+    ]), pad=14)
 
 
 # ------------------------------------------------------------------ explore
@@ -1236,7 +1400,9 @@ def _explore_tab(page):
         name = getattr(e.control, "value", None)
         spots, err = _spots()
         if err or not spots:
-            _explore["error"] = f"could not look up places - {err or 'none returned'}"
+            _explore["error"] = ("could not look up places - "
+                                 + (err or "no forecast is stored on this "
+                                           "device yet; open the Bay tab"))
             redraw()
             page.update()
             return
@@ -1446,5 +1612,12 @@ def _poi_row(p, poi, miles):
 # --------------------------------------------------------------------- page
 
 def build(page):
-    return _tabs(page, [("Bay", _bay(page)), ("Explore", _explore_tab(page))],
+    """Both tabs deferred: whichever is on screen is the only one built.
+
+    Explore draws a second map, a POI layer and a place search, and used to
+    be built whether or not it was ever looked at. See ``lab._tabs`` for the
+    mechanism and for what a slow build actually costs.
+    """
+    return _tabs(page, [("Bay", lambda: _bay(page)),
+                        ("Explore", lambda: _explore_tab(page))],
                  key="weather")

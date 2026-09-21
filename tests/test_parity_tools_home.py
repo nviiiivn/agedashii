@@ -667,6 +667,202 @@ class HomeRenders(unittest.TestCase):
                 self._fire(v, labels, depth + 1)
 
 
+def _walk_texts(control, out=None, depth=0):
+    out = [] if out is None else out
+    if depth > 60:
+        return out
+    v = getattr(control, "value", None)
+    if isinstance(v, str) and v.strip():
+        out.append(v.strip())
+    for attr in ("controls", "content"):
+        child = getattr(control, attr, None)
+        if isinstance(child, list):
+            for y in child:
+                if hasattr(y, "__dict__"):
+                    _walk_texts(y, out, depth + 1)
+        elif child is not None and hasattr(child, "__dict__"):
+            _walk_texts(child, out, depth + 1)
+    return out
+
+
+class StubPage:
+    def __init__(self):
+        self.controls = []
+        self.services = []
+        self.overlay = []
+
+    def update(self, *a, **k):
+        pass
+
+    def add(self, *c):
+        self.controls.extend(c)
+
+
+class ToolsDoesNotBuildEveryTabBeforeItPaints(unittest.TestCase):
+    """Measured against the live server: tools.build was 1915 controls.
+
+    1221 of them were the 76 feed cards and 503 the six FoodZen tabs
+    nobody had opened. Flet runs the handler that builds a page
+    synchronously on its event loop, so while it runs the old frame stays
+    on screen and every tap is dropped - which is what "this button does
+    nothing" actually is.
+    """
+
+    def _bodies(self, path, key):
+        import ast
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, path)) as fh:
+            tree = ast.parse(fh.read())
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call)
+                    and getattr(node.func, "id", None) == "_tabs"
+                    and any(kw.arg == "key"
+                            and getattr(kw.value, "value", None) == key
+                            for kw in node.keywords)):
+                return [t.elts[1] for t in node.args[1].elts]
+        self.fail(f"no _tabs(key={key!r}) call in {path}")
+
+    def test_every_tools_tab_body_is_deferred(self):
+        import ast
+        bodies = self._bodies("flet_app/pages/tools.py", "tools")
+        self.assertEqual(len(bodies), 4)
+        self.assertTrue(all(isinstance(b, ast.Lambda) for b in bodies),
+                        "every Tools tab body must be deferred")
+
+    def test_every_foodzen_tab_body_is_deferred(self):
+        import ast
+        bodies = self._bodies("flet_app/pages/foodzen.py", "foodzen")
+        self.assertEqual(len(bodies), 6)
+        self.assertTrue(all(isinstance(b, ast.Lambda) for b in bodies),
+                        "every FoodZen tab body must be deferred")
+
+
+class FeedsShowsAPageAtATimeAndSaysSo(unittest.TestCase):
+    """Capping was never the bug. Capping *silently* was.
+
+    76 cards is 1221 controls. All 76 are still reachable, the chips still
+    count every one of them, and the footer names how many are on screen
+    out of how many there are.
+    """
+
+    ITEMS = [{"type": "event", "title": f"ride {i}", "date": "Sep 21",
+              "iso": "2026-09-21", "source": "s", "url": f"http://x/{i}"}
+             for i in range(76)]
+
+    def setUp(self):
+        from flet_app.pages import tools
+        self.tools = tools
+        self.saved = dict(tools._F)
+        self.saved_state = dict(tools._FEEDS)
+        tools._F.update({"kind": "all", "show": tools.FEED_PAGE})
+        tools._FEEDS.update({"busy": False, "error": ""})
+        # `_cached`, not `feeds_full`: the paint path reads the store.
+        self.patch = mock.patch.object(
+            api, "_cached",
+            return_value={"items": self.ITEMS, "sources": {}, "errors": {}})
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tools._F.clear()
+        self.tools._F.update(self.saved)
+        self.tools._FEEDS.clear()
+        self.tools._FEEDS.update(self.saved_state)
+
+    def test_the_paint_path_never_touches_the_wire(self):
+        """/api/feeds is 1.23 s against the live server - it rescrapes every
+        source. Read inline that is a second of dropped taps."""
+        with mock.patch.object(api, "feeds_full") as wire:
+            self.tools._feeds(StubPage())
+        wire.assert_not_called()
+
+    def test_a_page_is_drawn_and_the_rest_are_admitted_to(self):
+        shown = _walk_texts(self.tools._feeds(StubPage()))
+        drawn = [t for t in shown if t.startswith("ride ")]
+        self.assertEqual(len(drawn), self.tools.FEED_PAGE)
+        self.assertIn(f"showing {self.tools.FEED_PAGE} of 76 in this filter",
+                      shown)
+        # The chip still counts all 76, so the cap hides no item's existence.
+        self.assertTrue(any(t.endswith("· 76") for t in shown), shown)
+
+    def test_show_all_draws_all_of_them(self):
+        self.tools._F["show"] = 76
+        shown = _walk_texts(self.tools._feeds(StubPage()))
+        self.assertEqual(len([t for t in shown if t.startswith("ride ")]), 76)
+        self.assertFalse([t for t in shown if t.startswith("showing ")])
+
+    def test_a_filter_shorter_than_a_page_gets_no_footer(self):
+        with mock.patch.object(api, "_cached",
+                               return_value={"items": self.ITEMS[:3],
+                                             "sources": {}, "errors": {}}):
+            shown = _walk_texts(self.tools._feeds(StubPage()))
+        self.assertEqual(len([t for t in shown if t.startswith("ride ")]), 3)
+        self.assertFalse([t for t in shown if t.startswith("showing ")])
+
+    def test_nothing_stored_yet_says_reading_not_unavailable(self):
+        """Three different nothings. Calling them all "unavailable" is how a
+        tab that is simply still reading looks broken."""
+        with mock.patch.object(api, "_cached", return_value=None):
+            still = _walk_texts(self.tools._feeds(StubPage()))
+            self.assertTrue(any("never answered" in s for s in still), still)
+            self.tools._FEEDS["busy"] = True
+            reading = _walk_texts(self.tools._feeds(StubPage()))
+            self.assertTrue(any("Reading /api/feeds" in s for s in reading))
+            self.tools._FEEDS.update({"busy": False, "error": "refused"})
+            dead = _walk_texts(self.tools._feeds(StubPage()))
+            self.assertIn("refused", dead)
+            self.assertIn("No feeds", dead)
+
+
+class TheBrowseWallIsFoldedAway(unittest.TestCase):
+    """231 catalogue buttons was 269 controls - most of the Grocery tab -
+    rebuilt every time a checkbox was ticked, for a wall that lives behind
+    a 260px scroll window below the list you came to read."""
+
+    def setUp(self):
+        from flet_app.pages import foodzen
+        self.fz = foodzen
+        foodzen._OPEN["browse"] = False
+
+    def tearDown(self):
+        self.fz._OPEN["browse"] = False
+
+    def _buttons(self, control, out=None, depth=0):
+        out = [] if out is None else out
+        if depth > 60:
+            return out
+        if type(control).__name__ == "TextButton":
+            out.append(control)
+        for attr in ("controls", "content"):
+            child = getattr(control, attr, None)
+            if isinstance(child, list):
+                for y in child:
+                    if hasattr(y, "__dict__"):
+                        self._buttons(y, out, depth + 1)
+            elif child is not None and hasattr(child, "__dict__"):
+                self._buttons(child, out, depth + 1)
+        return out
+
+    def test_closed_it_builds_no_catalogue_buttons(self):
+        self.assertEqual(self._buttons(self.fz._browse(StubPage(),
+                                                       lambda *a: None)), [])
+
+    def test_open_it_builds_every_one_of_them(self):
+        from flet_app.foodzen_catalog import CATALOG
+        self.fz._OPEN["browse"] = True
+        built = self._buttons(self.fz._browse(StubPage(), lambda *a: None))
+        self.assertEqual(len(built), len(CATALOG))
+
+    def test_the_count_is_on_the_header_either_way(self):
+        from flet_app.foodzen_catalog import CATALOG
+        for state in (False, True):
+            with self.subTest(open=state):
+                self.fz._OPEN["browse"] = state
+                shown = _walk_texts(self.fz._browse(StubPage(),
+                                                    lambda *a: None))
+                self.assertIn(f"{len(CATALOG)} items", shown)
+
+
 class PowerIsNeverQueued(unittest.TestCase):
     """A reboot delivered three hours late is a reboot nobody asked for."""
 

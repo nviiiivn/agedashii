@@ -14,7 +14,10 @@ Three rules, each of them a bug that has shipped here before:
   server said and only then repaints. Ticking a box or saving a note that
   never left the phone is the lie this app exists not to tell.
 * **Nothing is capped without saying so.** Feeds used to show the first 20 of
-  76 items with nothing on screen admitting the other 56 existed.
+  76 items with nothing on screen admitting the other 56 existed. It shows a
+  page at a time again - 76 cards was 1221 of this page's 1915 controls - but
+  now the count, the total and the buttons that fetch the rest are on screen.
+  Silence was the bug, not the cap.
 * **Writes go through the outbox**, so a note written with no signal is
   queued and sent later rather than lost - and says which of the two it is.
 """
@@ -23,7 +26,8 @@ import asyncio
 import flet as ft
 
 from .. import api as M
-from ..ui import PAL, PAD, BRD, card, chip, sub, title
+from .. import config
+from ..ui import PAL, PAD, BRD, S, card, chip, sub, title
 from ._forms import Writer, offline_banner, rebuilder
 from .lab import _tabs
 from . import foodzen as fzpage
@@ -36,7 +40,11 @@ from . import foodzen as fzpage
 # holding a second copy here only means the tab shows yesterday's list until
 # the app is restarted. What is kept is what the store cannot know: where
 # you were.
-_F = {"kind": "all"}
+#
+# `_F["show"]` is how many feed cards are on screen; see `_feeds`.
+FEED_PAGE = 15
+
+_F = {"kind": "all", "show": FEED_PAGE}
 _V = {"host": M.VAULT_DEFAULT_HOST, "lib": "DeVault",
       "open": set(), "file": None, "text": None, "editing": False}
 _J = {"cat": "all", "q": "", "sort": "new", "mode": "list", "open": None,
@@ -62,10 +70,17 @@ def build(page):
     BPM - which put EatZen and BPM next to Journal instead of inside
     FoodZen, and had no room for the website's meals, scrape and expenses
     tabs at all.
+
+    Every tab is a callable, so only the one on screen is built. All four
+    used to be built before anything painted - 1915 controls, of which 1221
+    were the 76 feed cards and 503 were the six FoodZen tabs nobody had
+    opened. See ``lab._tabs`` for the mechanism, and for what that costs:
+    while a slow build runs, Flet holds the old frame and drops every tap.
     """
-    return _tabs(page, [("Feeds", _feeds(page)), ("Vault", _vault(page)),
-                        ("Journal", _journal(page)),
-                        ("FoodZen", fzpage.build(page))], key="tools")
+    return _tabs(page, [("Feeds", lambda: _feeds(page)),
+                        ("Vault", lambda: _vault(page)),
+                        ("Journal", lambda: _journal(page)),
+                        ("FoodZen", lambda: fzpage.build(page))], key="tools")
 
 
 def _run(page, coro_fn, *args):
@@ -81,6 +96,23 @@ def _run(page, coro_fn, *args):
     try:
         runner(coro_fn, *args)
     except Exception:          # noqa: BLE001 - no running loop
+        pass
+
+
+def _repaint(page):
+    """Repaint from what is already held. Deliberately not ``rebuilder``.
+
+    How much of a list is on screen, or a feed landing behind the page, is
+    not a reason to mark every cached answer in the app stale and re-read
+    the lot - which is what ``rebuilder`` does, because it is for writes.
+    """
+    fn = getattr(S, "rerender", None)
+    if callable(fn):
+        fn()
+        return
+    try:
+        page.update()
+    except Exception:              # noqa: BLE001 - not mounted, or torn down
         pass
 
 
@@ -105,15 +137,81 @@ def _pill(p, label, on, on_click, colour=None):
 # =========================================================================
 # Feeds
 # =========================================================================
+FEEDS_PATH = "/api/feeds"
+
+# What the last background read of FEEDS_PATH did. `error` is only ever set
+# by a read that actually ran, so a tab painted before the first fetch says
+# it is reading rather than claiming the server has never answered.
+_FEEDS = {"busy": False, "error": ""}
+
+
+def _feed_payload(raw):
+    """`api.feeds_full`'s shape, out of whatever the store holds.
+
+    The same four keys and the same defensive copies, because this is the
+    cached half of that call and the two must not drift.
+    """
+    if not isinstance(raw, dict):
+        return None
+    return {"ts": raw.get("ts"), "items": list(raw.get("items") or []),
+            "errors": dict(raw.get("errors") or {}),
+            "sources": dict(raw.get("sources") or {})}
+
+
+def _catch_up_feeds(page):
+    """Read /api/feeds off the wire behind the tab. True if that started.
+
+    /api/feeds is the slowest read on this page - 1.23 s against the live
+    server, because it rescrapes its sources - and `feeds_full` used to be
+    called straight from the build. Flet runs that build synchronously on
+    its event loop, so the old frame stayed up and every tap during it was
+    dropped, which is what "this button does nothing" is.
+
+    Repaints only when the answer or the error actually changed, so the
+    repaint it causes cannot cause one of its own for ever.
+    """
+    async def run():
+        if _FEEDS["busy"]:
+            return
+        _FEEDS["busy"] = True
+        had, had_error = M._cached(FEEDS_PATH), _FEEDS["error"]
+        try:
+            fresh = await asyncio.to_thread(M.feeds_full)
+        finally:
+            _FEEDS["busy"] = False
+        _FEEDS["error"] = ("" if fresh is not None else
+                           (config.STATUS.get("detail") or "server unreachable"))
+        if _feed_payload(had) != fresh or _FEEDS["error"] != had_error:
+            _repaint(page)
+
+    runner = getattr(page, "run_task", None)
+    if not callable(runner):
+        return False
+    try:
+        runner(run)
+    except Exception:              # noqa: BLE001 - no loop; we keep what we have
+        return False
+    return True
+
+
 def _feeds(page):
-    """Every feed item, filterable, each one a link - not the first twenty.
+    """Every feed item, filterable, each one a link - a page at a time.
 
     The old card list read `M.FEEDS`, which `api.feeds()` trims to 20 rows.
     Today the server has 76. Nothing on screen said so, so a bike night in
     the 21st row simply did not exist as far as the phone was concerned.
+
+    All 76 are still reachable, and the count of every one of them is still
+    on the chips. What changed is that they are not all *built* at once: 76
+    cards - a thumbnail, a title, a location, a description and up to four
+    tag chips each - came to 1221 controls, which is two thirds of this
+    page. `_F["show"]` many are drawn, the footer says how many that is out
+    of how many there are, and two buttons fetch the next page or the lot.
     """
     p = PAL()
-    data = M.feeds_full()
+    # The store, not the wire - see `_catch_up_feeds`, which does the wire.
+    data = _feed_payload(M._cached(FEEDS_PATH))
+    fetching = _catch_up_feeds(page)
 
     body = ft.Column(spacing=8)
     meta = ft.Text("", size=10, color=p["text2"])
@@ -176,11 +274,42 @@ def _feeds(page):
             border_radius=12, bgcolor=p["surface"], border=BRD(p["border"], 1),
             padding=10, ink=True, url=url, content=inner)
 
+    def more_row(shown, total):
+        """The footer that admits to the cap and undoes it.
+
+        Every count here is measured, never rounded or guessed: `shown` is
+        the number of cards actually on screen.
+        """
+        return card(ft.Column(spacing=6, controls=[
+            sub(f"showing {shown} of {total} in this filter", 11),
+            ft.Row(spacing=6, wrap=True, controls=[
+                ft.FilledButton(f"Show {min(FEED_PAGE, total - shown)} more",
+                                height=32, on_click=show(shown + FEED_PAGE)),
+                ft.OutlinedButton(f"Show all {total}", height=32,
+                                  on_click=show(total)),
+            ]),
+        ]), pad=10)
+
     def paint():
         if data is None:
-            body.controls = [card(sub(
-                "Feeds unavailable - the server has never answered "
-                "/api/feeds on this device.", 11), pad=12)]
+            # Three different nothings, and calling them all "unavailable"
+            # is how a tab that is simply still reading looks broken.
+            if _FEEDS["error"]:
+                body.controls = [card(ft.Column(spacing=4, controls=[
+                    ft.Text("No feeds", size=13, weight=ft.FontWeight.W_600,
+                            color=p["text"]),
+                    ft.Text(_FEEDS["error"], size=11, color=p["pink"],
+                            selectable=True),
+                    sub(f"asked {config.SERVER_URL}{FEEDS_PATH}", 10)]), pad=12)]
+            elif fetching or _FEEDS["busy"]:
+                body.controls = [card(ft.Row(spacing=10, controls=[
+                    ft.ProgressRing(width=15, height=15, stroke_width=2),
+                    sub(f"Reading {FEEDS_PATH} - it rescrapes every source, "
+                        f"so it takes a second", 11)]), pad=12)]
+            else:
+                body.controls = [card(sub(
+                    "Feeds unavailable - the server has never answered "
+                    "/api/feeds on this device.", 11), pad=12)]
             meta.value = ""
             chips.controls = []
             return
@@ -198,17 +327,39 @@ def _feeds(page):
             bits.append(f"{len(errs)} source(s) unreachable: "
                         + ", ".join(sorted(errs)))
         meta.value = " · ".join(bits)
-        body.controls = ([row(i) for i in items]
+        shown = items[:max(_F["show"], 1)]
+        body.controls = ([row(i) for i in shown]
                          or [card(sub("Nothing here yet.", 11), pad=12)])
+        if len(shown) < len(items):
+            body.controls.append(more_row(len(shown), len(items)))
+
+    def repaint():
+        try:
+            page.update()
+        except Exception:          # noqa: BLE001 - not mounted yet
+            pass
+
+    def show(n):
+        """Draw `n` cards. Repaints the list itself - no server read at all.
+
+        Rebuilding the page would re-read /api/feeds for a change that is
+        purely how much of what we already hold is on screen.
+        """
+        def handler(e):
+            _F["show"] = n
+            paint()
+            repaint()
+        return handler
 
     def pick(kind):
         def handler(e):
             _F["kind"] = kind
+            # A different filter is a different list, so the page count
+            # starts over rather than showing 60 of a 3-item filter and
+            # nothing of the next.
+            _F["show"] = FEED_PAGE
             paint()
-            try:
-                page.update()
-            except Exception:      # noqa: BLE001 - not mounted yet
-                pass
+            repaint()
         return handler
 
     async def rescan(e):

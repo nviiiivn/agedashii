@@ -16,20 +16,49 @@ import flet as ft
 
 from .. import api as M
 from .. import panels
-from ..ui import PAD, PAL, card, chip, sub, title
+from ..ui import PAD, PAL, S, card, chip, sub, title
 from . import eatzen
 from .lab import _tabs
 
+# Which folded-away sections are open. Module level so a tick, a delete or an
+# added item - every one of which repaints the tab - does not shut the
+# catalogue you were halfway down.
+_OPEN = {"browse": False}
+
+
+def _repaint(page):
+    """Repaint from what is already held; deliberately not a re-read.
+
+    Opening a section is a layout change. `_writer`'s rebuild calls
+    `M.refresh()`, which marks every cached answer in the app stale - the
+    right thing after a write, and a network round trip behind a disclosure
+    triangle otherwise.
+    """
+    fn = getattr(S, "rerender", None)
+    if callable(fn):
+        fn()
+        return
+    try:
+        page.update()
+    except Exception:              # noqa: BLE001 - not mounted, or torn down
+        pass
+
 
 def build(page):
-    """The FoodZen page: six tabs, matching the website."""
+    """The FoodZen page: six tabs, matching the website.
+
+    Each tab is a callable, so only the one on screen is built. All six used
+    to be built whenever Tools painted, whether or not FoodZen was even the
+    tab you were looking at - 503 controls, 269 of them the Browse wall
+    inside Grocery. See ``lab._tabs``.
+    """
     return _tabs(page, [
-        ("Grocery", _grocery(page)),
-        ("Meals", _meals(page)),
-        ("Scrape", _scrape(page)),
-        ("Expenses", _expenses(page)),
-        ("EatZen", eatzen.build_eatzen(page)),
-        ("BPM", eatzen.build_bpm(page)),
+        ("Grocery", lambda: _grocery(page)),
+        ("Meals", lambda: _meals(page)),
+        ("Scrape", lambda: _scrape(page)),
+        ("Expenses", lambda: _expenses(page)),
+        ("EatZen", lambda: eatzen.build_eatzen(page)),
+        ("BPM", lambda: eatzen.build_bpm(page)),
     ], key="foodzen")
 
 
@@ -179,22 +208,46 @@ def _grocery(page):
     return ft.Column(spacing=8, expand=True, controls=[
         ft.Container(expand=True, content=panels.layout("foodzen.grocery", {
             "templates": templates_card, "list": list_card,
-            "browse": lambda: _browse(run), "need": need_card,
+            "browse": lambda: _browse(page, run), "need": need_card,
         })),
         ft.Container(padding=PAD(0, 4), content=status),
     ])
 
 
-def _browse(run):
+def _browse(page, run):
     """The catalogue, by section, tap to add - the website's browse wall.
 
     Chips rather than the website's 231 tiles: a tile grid that size is
     unusable on a phone, and the point of it is adding a common item without
     typing. Height-capped and internally scrolled so it cannot push the rest
     of the tab off the screen.
+
+    Folded away until asked for. 231 buttons is 269 controls - nearly the
+    whole of the Grocery tab - built every time anything on the page
+    repainted, for a wall you have to scroll a fixed 260px window to use.
+    The list you came to read is above it. Open state lives in `_OPEN` so a
+    tick, a delete or an added item does not shut it again mid-shop.
     """
     p = PAL()
     from ..foodzen_catalog import CATALOG
+
+    def toggle(e):
+        _OPEN["browse"] = not _OPEN["browse"]
+        _repaint(page)
+
+    head = ft.Container(
+        ink=True, border_radius=8, on_click=toggle,
+        tooltip=("hide the catalogue" if _OPEN["browse"]
+                 else "the whole catalogue, tap an item to add it"),
+        content=ft.Row([
+            title("Browse", 13), ft.Container(expand=True),
+            chip(f"{len(CATALOG)} items", p["accent"], small=True),
+            ft.Icon(ft.Icons.EXPAND_LESS if _OPEN["browse"]
+                    else ft.Icons.EXPAND_MORE, size=20, color=p["text2"]),
+        ]))
+
+    if not _OPEN["browse"]:
+        return card(head)
 
     by_section = {}
     for name, section in sorted(CATALOG.items()):
@@ -210,8 +263,7 @@ def _browse(run):
         ]))
 
     return card(ft.Column(spacing=8, controls=[
-        ft.Row([title("Browse", 13), ft.Container(expand=True),
-                chip(f"{len(CATALOG)} items", p["accent"], small=True)]),
+        head,
         ft.Container(height=260, content=ft.Column(
             spacing=10, scroll=ft.ScrollMode.AUTO, controls=sections)),
     ]))

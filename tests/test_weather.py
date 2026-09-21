@@ -5,6 +5,7 @@ returned on 2026-09-21 and what `api.rainviewer_frames()` really built out
 of RainViewer's index that afternoon - not shapes that seemed likely.
 """
 import unittest
+from unittest import mock
 
 from flet_app import panels
 from flet_app.pages import weather as W
@@ -204,7 +205,15 @@ class AllSpotsPanel(unittest.TestCase):
     def setUp(self):
         from flet_app.ui import PAL
         self.p = PAL()
-        self.shown = _texts(W._all_spots(self.p, SPOTS, "Oakland", lambda n: None))
+        W._OPEN_SPOTS.clear()
+        self.shown = self._draw()
+
+    def tearDown(self):
+        W._OPEN_SPOTS.clear()
+
+    def _draw(self):
+        return _texts(W._all_spots(self.p, SPOTS, "Oakland",
+                                   lambda n: None, lambda n: None))
 
     def test_mapped_and_reference_are_separated_and_counted(self):
         self.assertIn("Reference spots — not mapped", self.shown)
@@ -215,6 +224,26 @@ class AllSpotsPanel(unittest.TestCase):
         for name in ("Sausalito", "Oakland", "Twin Peaks", "Pacifica",
                      "Mt Diablo", "Cupertino"):
             self.assertIn(name, self.shown)
+
+    def test_a_collapsed_row_still_carries_the_temperature_and_the_sky(self):
+        """Collapsed is not blank - it is the line the list is scanned by."""
+        self.assertIn("56°", self.shown)                    # Oakland
+        self.assertTrue(any("overcast · Dry" in s for s in self.shown))
+
+    def test_collapsed_is_the_default_and_the_detail_is_not_built(self):
+        """The regression this guards: twenty-one full tiles were 790 of
+        this page's 1130 controls, and everything on the tile for the spot
+        you have selected is already in the hero card above."""
+        self.assertNotIn("feels", self.shown)
+        self.assertNotIn("hum", self.shown)
+
+    def test_opening_one_spot_builds_that_spots_tile_and_no_others(self):
+        W._OPEN_SPOTS.add("Oakland")
+        shown = self._draw()
+        self.assertEqual(shown.count("feels"), 1)
+        self.assertEqual(shown.count("hum"), 1)
+        for name in ("Sausalito", "Twin Peaks", "Mt Diablo"):
+            self.assertIn(name, shown)
 
     def test_a_tile_carries_feels_wind_gust_humidity_and_sky(self):
         tile = _texts(W._spot_tile(self.p, SPOTS[0], "Oakland", lambda n: None))
@@ -297,6 +326,93 @@ class TappedPointCard(unittest.TestCase):
                                         "precipitation_probability_max": [0]}})
         shown = _texts(W._point_card(self.p))
         self.assertIn("36.974, -122.031 · tapped point", shown)
+
+
+class TheFirstPaintNeverWaitsOnOpenMeteo(unittest.TestCase):
+    """/api/weather/multi takes about a second against the live server.
+
+    Read inline that was the whole of this page's 1.09 s cold build, and
+    Flet holds the old frame and drops every tap for the duration. The
+    store answers in under a millisecond; the wire is read behind the page.
+    """
+
+    def setUp(self):
+        self.saved = dict(W._WX)
+        W._WX.update({"busy": False, "error": ""})
+
+    def tearDown(self):
+        W._WX.clear()
+        W._WX.update(self.saved)
+
+    def test_spots_reads_the_store_and_never_the_wire(self):
+        from flet_app import api
+        with mock.patch.object(api, "_get") as wire, \
+             mock.patch.object(api, "_cached", return_value=SPOTS) as cached:
+            spots, err = W._spots()
+        wire.assert_not_called()
+        cached.assert_called_once_with(W.WX_PATH)
+        self.assertIsNone(err)
+        self.assertEqual(len(spots), 6)
+
+    def test_nothing_stored_and_no_failed_read_is_not_an_error(self):
+        """The third state. Calling it "server unreachable" before anything
+        has been asked is a claim nobody has the evidence for."""
+        from flet_app import api
+        with mock.patch.object(api, "_cached", return_value=None):
+            spots, err = W._spots()
+        self.assertIsNone(spots)
+        self.assertIsNone(err)
+
+    def test_a_failed_background_read_is_reported_verbatim(self):
+        from flet_app import api
+        W._WX["error"] = "connection refused"
+        with mock.patch.object(api, "_cached", return_value=None):
+            spots, err = W._spots()
+        self.assertIsNone(spots)
+        self.assertEqual(err, "connection refused")
+
+    def test_the_card_tells_reading_apart_from_unreachable_and_empty(self):
+        from flet_app.ui import PAL
+        p = PAL()
+        reading = _texts(W._nothing_yet(p, None, True))
+        self.assertTrue(any("Reading the forecast" in s for s in reading))
+        dead = _texts(W._nothing_yet(p, "connection refused", False))
+        self.assertIn("connection refused", dead)
+        self.assertIn("No weather", dead)
+        empty = _texts(W._nothing_yet(p, None, False))
+        self.assertTrue(any("No forecast stored yet" in s for s in empty))
+
+    def test_catch_up_without_an_event_loop_says_it_did_not_start(self):
+        """Tests and the import check build pages with a stub page. Claiming
+        a fetch is running when nothing scheduled one is the lie the
+        "Reading the forecast" card would otherwise tell for ever."""
+        class NoLoop:
+            def update(self, *a, **k):
+                pass
+        self.assertFalse(W._catch_up(NoLoop()))
+
+
+class WeatherDoesNotBuildBothTabsBeforeItPaints(unittest.TestCase):
+
+    def test_build_passes_callables_not_built_controls(self):
+        import ast
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "flet_app/pages/weather.py")) as fh:
+            tree = ast.parse(fh.read())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and getattr(node.func, "id", None) == "_tabs"
+                    and any(kw.arg == "key"
+                            and getattr(kw.value, "value", None) == "weather"
+                            for kw in node.keywords)):
+                continue
+            bodies = [t.elts[1] for t in node.args[1].elts]
+            self.assertEqual(len(bodies), 2)
+            self.assertTrue(all(isinstance(b, ast.Lambda) for b in bodies),
+                            "Explore draws a second map; defer it")
+            return
+        self.fail("no _tabs(key='weather') call in weather.py")
 
 
 class WeatherSurfacesAreRegistered(unittest.TestCase):
