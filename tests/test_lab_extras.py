@@ -9,7 +9,7 @@ and it is exactly the sort of thing that has shipped broken here before.
 import unittest
 
 from flet_app import api
-from flet_app.pages import lab
+from flet_app.pages import extras, lab
 
 
 # What /api/dashboard answered, trimmed to the fields under test.
@@ -176,6 +176,77 @@ class ContainerOrder(unittest.TestCase):
                 {"name": "gone", "state": "exited"}]
         self.assertEqual([c["name"] for c in sorted(rows, key=lab._ct_sort)],
                          ["gone", "weird"])
+
+
+class RepoFileTree(unittest.TestCase):
+    """Gitea's recursive tree, grouped the way the detail view draws it.
+
+    The rows are a verbatim slice of umbreality/alexandria, which has 31
+    entries of which 27 are files.
+    """
+
+    TREE = [
+        {"path": "Grimoire", "type": "tree", "size": 0},
+        {"path": "Grimoire/Rites.md", "type": "blob", "size": 6400},
+        {"path": "README.md", "type": "blob", "size": 35},
+        {"path": "System", "type": "tree", "size": 0},
+        {"path": "System/Index.md", "type": "blob", "size": 2500},
+    ]
+
+    def test_directories_are_not_counted_as_files(self):
+        groups, count = extras._tree_groups(self.TREE)
+        self.assertEqual(count, 3, "three blobs, two of the five rows are trees")
+
+    def test_files_are_grouped_under_their_directory(self):
+        groups, _ = extras._tree_groups(self.TREE)
+        self.assertEqual([d for d, _ in groups], ["", "Grimoire", "System"])
+        self.assertEqual([t["path"] for t in dict(groups)["Grimoire"]],
+                         ["Grimoire/Rites.md"])
+
+    def test_an_empty_or_missing_tree_is_not_a_crash(self):
+        self.assertEqual(extras._tree_groups([]), ([], 0))
+        self.assertEqual(extras._tree_groups(None), ([], 0))
+
+
+class CommitLines(unittest.TestCase):
+    COMMIT = {"sha": "6e2d0be47b1c0f5a2d3e", "commit": {
+        "message": "Mythos expansion + geography\n\nlonger body nobody wants here",
+        "author": {"name": "nvii", "date": "2026-06-10T20:55:30Z"}}}
+
+    def test_only_the_subject_line_and_a_short_sha(self):
+        sha, msg, date, who = extras._commit_line(self.COMMIT)
+        self.assertEqual(sha, "6e2d0be")
+        self.assertEqual(msg, "Mythos expansion + geography")
+        self.assertEqual((date, who), ("2026-06-10", "nvii"))
+
+    def test_a_commit_with_no_message_says_so_rather_than_blank(self):
+        sha, msg, date, who = extras._commit_line({"sha": "abc"})
+        self.assertEqual((sha, msg, date, who), ("abc", "(no message)", "", ""))
+
+
+class ModelLabels(unittest.TestCase):
+    def test_the_provider_prefix_and_free_suffix_come_off(self):
+        self.assertEqual(extras._model_label("nvidia/nemotron-3-ultra-550b-a55b:free"),
+                         "nemotron-3-ultra-550b-a55b")
+        self.assertEqual(extras._model_label("nemotron-3-ultra-free"),
+                         "nemotron-3-ultra")
+
+    def test_an_ollama_tag_is_left_alone(self):
+        self.assertEqual(extras._model_label("hermes3:latest"), "hermes3:latest")
+
+    def test_nothing_in_gives_nothing_out_rather_than_none(self):
+        self.assertEqual(extras._model_label(""), "")
+
+
+class ByteSizes(unittest.TestCase):
+    def test_the_three_bands(self):
+        self.assertEqual(extras._fmt_bytes(35), "35 B")
+        self.assertEqual(extras._fmt_bytes(6400), "6.2 KB")
+        self.assertEqual(extras._fmt_bytes(2 * 1048576), "2.0 MB")
+
+    def test_a_missing_size_is_blank_not_zero(self):
+        self.assertEqual(extras._fmt_bytes(None), "")
+        self.assertEqual(extras._fmt_bytes("nope"), "")
 
 
 if __name__ == "__main__":
