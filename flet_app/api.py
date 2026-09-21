@@ -757,10 +757,159 @@ def flipper(query="motorcycle"):
     non-listings (a $1 placeholder, a service ad, a Reddit question) with
     `not_a_deal`, and those must never be shown as finds.
     """
-    d = _get("/api/flipper/scan?query=" + urllib.parse.quote(query))
+    d = flipper_scan(query)
     if d is None:
         return None
     return [x for x in (d.get("listings") or []) if x.get("score") is not None]
+
+
+def flipper_scan_path(query="motorcycle", min_price=None, max_price=None):
+    """The scanner URL for one search, matching the website's parameters.
+
+    Separate from the fetch so the page can ask `provenance()` whether the
+    result on screen came off the wire or out of the cache - a scan can take
+    two minutes, and "this is the answer from twenty minutes ago" is a
+    different statement from "this is live".
+    """
+    params = {"query": query or "motorcycle"}
+    for key, value in (("min_price", min_price), ("max_price", max_price)):
+        text = str(value).strip() if value not in (None, "") else ""
+        if text:
+            params[key] = text
+    return "/api/flipper/scan?" + urllib.parse.urlencode(params)
+
+
+def flipper_scan(query="motorcycle", min_price=None, max_price=None, timeout=180):
+    """The scanner's whole answer, or None. Never invents an empty result.
+
+    The page needs more than the listings: the market median every score is
+    measured against, how many listings each source returned, and - the part
+    that was missing from both ends until recently - *why* the nine Reddit
+    sources returned nothing.
+
+    The timeout is long because this really is slow: a cold
+    `/api/flipper/scan?query=motorcycle` took 639 listings across seven
+    Craigslist regions to return here. Callers must show a loading state
+    before calling and must call it off the UI thread.
+    """
+    d = _get(flipper_scan_path(query, min_price, max_price), timeout=timeout)
+    return d if isinstance(d, dict) else None
+
+
+# ------------------------------------------------- keyless third-party reads
+# RainViewer and Open-Meteo's geocoder are public, keyless and *not* the
+# dashbored server. Three rules follow from that and are enforced here rather
+# than in each caller:
+#
+#   * a failure must not touch config.STATUS. Rainviewer being down says
+#     nothing about whether the dashbored server is up, and marking the app
+#     offline over a radar tile would grey out every other page.
+#   * a failure must come back as a sentence, not as None. "Rain radar
+#     unavailable" with no reason is what the Rain button used to do.
+#   * there must be a timeout the caller chooses. The first call to
+#     rainviewer from this machine took over 25 s and the next took 0.64 s.
+
+def _third_party(url, timeout, headers=None):
+    """GET JSON from a public API. Returns (data, error-sentence-or-None)."""
+    req = urllib.request.Request(url, headers=headers or {}, method="GET")
+    try:
+        with config._opener.open(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", "replace")
+    except TimeoutError:
+        return None, f"no answer within {timeout:.0f}s"
+    except Exception as e:  # noqa: BLE001 - reported, never raised at the UI
+        return None, config._describe(e)
+    try:
+        return json.loads(raw), None
+    except ValueError:
+        return None, "answered, but not with JSON"
+
+
+# Frame tiles: 256px, colour scheme 2 (MeteoRain blue to red), smoothed, no
+# snow overlay - the same `/256/{z}/{x}/{y}/2/1_0.png` suffix the website uses.
+RAINVIEWER_INDEX = "https://api.rainviewer.com/public/weather-maps.json"
+
+
+def rainviewer_frames(timeout=15):
+    """(frames, error). Each frame is {"time": epoch_seconds, "url": template}.
+
+    `url` is a slippy-tile template ready for a TileLayer. An empty list with
+    no error means RainViewer answered and is currently publishing no radar
+    frames, which is a real answer and not a failure.
+    """
+    d, err = _third_party(RAINVIEWER_INDEX, timeout)
+    if err:
+        return None, err
+    if not isinstance(d, dict) or not d.get("host"):
+        return None, "RainViewer sent no tile host"
+    host = str(d["host"]).rstrip("/")
+    past = ((d.get("radar") or {}).get("past") or [])
+    frames = []
+    for f in past:
+        path = (f or {}).get("path")
+        when = (f or {}).get("time")
+        if not path or when is None:
+            continue
+        frames.append({"time": int(when),
+                       "url": f"{host}{path}/256/{{z}}/{{x}}/{{y}}/2/1_0.png"})
+    return frames, None
+
+
+def geocode(name, count=8, timeout=10):
+    """(places, error) from Open-Meteo's keyless geocoder.
+
+    Each place is {name, admin1, country, lat, lon}. An empty list means the
+    geocoder answered and knows nowhere by that name.
+    """
+    text = (name or "").strip()
+    if len(text) < 2:
+        return [], None
+    url = ("https://geocoding-api.open-meteo.com/v1/search?"
+           + urllib.parse.urlencode({"name": text, "count": count,
+                                     "language": "en", "format": "json"}))
+    d, err = _third_party(url, timeout)
+    if err:
+        return None, err
+    out = []
+    for r in ((d or {}).get("results") or []):
+        if r.get("latitude") is None or r.get("longitude") is None:
+            continue
+        out.append({"name": r.get("name") or "?",
+                    "admin1": r.get("admin1") or "",
+                    "country": r.get("country") or "",
+                    "lat": float(r["latitude"]), "lon": float(r["longitude"])})
+    return out, None
+
+
+def point_forecast(lat, lon, timeout=12):
+    """(forecast, error) for any point, in the /api/weather/multi shape.
+
+    Reshaped into `{"current": {...}, "daily": {...}}` so the Bay tab's
+    renderers draw an arbitrary point without a second set of them. Asks
+    Open-Meteo for exactly the fields the dashbored server asks for, in the
+    same units - Fahrenheit and mph - so a tapped point and a named station
+    are directly comparable. Three daily rows and no hourly series, because
+    that is all the rest of the page has and a strip that only appeared for
+    tapped points would be a different promise.
+    """
+    url = ("https://api.open-meteo.com/v1/forecast?"
+           + urllib.parse.urlencode({
+               "latitude": f"{float(lat):.4f}", "longitude": f"{float(lon):.4f}",
+               "current": ("temperature_2m,apparent_temperature,weather_code,"
+                           "wind_speed_10m,wind_gusts_10m,"
+                           "relative_humidity_2m,precipitation"),
+               "daily": ("weather_code,temperature_2m_max,temperature_2m_min,"
+                         "precipitation_probability_max,wind_speed_10m_max"),
+               "temperature_unit": "fahrenheit", "wind_speed_unit": "mph",
+               "timezone": "auto", "forecast_days": 3}))
+    d, err = _third_party(url, timeout)
+    if err:
+        return None, err
+    if not isinstance(d, dict) or d.get("error"):
+        reason = (d or {}).get("reason") if isinstance(d, dict) else None
+        return None, str(reason or "Open-Meteo refused the request")
+    return {"current": d.get("current") or {}, "daily": d.get("daily") or {},
+            "lat": d.get("latitude", lat), "lon": d.get("longitude", lon)}, None
 
 
 def nowplaying():
