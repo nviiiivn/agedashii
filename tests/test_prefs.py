@@ -462,8 +462,12 @@ class PanelLayout(unittest.TestCase):
         self.assertNotIn("nowplaying", prefs.panels(self.SURFACE))
         # Hiding must not drop it from the editor's list.
         self.assertIn("nowplaying", prefs.panel_order(self.SURFACE))
+        # Counted off the shipped order rather than hardcoded: Home has
+        # gained and lost cards twice now, and each time this test failed
+        # for a reason that had nothing to do with reordering.
+        was = self.panels.panel_keys(self.SURFACE).index("wat2do")
         prefs.move_panel(self.SURFACE, "wat2do", -3)
-        self.assertEqual(prefs.panel_order(self.SURFACE)[2], "wat2do")
+        self.assertEqual(prefs.panel_order(self.SURFACE)[was - 3], "wat2do")
 
     def test_reset_puts_everything_back(self):
         prefs.set_panel_width(self.SURFACE, "machines", "third")
@@ -497,11 +501,20 @@ class PanelLayoutReachesTheScreen(unittest.TestCase):
             prefs.reset_panels(s)
 
     def _spans(self, control):
+        """The column spans of the *panel* row, and nothing nested inside it.
+
+        `layout()` returns one outer ResponsiveRow whose children are the
+        panels. A card is free to use a ResponsiveRow of its own inside
+        itself - Home's stat strip and quick links both do - and those are
+        not panels, so the walk stops at the first one it finds rather than
+        mixing their spans in with the layout's.
+        """
         out = []
 
         def walk(c):
             if type(c).__name__ == "ResponsiveRow":
                 out.extend(getattr(x, "col", {}).get("md") for x in c.controls)
+                return
             for k in ("controls", "content"):
                 v = getattr(c, k, None)
                 if isinstance(v, list):
@@ -531,14 +544,20 @@ class PanelLayoutReachesTheScreen(unittest.TestCase):
 
         return home.build(Stub())
 
-    def test_default_is_six_full_width_cards(self):
-        self.assertEqual(self._spans(self._home()), [12] * 6)
+    def test_default_is_every_home_card_at_full_width(self):
+        from flet_app import panels
+        self.assertEqual(self._spans(self._home()),
+                         [12] * len(panels.panel_keys("home")))
 
     def test_half_width_and_hidden_show_up_in_the_render(self):
+        from flet_app import panels
+        keys = panels.panel_keys("home")
         prefs.set_panel_width("home", "machines", "half")
         prefs.set_panel_width("home", "actions", "half")
         prefs.set_panel_hidden("home", "nowplaying", True)
-        self.assertEqual(self._spans(self._home()), [12, 12, 6, 6, 12])
+        want = [6 if k in ("machines", "actions") else 12
+                for k in keys if k != "nowplaying"]
+        self.assertEqual(self._spans(self._home()), want)
 
     def test_hiding_everything_says_so_instead_of_rendering_a_void(self):
         from flet_app import panels

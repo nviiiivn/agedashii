@@ -478,6 +478,21 @@ async def main(page):
     # Parked on S for the same reason S.prefs is: it must stay referenced.
     S.rerender = lambda: render(current[0])
 
+    # Home's quick actions need to *go* somewhere - Docker, Qbit, Wat2Do,
+    # Journal - and only the shell knows how. Same trick go_sub uses: set
+    # the tab indices the page will read on the way down, then render.
+    #
+    # Parked on S rather than passed in, because a page with no shell
+    # (standalone, the tests) must be able to see that there is nowhere to
+    # go and leave the tile out. A navigation tile that quietly does nothing
+    # is exactly what this replaced.
+    def goto(key, tab_path=()):
+        for tab_key, index in (tab_path or ()):
+            _TAB_INDEX[tab_key] = index
+        render(key)
+
+    S.goto = goto
+
     render("home")
 
     # Launch is itself a resume: whatever the last session queued has been

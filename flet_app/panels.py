@@ -33,13 +33,19 @@ DEFAULT_WIDTH = "full"
 # surface key -> [(panel key, label), ...] in shipped order.
 SURFACES = {
     "home": [
-        ("greeting", "Greeting & date"), ("weather", "Weather"),
-        ("nowplaying", "Now playing"), ("machines", "Machines"),
+        ("greeting", "Greeting & date"), ("stats", "Stat strip"),
+        ("weather", "Weather"), ("nowplaying", "Now playing"),
+        ("machines", "Machine status"), ("links", "Quick links"),
         ("actions", "Quick actions"), ("wat2do", "Wat2Do progress"),
     ],
     "weather": [
-        ("header", "Location picker"), ("hero", "Current conditions"),
-        ("forecast", "3-day forecast"), ("regional", "All spots"),
+        ("header", "Location picker & rain"), ("map", "Bay Area map"),
+        ("hero", "Current conditions"), ("forecast", "3-day forecast"),
+        ("regional", "All spots"),
+    ],
+    "weather.explore": [
+        ("search", "Place search"), ("cats", "POI categories"),
+        ("map", "Map"), ("point", "Tapped point"), ("results", "Nearby POIs"),
     ],
     "wat2do": [
         ("date", "Date navigation"), ("checklist", "Checklist"),
@@ -101,7 +107,8 @@ SURFACES = {
 }
 
 SURFACE_LABELS = {
-    "home": "Home", "weather": "Weather", "wat2do": "Wat2Do",
+    "home": "Home", "weather": "Weather - Bay Area",
+    "weather.explore": "Weather - Explore", "wat2do": "Wat2Do",
     "foodzen.grocery": "FoodZen - Grocery", "foodzen.meals": "FoodZen - Meals",
     "foodzen.expenses": "FoodZen - Expenses",
     "trips.selekt": "Trips - Selekt", "trips.produce": "Trips - Produce",

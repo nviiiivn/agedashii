@@ -23,6 +23,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flet_app import api  # noqa: E402
+from flet_app.pages import home  # noqa: E402
 
 
 # --------------------------------------------------------------------- feeds
@@ -403,6 +404,265 @@ class LocalDates(unittest.TestCase):
         """The whole point. After ~4pm Pacific, gmtime is already tomorrow."""
         local = api.local_today()
         self.assertEqual(local, time.strftime("%Y-%m-%d", time.localtime()))
+
+
+# ----------------------------------------------------------------- home card
+class RideCall(unittest.TestCase):
+    """Home's ride verdict used to be the string "Ride weather good".
+
+    It said that in a downpour, because it was a literal. These are the same
+    thresholds Wat2Do and the website's w2d callout use.
+    """
+
+    def test_rain_is_an_indoor_day(self):
+        for code in (51, 61, 65, 82, 95):
+            with self.subTest(code=code):
+                text, tone = home.ride_call({"weather_code": code,
+                                             "wind_speed_10m": 2})
+                self.assertEqual(tone, "bad")
+                self.assertIn("Wet", text)
+
+    def test_over_twenty_mph_is_a_bundled_ride(self):
+        text, tone = home.ride_call({"weather_code": 1, "wind_speed_10m": 24})
+        self.assertEqual(tone, "meh")
+        self.assertIn("Windy", text)
+
+    def test_clear_and_calm_is_a_good_day(self):
+        _text, tone = home.ride_call({"weather_code": 1, "wind_speed_10m": 5})
+        self.assertEqual(tone, "good")
+
+    def test_no_reading_says_so_rather_than_guessing_good(self):
+        text, tone = home.ride_call(None)
+        self.assertEqual(tone, "unknown")
+        self.assertIn("No weather", text)
+
+    def test_a_junk_reading_does_not_take_the_card_down(self):
+        _text, tone = home.ride_call({"weather_code": "eh", "wind_speed_10m": None})
+        self.assertEqual(tone, "good")
+
+
+class HomeRenders(unittest.TestCase):
+    """What actually reaches the screen, walked out of the control tree."""
+
+    class Stub:
+        def __init__(self):
+            self.controls = []
+            self.services = []
+            self.overlay = []
+            self.drawer = None
+            self.theme = None
+            self.theme_mode = None
+
+        def update(self, *a, **k):
+            pass
+
+        def add(self, *c):
+            self.controls.extend(c)
+
+        def run_task(self, *a, **k):
+            pass
+
+    DASH = {"blavksaba": {"display": "Tower", "color": "#58a6ff", "widgets": {
+        "system": {"cpu_percent": 40, "memory_percent": 26, "disk_percent": 89},
+        "services": {"services": [{"active": True}]}}}}
+
+    def _texts(self, control, out=None, depth=0):
+        out = [] if out is None else out
+        if depth > 60:
+            return out
+        for attr in ("value", "content", "text", "label"):
+            v = getattr(control, attr, None)
+            if isinstance(v, str) and v.strip():
+                out.append(v.strip())
+        for attr in ("controls", "content"):
+            v = getattr(control, attr, None)
+            if isinstance(v, list):
+                for y in v:
+                    if hasattr(y, "__dict__"):
+                        self._texts(y, out, depth + 1)
+            elif v is not None and hasattr(v, "__dict__"):
+                self._texts(v, out, depth + 1)
+        return out
+
+    def _urls(self, control, out=None, depth=0):
+        out = [] if out is None else out
+        if depth > 60:
+            return out
+        if isinstance(getattr(control, "url", None), str):
+            out.append(control.url)
+        for attr in ("controls", "content"):
+            v = getattr(control, attr, None)
+            if isinstance(v, list):
+                for y in v:
+                    if hasattr(y, "__dict__"):
+                        self._urls(y, out, depth + 1)
+            elif v is not None and hasattr(v, "__dict__"):
+                self._urls(v, out, depth + 1)
+        return out
+
+    def _dead_tiles(self, control, out=None, depth=0):
+        """Containers that carry ink but no handler and no url.
+
+        Four of these shipped on Home for the life of the page - Wake, Ride,
+        Wat2Do, List - styled as buttons and wired to nothing.
+        """
+        out = [] if out is None else out
+        if depth > 60:
+            return out
+        if (getattr(control, "ink", None)
+                and not getattr(control, "on_click", None)
+                and not getattr(control, "url", None)):
+            out.append(" / ".join(self._texts(control))[:60])
+        for attr in ("controls", "content"):
+            v = getattr(control, attr, None)
+            if isinstance(v, list):
+                for y in v:
+                    if hasattr(y, "__dict__"):
+                        self._dead_tiles(y, out, depth + 1)
+            elif v is not None and hasattr(v, "__dict__"):
+                self._dead_tiles(v, out, depth + 1)
+        return out
+
+    def _build(self, dash=None, weather=None, containers=34):
+        from flet_app import prefs
+        prefs._V = prefs._defaults()
+        with mock.patch.object(api, "dashboard", return_value=dash), \
+             mock.patch.object(api, "docker_running", return_value=containers), \
+             mock.patch.object(api, "_get", return_value=weather), \
+             mock.patch.object(api, "STATUS_LIVE", return_value=True):
+            return home.build(self.Stub())
+
+    WEATHER = {"current": {"temperature_2m": 63.9, "apparent_temperature": 63.7,
+                           "weather_code": 1, "wind_speed_10m": 5.8,
+                           "relative_humidity_2m": 78},
+               "daily": {"time": ["2026-09-21", "2026-09-22", "2026-09-23"],
+                         "temperature_2m_max": [63, 62, 79],
+                         "temperature_2m_min": [56, 57, 57],
+                         "weather_code": [3, 45, 3]}}
+
+    def test_no_control_looks_tappable_without_being_tappable(self):
+        got = self._build(self.DASH, self.WEATHER)
+        self.assertEqual(self._dead_tiles(got), [])
+
+    def test_the_stat_strip_carries_the_four_website_tiles(self):
+        said = self._texts(self._build(self.DASH, self.WEATHER))
+        for label in ("Machines online", "Containers running", "Services up",
+                      "Oakland temp"):
+            self.assertIn(label, said)
+
+    def test_docker_unknown_shows_a_dash_and_says_why(self):
+        said = self._texts(self._build(self.DASH, self.WEATHER, containers=None))
+        self.assertIn("docker did not answer", said)
+
+    def test_no_dashboard_shows_dashes_rather_than_zeroes(self):
+        said = self._texts(self._build(None, self.WEATHER))
+        self.assertIn("no reply from the server", said)
+        self.assertNotIn("of 5 total", said)
+
+    def test_all_eight_quick_links_are_real_urls(self):
+        urls = self._urls(self._build(self.DASH, self.WEATHER))
+        for _label, _note, url, _icon in home.QUICK_LINKS:
+            self.assertIn(url, urls)
+
+    def test_the_forecast_row_shows_three_days(self):
+        said = self._texts(self._build(self.DASH, self.WEATHER))
+        self.assertIn("63° / 56°", said)
+        self.assertIn("62° / 57°", said)
+        self.assertIn("79° / 57°", said)
+
+    def test_nothing_claims_a_rain_chance(self):
+        """/api/weather sends no hourly block, so nothing may quote one.
+        The old card printed "0% rain" off an empty list, every day."""
+        said = " ".join(self._texts(self._build(self.DASH, self.WEATHER)))
+        self.assertNotIn("% rain", said)
+        self.assertIn("Humidity 78%", said)
+
+    def test_the_ride_verdict_is_computed_not_asserted(self):
+        wet = dict(self.WEATHER)
+        wet["current"] = dict(self.WEATHER["current"], weather_code=65)
+        said = " ".join(self._texts(self._build(self.DASH, wet)))
+        self.assertNotIn("Ride weather good", said)
+        self.assertIn("Wet - indoor day", said)
+
+    def test_a_machine_that_is_down_shows_no_numbers(self):
+        dash = dict(self.DASH)
+        dash["sp3"] = {"display": "SP3", "color": "#f85149",
+                       "widgets": {"system": {"error": "unreachable"}}}
+        said = self._texts(self._build(dash, self.WEATHER))
+        self.assertIn("unreachable", said)
+        self.assertIn("1/2 up", said)
+
+    def test_navigation_tiles_are_absent_when_there_is_no_shell_to_navigate(self):
+        """Better no tile than a tile that does nothing. S.goto is set by
+        main(); a standalone build has none."""
+        from flet_app.ui import S
+        had = getattr(S, "goto", None)
+        if had is not None:
+            del S.goto
+        try:
+            said = self._texts(self._build(self.DASH, self.WEATHER))
+            self.assertNotIn("Docker", said)
+            self.assertIn("Refresh all", said)
+        finally:
+            if had is not None:
+                S.goto = had
+
+    def test_navigation_tiles_appear_and_land_on_the_right_tab(self):
+        from flet_app.ui import S
+        jumped = []
+        had = getattr(S, "goto", None)
+        S.goto = lambda key, path=(): jumped.append((key, tuple(path)))
+        try:
+            built = self._build(self.DASH, self.WEATHER)
+            self._fire(built, {"Docker", "Qbit", "Wat2Do", "Journal"})
+        finally:
+            if had is None:
+                del S.goto
+            else:
+                S.goto = had
+        self.assertIn(("lab", (("lab", 4),)), jumped)       # Docker
+        self.assertIn(("lab", (("lab", 3),)), jumped)       # Qbit
+        self.assertIn(("tools", (("tools", 2),)), jumped)   # Journal
+        self.assertIn(("wat2do", ()), jumped)
+
+    def _fire(self, c, labels, depth=0):
+        if depth > 60:
+            return
+        handler = getattr(c, "on_click", None)
+        if handler:
+            said = {t for t in self._texts(c)}
+            if said & labels and len(said) <= 2:
+                handler(mock.Mock(control=c))
+        for attr in ("controls", "content"):
+            v = getattr(c, attr, None)
+            if isinstance(v, list):
+                for y in v:
+                    if hasattr(y, "__dict__"):
+                        self._fire(y, labels, depth + 1)
+            elif v is not None and hasattr(v, "__dict__"):
+                self._fire(v, labels, depth + 1)
+
+
+class PowerIsNeverQueued(unittest.TestCase):
+    """A reboot delivered three hours late is a reboot nobody asked for."""
+
+    def test_an_unknown_action_is_refused_before_any_request(self):
+        with mock.patch.object(api, "_live_post") as post:
+            ok, msg = api.power("sp3", "explode")
+        self.assertFalse(ok)
+        post.assert_not_called()
+        self.assertIn("explode", msg)
+
+    def test_the_servers_own_words_come_back_rather_than_a_tick(self):
+        """/api/power answers {"ok": true} even when the SSH call reported a
+        failure, so summarising it into "saved" would be a lie."""
+        with mock.patch.object(
+                api, "_live_post",
+                return_value=({"ok": True, "output": "WoL tools not installed"},
+                              None)):
+            ok, msg = api.power("sp3", "wake")
+        self.assertTrue(ok)
+        self.assertEqual(msg, "WoL tools not installed")
 
 
 if __name__ == "__main__":
