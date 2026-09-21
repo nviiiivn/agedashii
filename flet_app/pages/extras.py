@@ -2,12 +2,23 @@ import flet as ft
 from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
 from .. import api as M
 from .lab import _tabs
+from . import future
 
 def build(page):
     # XNAV moved to Trips, where the rest of the ride pipeline lives; the
     # copy here was a mock that could never record anything.
+    #
+    # Future Finds lives here rather than as a fourth tab on Wat2Do, where
+    # the website keeps it, for one reason: a new top-level page has to be
+    # declared in prefs.PAGE_KEYS or the layout editor cannot show it, and a
+    # tab inside Wat2Do would sit under that page's own date/checklist state.
+    # Extras is where the app already puts the things that are their own
+    # thing. `key` makes the tab bar remember which one you were on across
+    # the repaint every write triggers - without it, saving a gem bounced
+    # you back to Projects.
     return _tabs(page, [("Projects", _projects()), ("AI", _ai(page)),
-                        ("Obligations", _obl())])
+                        ("Future", future.build(page)),
+                        ("Obligations", _obl())], key="extras")
 
 def _projects():
     p = PAL()

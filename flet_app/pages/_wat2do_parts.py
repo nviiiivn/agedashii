@@ -10,9 +10,12 @@ Two details are worth knowing before changing anything:
   which meant a box ticked on the phone stayed unticked in the browser and vice
   versa. The website's scheme wins because the server's JSON files were written
   by it.
-* **Nothing here is optimistic.** ``save_state`` returns the state the server
-  now holds (``/api/wat2do/save`` answers with the whole record), so the page
-  can repaint from the server's answer rather than from what it hoped happened.
+* **Nothing here is invented.** ``save_state`` returns the record the device
+  now holds, read back out of ``flet_app.store`` after the write: the
+  server's own answer once the write has landed, and this device's copy with
+  the change already applied while it is still queued. Either way the page
+  repaints from something real, never from what it hoped happened. Whether
+  the server has seen it yet is the sync chip's job to say, not this one's.
 
 Network helpers return ``None`` on failure rather than raising, matching
 ``flet_app.api``; they also go through ``api._get``/``config._opener`` so the
@@ -526,21 +529,42 @@ def state(date, fresh=False):
 
 
 def save_state(date, checks, pain, spoons):
-    """Write a day. Returns (ok, message, server_state).
+    """Write a day. Returns (ok, message, record).
 
-    The server answers with the record it now holds, so the caller repaints
-    from that rather than from the values it sent.
+    Goes through ``api.wat2do_save``, which is to say through the outbox:
+    the write is queued and applied to this device's copy in one transaction
+    and only *then* attempted on the wire. That is the difference between a
+    box ticked in a tunnel being kept and being lost - the old code here
+    posted straight out with ``M._post`` and threw the edit away when the
+    post failed, alone among every editable page in the app.
+
+    ``api.wat2do_save`` answers (ok, message) rather than the server's record,
+    so the record the caller repaints from is read back out of the store. It
+    is the server's own answer once the write lands, and this device's copy
+    with the tick already applied while it has not - which is exactly what
+    should be on screen in each case, and never a value we merely hoped for.
     """
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", date or ""):
         return False, "bad date", None
-    payload = {"date": date, "checks": checks or {}, "pain": pain, "spoons": spoons}
-    r = M._post("/api/wat2do/save", payload, timeout=10)
-    if r is None:
-        return False, config.STATUS.get("detail") or "server unreachable", None
-    if r.get("error"):
-        return False, str(r["error"]), None
-    _fresh(f"/api/wat2do/state?date={urllib.parse.quote(date)}")
-    return True, "saved", r
+    path = f"/api/wat2do/state?date={urllib.parse.quote(date)}"
+    before = M._cached(path) or {}
+    ok, msg = M.wat2do_save({
+        "date": date, "pain": pain, "spoons": spoons,
+        # api.wat2do_save rebuilds the checks dict from `_key`/`done`, so hand
+        # it the website's keys straight through rather than re-deriving them.
+        "items": [{"t": k, "_key": k, "done": bool(v)}
+                  for k, v in (checks or {}).items()],
+    })
+    if not ok:
+        return False, msg, None
+    record = state(date)
+    if record is None:
+        # No local database at all (api fell back to sending inline). Nothing
+        # to read back, so reconstruct the day from what we know rather than
+        # report a save that worked as a failure.
+        record = {**before, "date": date, "pain": pain, "spoons": spoons,
+                  "checks": {**(before.get("checks") or {}), **(checks or {})}}
+    return True, msg, record
 
 
 def template(fresh=False):

@@ -78,14 +78,20 @@ jobs:
           echo 'after cleanup:'; df -h / | tail -1
           echo 'repo assets:'; du -sh assets/maps 2>/dev/null || echo '  none'
 
+      # --exclude keeps the build output and the git history OUT of the
+      # bundle. Inspecting the 402 MB AppImage found the whole .git
+      # directory inside it (48 MB and 28 MB pack objects) plus a
+      # complete 295 MB copy of the APK under dist/. Shipping .git
+      # inside a distributed application hands over the entire
+      # history of a private repo.
       - name: Build Android APK
-        run: flet build apk --yes -o dist/apk
+        run: flet build apk --yes -o dist/apk --exclude .git dist build .venv
 
       - name: Disk after APK
         run: df -h / | tail -1
 
       - name: Build Linux x64
-        run: flet build linux --yes -o dist/linux
+        run: flet build linux --yes -o dist/linux --exclude .git dist build .venv
 
       - name: Disk after Linux
         run: df -h / | tail -1
@@ -102,7 +108,7 @@ jobs:
       # artifacts that matter on a phone or a laptop.
       - name: Build web (PWA)
         continue-on-error: true
-        run: flet build web --yes -o dist/web --exclude assets/maps
+        run: flet build web --yes -o dist/web --exclude assets/maps .git dist build .venv
 
       # flet build linux emits a folder (binary + lib/ + data/ + site-packages),
       # not a single runnable file. AppImage wraps that folder into one
@@ -203,7 +209,7 @@ jobs:
         run: pip install "flet==${FLET_VERSION}" "flet-cli==${FLET_VERSION}"
 
       - name: Build macOS app
-        run: flet build macos --yes -o dist/macos
+        run: flet build macos --yes -o dist/macos --exclude .git dist build .venv
 
       # Unsigned iOS build for sideloading. With no provisioning profile
       # configured, flet passes --no-codesign through to flutter
@@ -211,7 +217,7 @@ jobs:
       # Sideloadly want: they re-sign with a free Apple ID on the way in. No
       # paid Developer Program account involved.
       - name: Build iOS (unsigned, for sideloading)
-        run: flet build ipa --yes -o dist/ipa
+        run: flet build ipa --yes -o dist/ipa --exclude .git dist build .venv
 
       # flutter build ipa --no-codesign often stops at the .app/.xcarchive and
       # never emits a .ipa, because packaging is normally the signing step's

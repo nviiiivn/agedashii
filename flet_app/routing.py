@@ -9,13 +9,35 @@ but `math`, `struct`, `heapq` and `array`.
 WHERE THE GRAPH COMES FROM
     A `.rg` file is built off-device (`build_graph.py`, on the Pi) out of an
     OSM extract: nodes, a CSR adjacency, per-class lengths, segment
-    geometry, street names and a uniform snapping grid, all in one blob that
-    loads by `array.fromfile` rather than being parsed. The Bay Area is
-    78 MB / 725k nodes and loads in ~55 ms; a 40 km route takes ~150 ms.
+    geometry, street names, two uniform snapping grids and a turn-restriction
+    trie, all in one blob that loads by `array.fromfile` rather than being
+    parsed. The Bay Area is 87 MB / 725k nodes and loads in ~66 ms; a 40 km
+    route takes ~190 ms.
 
     Nothing here builds a graph. If there is no `.rg` installed that is a
     normal state, not an error - `route()` falls back to the server's
     Valhalla and *says* that is what it did.
+
+    Two format versions exist and both load. RGRAPH01 has only the node
+    grid and no turn restrictions; RGRAPH02 adds the segment grid that makes
+    `snap_edge` possible and the trie that makes banned turns unroutable. On
+    an RGRAPH01 file the router still works - it just snaps to junctions and
+    does not know about turn restrictions, which is what it did before.
+
+WHERE A ROUTE STARTS
+    Not at the nearest junction. `snap_edge` projects the fix onto the
+    nearest *edge* and the route begins at that point on that road, with a
+    part-edge leg stitched on either end. That is not a cosmetic difference:
+    re-routing after a missed turn happens mid-block by definition, and a
+    junction snap can put the first "head <compass>" instruction 180 degrees
+    out and the first turn on the wrong side of the rider.
+
+TURN RESTRICTIONS
+    `type=restriction` relations become sequences of directed edges that are
+    illegal to traverse in order, packed as a trie. The search state is
+    therefore a node id *or* a trie state - one integer either way - so
+    honouring restrictions costs one array lookup per expansion at nodes
+    that have none, which is nearly all of them.
 
 THE TWO HONESTY RULES
     1. `Route.source` is "offline" or "server" and is set by the code path
@@ -34,9 +56,9 @@ THREADING
     searches, so callers run it off the UI thread - `route_async()` is the
     awaitable wrapper that does that for you.
 
-    `Graph.astar_fast` reuses per-graph scratch buffers (that is what makes
+    `Graph.search` reuses per-graph scratch buffers (that is what makes
     it fast), so two searches on one Graph would corrupt each other. Every
-    search therefore takes `_SEARCH_LOCK`. Routes are ~150 ms and the user
+    search therefore takes `_SEARCH_LOCK`. Routes are ~190 ms and the user
     asks for one at a time; serialising them is free and the alternative is
     a wrong route.
 
@@ -243,18 +265,32 @@ class Graph:
     __slots__ = ("n", "e", "s", "p", "xy", "off", "to", "len", "cls", "seg",
                  "seg_off", "seg_name", "geom", "str_off", "blob",
                  "grid_off", "grid_nod", "gw", "gh", "minx", "miny", "cell",
-                 "olat", "olon", "mx", "my", "path",
-                 "_dist", "_par", "_stamp", "_gen")
+                 "olat", "olon", "mx", "my", "path", "version",
+                 "sgrid_off", "sgrid_seg", "tr_off", "tr_edge", "tr_next",
+                 "tr_head", "tr_gate", "ntrie", "ns", "_root",
+                 "_dist", "_par", "_prev", "_stamp", "_tgt", "_gen")
 
     MAGIC = b"RGRAPH01"
+    MAGIC2 = b"RGRAPH02"
+    #: tr_next sentinel: taking this edge from this trie state is illegal.
+    BANNED = 0xFFFFFFFF
 
     def __init__(self, path):
         self.path = str(path)
         with open(path, "rb") as f:
-            if f.read(8) != self.MAGIC:
-                raise ValueError("not an RGRAPH01 graph file")
+            magic = f.read(8)
+            if magic == self.MAGIC2:
+                self.version = 2
+            elif magic == self.MAGIC:
+                self.version = 1
+            else:
+                raise ValueError("not an RGRAPH01 or RGRAPH02 graph file")
             n, e, s, p, nblob = struct.unpack("<5I", f.read(20))
             nstr, gw, gh = struct.unpack("<3I", f.read(12))
+            if self.version >= 2:
+                ntrie, ntrans, nsgrid = struct.unpack("<3I", f.read(12))
+            else:
+                ntrie = ntrans = nsgrid = 0
             (self.olat, self.olon, self.mx, self.my,
              self.minx, self.miny, self.cell) = struct.unpack("<7d", f.read(56))
             self.n, self.e, self.s, self.p = n, e, s, p
@@ -277,7 +313,28 @@ class Graph:
             self.str_off = rd("I", nstr + 1)
             self.grid_off = rd("I", gw * gh + 1)
             self.grid_nod = rd("I", n)
+            if self.version >= 2:
+                self.sgrid_off = rd("I", gw * gh + 1)
+                self.sgrid_seg = rd("I", nsgrid)
+                self.tr_off = rd("I", ntrie + 1)
+                self.tr_edge = rd("I", ntrans)
+                self.tr_next = rd("I", ntrans)
+                self.tr_head = rd("I", ntrie)
+                self.tr_gate = f.read(n)
+                if len(self.tr_gate) != n:
+                    raise ValueError("graph file is truncated")
+            else:
+                self.sgrid_off = self.sgrid_seg = None
+                self.tr_off = self.tr_edge = self.tr_next = None
+                self.tr_head = None
+                self.tr_gate = bytes(n)
             self.blob = f.read(nblob)
+        self.ntrie = ntrie
+        # Search states: [0, n) is "at this node, no restriction in play";
+        # [n, n+ntrie-1) is trie state t >= 1, which pins down both the node
+        # and the part-matched restriction. One integer, either way.
+        self.ns = n + (ntrie - 1 if ntrie else 0)
+        self._root = None
 
     # ---------------------------------------------------------- helpers
     def name(self, sid):
@@ -287,6 +344,32 @@ class Graph:
 
     def proj(self, lat, lon):
         return (lon - self.olon) * self.mx, (lat - self.olat) * self.my
+
+    def root_map(self):
+        """{directed edge -> trie state} for the edges that open a restriction.
+
+        Built once, on the first search rather than at load, because most
+        app launches open the map and never ask for a route, and a dict of
+        twenty thousand entries is real milliseconds.
+        """
+        r = self._root
+        if r is None:
+            r = {}
+            if self.ntrie:
+                tr_edge, tr_next = self.tr_edge, self.tr_next
+                for c in range(self.tr_off[0], self.tr_off[1]):
+                    r[tr_edge[c]] = tr_next[c]
+            self._root = r
+        return r
+
+    def entry_state(self, k):
+        """The search state you are in having just traversed directed edge k."""
+        nxt = self.root_map().get(k)
+        return self.to[k] if nxt is None else self.n + nxt - 1
+
+    def state_node(self, state):
+        """The graph node a search state sits on."""
+        return state if state < self.n else self.tr_head[state - self.n + 1]
 
     def snap(self, lat, lon):
         """Nearest graph node to a lat/lon, via the stored uniform grid.
