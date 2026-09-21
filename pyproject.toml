@@ -1,0 +1,34 @@
+# What the built app calls itself, on every platform.
+#
+# Without this file `flet build` invents all of it from the directory name:
+# the last build derived "dashbored-flet" from a directory that has since
+# been renamed twice, and would now derive "nvii-dash" and the bundle id
+# "com.flet.nvii-dash". That made the product name a side effect of what the
+# checkout happened to be called, which is how the old name survived a
+# rename of everything else. It is written down here instead.
+#
+# Deliberately NO [project.dependencies] and no [tool.poetry.dependencies]:
+# flet uses the TOML dependency list when it is non-empty and falls back to
+# requirements.txt otherwise (flet_cli/commands/build_base.py). requirements.txt
+# is the list that is kept current - and the one that deliberately omits
+# flet-cli so it is not bundled into the app - so this file must not start
+# a competing one.
+
+[project]
+name = "agedashii"
+version = "1.0.0"
+description = "Companion app for dashbored - nvii's homelab dashboard"
+requires-python = ">=3.12"
+
+[tool.flet]
+# Display name: window title, .desktop entry, macOS product, app launcher.
+product = "agedashii"
+org = "online.iamprettyfamous"
+# Pinned rather than left to be composed from org + project name, so the
+# identity the OS installs under can never drift with a directory rename.
+# This is the Android applicationId and the iOS/macOS bundle identifier, and
+# it matches the user_agent_package_name the map and geolocation plugins
+# report to OSM services.
+bundle_id = "online.iamprettyfamous.agedashii"
+company = "nvii"
+copyright = "Copyright (c) 2026 nvii"

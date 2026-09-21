@@ -158,7 +158,7 @@ class ApiOfflineCase(unittest.TestCase):
         for t in threading.enumerate():
             if t is threading.current_thread():
                 continue
-            if t.name.startswith(("store-refresh", "nvii-probe")):
+            if t.name.startswith(("store-refresh", "agedashii-probe")):
                 t.join(timeout)
 
     # -- helpers -------------------------------------------------------------

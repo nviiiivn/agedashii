@@ -151,7 +151,7 @@ def build(page):
         initial_zoom=14, min_zoom=3, max_zoom=18,
         bgcolor=p["bg2"],
         layers=[fmap.TileLayer(url_template=url_template,
-                               user_agent_package_name="online.iamprettyfamous.nviidash"),
+                               user_agent_package_name="online.iamprettyfamous.agedashii"),
                 route_layer, line_layer, nav_marker_layer, poi_layer,
                 marker_layer])
 

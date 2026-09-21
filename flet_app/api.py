@@ -1,4 +1,4 @@
-"""NVII-DASH API client — offline-first, backed by flet_app.store.
+"""agedashii API client — offline-first, backed by flet_app.store.
 
 Pages do `from .. import api as M`. Unknown attribute lookups fetch real data
 from the dashbored server and reshape it to mock.py structures; on connection
@@ -503,7 +503,7 @@ def _wake():
             with _store_lock:
                 _probing = False
 
-    threading.Thread(target=run, name="nvii-probe", daemon=True).start()
+    threading.Thread(target=run, name="agedashii-probe", daemon=True).start()
 
 
 # ---------------------------------------------------------------- write path
@@ -1551,12 +1551,17 @@ def mbtiles_path():
     import os
     from pathlib import Path
     candidates = []
-    override = os.environ.get("NVII_MBTILES")
+    # AGEDASHII_MBTILES is the current name; NVII_MBTILES was its name before
+    # the product was renamed and is still honoured, so a shell profile that
+    # sets the old one does not silently stop being read. Same for the
+    # dotdir, where a pre-rename install put its downloaded archive.
+    override = os.environ.get("AGEDASHII_MBTILES") or os.environ.get("NVII_MBTILES")
     if override:
         candidates.append(Path(override))
     here = Path(__file__).resolve().parent.parent
     candidates += [here / "assets" / "maps" / "bayarea.mbtiles",
                    here / "maps" / "bayarea.mbtiles",
+                   Path.home() / ".agedashii" / "bayarea.mbtiles",
                    Path.home() / ".nvii-dash" / "bayarea.mbtiles"]
     for c in candidates:
         try:
@@ -1578,7 +1583,7 @@ def _gpx(name, points):
     import time as _t
     head = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<gpx version="1.1" creator="NVII-DASH" xmlns="http://www.topografix.com/GPX/1/1">\n'
+        '<gpx version="1.1" creator="agedashii" xmlns="http://www.topografix.com/GPX/1/1">\n'
         f"  <metadata><name>{_h.escape(name)}</name></metadata>\n"
         f"  <trk><name>{_h.escape(name)}</name><trkseg>\n")
     rows = []
@@ -2313,7 +2318,7 @@ AI_PROVIDERS = (("ollama", "Ollama (LAN)"), ("openrouter", "OpenRouter (free)"),
 
 # The website sends this with every message; without it the model has no idea
 # what machines it is being asked about.
-AI_SYSTEM = ("You are NVII, a helpful AI assistant with context about this "
+AI_SYSTEM = ("You are agedashii, a helpful AI assistant with context about this "
              "homelab. The lab includes: Tower (blavksaba), Pi 5 (ai-tp), Yoga "
              "workstation (void), Media Pi (lil-faegola), SP3 downloads box. "
              "Be concise and helpful.")

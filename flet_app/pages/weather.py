@@ -467,7 +467,7 @@ def _rain_layer():
     return fmap.TileLayer(
         url_template=frame["url"], opacity=RAIN_OPACITY, tile_size=256,
         max_native_zoom=RAIN_MAX_NATIVE_ZOOM, max_zoom=18,
-        user_agent_package_name="online.iamprettyfamous.nviidash")
+        user_agent_package_name="online.iamprettyfamous.agedashii")
 
 
 def _stack(base, overlays):
@@ -703,7 +703,7 @@ def _bay_map(page, spots, on_pick, restack_holder):
     offline = local_url is not None
     base = fmap.TileLayer(
         url_template=local_url or "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        user_agent_package_name="online.iamprettyfamous.nviidash")
+        user_agent_package_name="online.iamprettyfamous.agedashii")
     pins = fmap.MarkerLayer(markers=[_station_pin(p, s, on_pick) for s in stations])
 
     the_map = fmap.Map(
@@ -758,7 +758,7 @@ def _open_full_map(page, spots):
     base = fmap.TileLayer(
         url_template=(tileserver.start(M.mbtiles_path())
                       or "https://tile.openstreetmap.org/{z}/{x}/{y}.png"),
-        user_agent_package_name="online.iamprettyfamous.nviidash")
+        user_agent_package_name="online.iamprettyfamous.agedashii")
     pins = fmap.MarkerLayer(
         markers=[_station_pin(p, s, None, big=True) for s in stations])
     the_map = fmap.Map(
@@ -1242,7 +1242,7 @@ def _explore_tab(page):
     point_layer = fmap.MarkerLayer(markers=[])
     base_layer = fmap.TileLayer(
         url_template=url_template,
-        user_agent_package_name="online.iamprettyfamous.nviidash")
+        user_agent_package_name="online.iamprettyfamous.agedashii")
 
     the_map = fmap.Map(
         expand=True,

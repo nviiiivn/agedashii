@@ -260,9 +260,19 @@ def default_db_path() -> Path:
     something the OS may purge (unlike FLET_APP_STORAGE_CACHE, which would be
     exactly the wrong home for an outbox). Outside Flet — a test run, a REPL —
     it is unset, so fall back to a dotdir rather than scribbling in CWD.
+
+    The dotdir is named after the product, which was renamed from NVII-DASH.
+    A copy installed before the rename keeps its whole cache and, more to the
+    point, its unsent outbox in the old directory - so an existing database
+    there wins over starting an empty one beside it.
     """
     base = os.getenv("FLET_APP_STORAGE_DATA")
-    return (Path(base) if base else Path.home() / ".nvii-dash") / "store.sqlite3"
+    if base:
+        return Path(base) / "store.sqlite3"
+    legacy = Path.home() / ".nvii-dash" / "store.sqlite3"
+    if legacy.is_file():
+        return legacy
+    return Path.home() / ".agedashii" / "store.sqlite3"
 
 
 def canonical(data: Any) -> str:

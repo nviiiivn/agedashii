@@ -103,7 +103,7 @@ jobs:
       - name: Package Linux build as an AppImage
         run: |
           set -eu
-          APP=NVII-DASH
+          APP=agedashii
           # The launcher is the one ELF executable at the top of the build.
           BIN="$(find dist/linux -maxdepth 1 -type f -executable \
                  -exec sh -c 'file -b "$1" | grep -q ELF' _ {} \; -print | head -1)"
@@ -160,19 +160,19 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nvii-dash-android-apk
+          name: agedashii-android-apk
           path: dist/apk/**/*.apk
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nvii-dash-linux-x64
+          name: agedashii-linux-x64
           path: dist/linux/**
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nvii-dash-linux-appimage
+          name: agedashii-linux-appimage
           path: dist/appimage/*.AppImage
           if-no-files-found: error
 
@@ -191,7 +191,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: hashFiles('dist/web/**') != ''
         with:
-          name: nvii-dash-web-pwa
+          name: agedashii-web-pwa
           path: dist/web/**
           if-no-files-found: error
 
@@ -244,8 +244,8 @@ jobs:
           staging="$(mktemp -d)"
           mkdir -p "$staging/Payload"
           cp -R "$app" "$staging/Payload/"
-          (cd "$staging" && zip -qry nvii-dash-unsigned.ipa Payload)
-          mv "$staging/nvii-dash-unsigned.ipa" dist/ipa/
+          (cd "$staging" && zip -qry agedashii-unsigned.ipa Payload)
+          mv "$staging/agedashii-unsigned.ipa" dist/ipa/
 
       - name: List build output
         run: |
@@ -254,12 +254,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nvii-dash-macos
+          name: agedashii-macos
           path: dist/macos/**
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         with:
-          name: nvii-dash-ios-unsigned-ipa
+          name: agedashii-ios-unsigned-ipa
           path: dist/ipa/**/*.ipa
           if-no-files-found: error

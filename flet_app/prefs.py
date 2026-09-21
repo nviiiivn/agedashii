@@ -29,24 +29,44 @@ import re
 from . import config
 
 # ---------------------------------------------------------------- keys
-# All namespaced "nvii.*", alongside config.KEY_URL / KEY_CANDIDATES.
-KEY_PAGE_ORDER = "nvii.page_order"
-KEY_PAGES_HIDDEN = "nvii.pages_hidden"
-KEY_BOTTOM_PAGES = "nvii.bottom_pages"
-KEY_HOME_ORDER = "nvii.home_order"
-KEY_HOME_HIDDEN = "nvii.home_hidden"
-KEY_UNITS = "nvii.units"
-KEY_SODIUM_TARGET = "nvii.sodium_target"
-KEY_REFRESH_SECS = "nvii.refresh_secs"
+# All namespaced "agedashii.*", alongside config.KEY_URL / KEY_CANDIDATES.
+#
+# The app shipped as NVII-DASH and stored everything under "nvii.*". Renaming
+# the product renamed the namespace with it, which on its own would have read
+# to an existing install as a factory reset: nothing under the new names, so
+# every value falls back to the shipped default and the saved layout, units
+# and sodium target are gone. `load()` therefore falls back to the pre-rename
+# name whenever the new one is absent - see `legacy_key()`.
+NS = "agedashii."
+LEGACY_NS = "nvii."
+
+KEY_PAGE_ORDER = NS + "page_order"
+KEY_PAGES_HIDDEN = NS + "pages_hidden"
+KEY_BOTTOM_PAGES = NS + "bottom_pages"
+KEY_HOME_ORDER = NS + "home_order"
+KEY_HOME_HIDDEN = NS + "home_hidden"
+KEY_UNITS = NS + "units"
+KEY_SODIUM_TARGET = NS + "sodium_target"
+KEY_REFRESH_SECS = NS + "refresh_secs"
 # The bottom bar duplicates the drawer, which lists every page. Switching it
 # off gives the height back to the content; the drawer still reaches
 # everything, so nothing becomes unreachable.
-KEY_BOTTOM_ENABLED = "nvii.bottom_enabled"
+KEY_BOTTOM_ENABLED = NS + "bottom_enabled"
 # Trip-report tags she invented herself, on top of the 27 the app ships.
 # The website keeps its equivalents in localStorage, so the two lists are
 # per-device by design; what crosses over is the *label* written into a
 # trip's report, which both ends already understand.
-KEY_TRIP_TAGS = "nvii.trip_tags"
+KEY_TRIP_TAGS = NS + "trip_tags"
+
+
+def legacy_key(key):
+    """The pre-rename name of `key`, or None if it never had one.
+
+    Every stored key is "agedashii.<rest>" and was "nvii.<rest>" before the
+    product was renamed, panel keys included. Mapping by prefix rather than
+    by a hand-written table means a key added later migrates for free.
+    """
+    return LEGACY_NS + key[len(NS):] if key.startswith(NS) else None
 
 # ---------------------------------------------------------------- catalogue
 # The nine pages, in shipped order. Deliberately a copy of main.PAGES rather
@@ -293,7 +313,7 @@ def home_panels():
 # when one comes back corrupt.
 
 def _pkey(surface, part):
-    return f"nvii.panels.{surface}.{part}"
+    return f"{NS}panels.{surface}.{part}"
 
 
 def _panel_keys_for_storage():
@@ -413,7 +433,7 @@ def app_version():
     Taken from config.USER_AGENT rather than declared again here, so
     Diagnostics can only ever show the version the server actually sees.
     """
-    m = re.match(r"NVII-DASH/(\S+)", getattr(config, "USER_AGENT", "") or "")
+    m = re.match(r"agedashii/(\S+)", getattr(config, "USER_AGENT", "") or "")
     return m.group(1) if m else "unknown"
 
 
@@ -522,12 +542,30 @@ def apply_runtime():
 
 
 # ---------------------------------------------------------------- persistence
+async def _read(prefs, key):
+    """One guarded read. None for absent, unreadable, or no such key."""
+    if not key:
+        return None
+    try:
+        return await prefs.get(key)
+    except Exception:  # noqa: BLE001 - storage is optional, not required
+        return None
+
+
 async def load(prefs):
     """Fill the cache from storage. Returns True if anything was read.
 
     `prefs` is a flet SharedPreferences (or None, in tests and before the
     service is registered). Every read is individually guarded: one key that
     a platform refuses must not cost the other seven.
+
+    A key absent under its current "agedashii.*" name is looked up again
+    under the "nvii.*" name the app used before the rename, so a copy that
+    has been running since then keeps its layout. Nothing is written back
+    here; `save()` writes the new names, and the first save after an edit
+    is what actually moves a value across. The old key is left in place
+    rather than deleted - it costs a few bytes and it means a downgrade to
+    an older build still finds its settings.
     """
     global LOADED
     LOADED = True
@@ -539,10 +577,9 @@ async def load(prefs):
     # hide it, restart the app, and it was all back to the shipped order.
     keys = list(_defaults()) + _panel_keys_for_storage()
     for key in keys:
-        try:
-            value = await prefs.get(key)
-        except Exception:  # noqa: BLE001 - storage is optional, not required
-            continue
+        value = await _read(prefs, key)
+        if value is None:
+            value = await _read(prefs, legacy_key(key))
         if value is None:
             continue
         read_any = True

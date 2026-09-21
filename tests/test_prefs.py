@@ -234,6 +234,44 @@ class TestPersistence(PrefsTestCase):
     def test_save_with_no_storage_reports_failure(self):
         self.assertFalse(asyncio.run(prefs.save(None)))
 
+    def test_preferences_written_before_the_rename_are_still_read(self):
+        """The nvii.* -> agedashii.* rename must not read as a factory reset.
+
+        Her laptop has been running since the app was called NVII-DASH, so
+        everything it has stored is under the old namespace. If load() only
+        looked for the new names it would find nothing, fall back to the
+        shipped defaults, and throw away the layout, units and sodium target
+        she set - which is indistinguishable from the app losing her
+        settings, because it is the app losing her settings.
+        """
+        store = FakePrefs({
+            "nvii.units": "metric",
+            "nvii.sodium_target": 1500,
+            "nvii.refresh_secs": 300,
+            "nvii.pages_hidden": ["extras"],
+            "nvii.panels.home.hidden": ["greeting"],
+        })
+        self.assertTrue(asyncio.run(prefs.load(store)))
+        self.assertEqual(prefs.unit_system(), "metric")
+        self.assertEqual(prefs.sodium_target(), 1500)
+        self.assertEqual(prefs.refresh_seconds(), 300)
+        self.assertNotIn("extras", prefs.visible_pages())
+        self.assertNotIn("greeting", prefs.panels("home"))
+
+    def test_the_current_name_wins_when_both_are_present(self):
+        """After the first save both exist; the new one is the live value."""
+        store = FakePrefs({"nvii.units": "metric", "agedashii.units": "imperial"})
+        asyncio.run(prefs.load(store))
+        self.assertEqual(prefs.unit_system(), "imperial")
+
+    def test_saving_writes_only_the_current_names(self):
+        store = FakePrefs()
+        self.assertTrue(asyncio.run(prefs.save(store)))
+        self.assertTrue(store.store)
+        for key in store.store:
+            with self.subTest(key=key):
+                self.assertTrue(key.startswith(prefs.NS), key)
+
     def test_broken_storage_does_not_crash(self):
         broken = FakePrefs(broken=True)
         self.assertFalse(asyncio.run(prefs.load(broken)))

@@ -191,7 +191,7 @@ class TestProbe(ConfigTestCase):
         srv, base = serve(H)
         try:
             config.probe(base)
-            self.assertIn("NVII-DASH", seen.get("ua", ""))
+            self.assertIn("agedashii", seen.get("ua", ""))
             self.assertNotIn("Python-urllib", seen.get("ua", ""))
         finally:
             stop(srv)
@@ -233,6 +233,24 @@ class TestPersistence(ConfigTestCase):
                                config.KEY_CANDIDATES: ["http://127.0.0.1:1", base]})
             results = asyncio.run(config.load(prefs))
             self.assertEqual(results[0][0], base, "saved URL should be probed before others")
+            self.assertEqual(config.SERVER_URL, base)
+        finally:
+            stop(srv)
+
+    def test_an_address_saved_before_the_rename_is_still_found(self):
+        """Renaming the key namespace must not lose the server address.
+
+        Of everything in storage this is the one that matters most: without
+        it an existing install stops finding the server it was pointed at
+        and falls back to the shipped LAN defaults, which anywhere but that
+        LAN means an app that cannot reach anything at all.
+        """
+        srv, base = serve(handler())
+        try:
+            prefs = FakePrefs({config.LEGACY_KEY_URL: base,
+                               config.LEGACY_KEY_CANDIDATES: ["http://127.0.0.1:1", base]})
+            results = asyncio.run(config.load(prefs))
+            self.assertEqual(results[0][0], base)
             self.assertEqual(config.SERVER_URL, base)
         finally:
             stop(srv)

@@ -89,13 +89,43 @@ async def main(page):
     body = ft.Container(expand=True, padding=PAD(12, 12))
 
     def brand_chip():
+        """The product mark, then whose copy this is.
+
+        These are two different kinds of name and the topbar now says so.
+        "agedashii" is the application; "NVII" is the owner, and used to be
+        the only thing here - a gradient pill that read as the product's
+        name because nothing else was competing for the job. Putting a
+        second pill of the same weight next to it would have left two
+        equals and no answer to "what is this app called".
+
+        So the gradient moves to the mark on the left, the product name is
+        set in plain type at the largest size in the bar, and the owner
+        becomes a small outlined badge after it - the shape a profile chip
+        has everywhere else. This matches the website's topbar exactly,
+        which is the point: the same three parts in the same order.
+        """
         p = PAL()
-        return ft.Container(
-            padding=PAD(4, 12), border_radius=10,
-            gradient=ft.LinearGradient(colors=[ORANGE, PINK, CYAN],
-                                       begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0)),
-            content=ft.Text("NVII", size=13, weight=ft.FontWeight.W_800, color="#0d1117"),
-        )
+        return ft.Row(spacing=8, tight=True, controls=[
+            ft.Container(
+                width=10, height=10, border_radius=10,
+                gradient=ft.LinearGradient(
+                    colors=[ORANGE, PINK, CYAN],
+                    begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0)),
+                shadow=ft.BoxShadow(blur_radius=8, color=PINK),
+            ),
+            ft.Text("agedashii", size=15, weight=ft.FontWeight.W_800,
+                    color=p["text"],
+                    style=ft.TextStyle(letter_spacing=0.4)),
+            ft.Container(
+                padding=PAD(2, 7), border_radius=20,
+                bgcolor=ft.Colors.with_opacity(0.10, p["text2"]),
+                border=BRD(p["border"], 1),
+                tooltip="Signed in as nvii",
+                content=ft.Text("NVII", size=10, weight=ft.FontWeight.W_700,
+                                color=p["text2"],
+                                style=ft.TextStyle(letter_spacing=1.2)),
+            ),
+        ])
 
     def machine_dots():
         """One load meter per machine. Tapping one opens that machine in Lab.

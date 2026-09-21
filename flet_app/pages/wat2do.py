@@ -349,7 +349,7 @@ def _present(page):
     if MAPS_AVAILABLE:
         tile_layer = fmap.TileLayer(
             url_template=W.BASEMAPS[_S["basemap"]][1],
-            user_agent_package_name="online.iamprettyfamous.nviidash")
+            user_agent_package_name="online.iamprettyfamous.agedashii")
         home_marker = fmap.Marker(
             coordinates=fmap.MapLatitudeLongitude(*W.HOME), width=16, height=16,
             content=ft.Container(width=14, height=14, border_radius=7,

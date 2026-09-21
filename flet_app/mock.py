@@ -1,4 +1,4 @@
-# Mock data for the NVII Flet app (pre-API-wiring).
+# Mock data for the agedashii Flet app (pre-API-wiring).
 
 MACHINES = [
     {"id": "blavksaba", "display": "Tower", "color": "#58a6ff", "online": True,

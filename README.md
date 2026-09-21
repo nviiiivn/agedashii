@@ -1,4 +1,4 @@
-# NVII-DASH
+# agedashii
 
 Companion app for [dashbored](https://git.alola.lol) — nvii's homelab dashboard.
 Built with [Flet](https://flet.dev) (Python → Flutter). One codebase builds an
@@ -28,7 +28,7 @@ walls, both measured on 2026-09-19:
 
 1. **Cloudflare** 403s the default `Python-urllib/3.x` user agent at the edge,
    before the request reaches the origin. The app therefore identifies itself as
-   `NVII-DASH/1.0`, which passes.
+   `agedashii/1.0`, which passes.
 2. **VoidAuth** forward-auth then 302s *every* path to
    `auth.iamprettyfamous.online` — `/api/dashboard` and `/api/config` included.
    There is no token or header the app can send to get past this today.
@@ -101,12 +101,12 @@ CI (`.github/workflows/build.yml`) builds everything on GitHub runners —
 
 | Artifact | Runner | Notes |
 |---|---|---|
-| `nvii-dash-android-apk` | ubuntu | release APK |
-| `nvii-dash-linux-x64` | ubuntu | folder build (binary + libs) |
-| `nvii-dash-linux-appimage` | ubuntu | **single double-clickable executable** |
-| `nvii-dash-web-pwa` | ubuntu | browser build — also the only way to preview on the Pi |
-| `nvii-dash-macos` | macos | unsigned; right-click → Open on first launch |
-| `nvii-dash-ios-unsigned-ipa` | macos | unsigned .ipa for sideloading |
+| `agedashii-android-apk` | ubuntu | release APK |
+| `agedashii-linux-x64` | ubuntu | folder build (binary + libs) |
+| `agedashii-linux-appimage` | ubuntu | **single double-clickable executable** |
+| `agedashii-web-pwa` | ubuntu | browser build — also the only way to preview on the Pi |
+| `agedashii-macos` | macos | unsigned; right-click → Open on first launch |
+| `agedashii-ios-unsigned-ipa` | macos | unsigned .ipa for sideloading |
 
 **iOS:** the .ipa is built unsigned — with no provisioning profile configured,
 flet passes `--no-codesign` through to flutter. Sideload it with AltStore or

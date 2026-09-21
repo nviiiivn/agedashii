@@ -994,7 +994,7 @@ class TestGraphVersions(LatticeTestCase):
 GRAPH = R.graph_path()
 NEEDS_GRAPH = unittest.skipUnless(
     GRAPH, "no .rg road graph installed - offline routing not exercised "
-           "(set NVII_ROUTE_GRAPH or install bayarea.rg)")
+           "(set AGEDASHII_ROUTE_GRAPH or install bayarea.rg)")
 
 # Oakland City Center -> Fremont, the pair the spike was measured on.
 OAKLAND = (37.8044, -122.2712)

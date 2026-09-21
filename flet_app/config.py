@@ -28,8 +28,14 @@ import urllib.error
 import urllib.request
 
 # Keys in Flet's SharedPreferences (persists across launches on every platform).
-KEY_URL = "nvii.server_url"
-KEY_CANDIDATES = "nvii.server_candidates"
+# Renamed with the product; load() still reads the pre-rename names when the
+# new ones are absent, the same way prefs.py does. Losing this pair is worse
+# than losing a layout preference - the address is how the app finds the
+# server at all, so an install that has one must keep it.
+KEY_URL = "agedashii.server_url"
+KEY_CANDIDATES = "agedashii.server_candidates"
+LEGACY_KEY_URL = "nvii.server_url"
+LEGACY_KEY_CANDIDATES = "nvii.server_candidates"
 
 # Shipped defaults. A private RFC1918 address is not a secret, and the app is
 # useless without somewhere to point it; both are editable in Settings.
@@ -65,10 +71,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 # Cloudflare's managed bot rules 403 the default "Python-urllib/3.x" agent at
 # the edge, before the request ever reaches the origin - which shows up as a
 # baffling 403 instead of the real answer. Any other agent passes; verified
-# 2026-09-19 against iamprettyfamous.online, where "NVII-DASH/1.0" reaches the
-# auth layer and gets the honest 302 while "Python-urllib/3.13" gets 403.
+# 2026-09-19 against iamprettyfamous.online, where a named client agent
+# reaches the auth layer and gets the honest 302 while "Python-urllib/3.13"
+# gets 403. What matters to the rule is that the agent is not urllib's
+# default, not what it says - so this tracks the product name.
 # This is not a disguise: it is this client's real name.
-USER_AGENT = "NVII-DASH/1.0 (+dashbored client)"
+USER_AGENT = "agedashii/1.0 (+dashbored client)"
 
 _opener = urllib.request.build_opener(_NoRedirect)
 _opener.addheaders = [("User-Agent", USER_AGENT)]
@@ -173,11 +181,16 @@ async def load(prefs):
     falls back to the shipped defaults.
     """
     global SERVER_URL, CANDIDATES
-    try:
-        saved = await prefs.get(KEY_URL)
-        saved_list = await prefs.get(KEY_CANDIDATES)
-    except Exception:
-        saved, saved_list = None, None
+
+    async def read(key, legacy):
+        try:
+            value = await prefs.get(key)
+            return value if value is not None else await prefs.get(legacy)
+        except Exception:
+            return None
+
+    saved = await read(KEY_URL, LEGACY_KEY_URL)
+    saved_list = await read(KEY_CANDIDATES, LEGACY_KEY_CANDIDATES)
 
     if isinstance(saved_list, list) and saved_list:
         CANDIDATES = [normalise(u) for u in saved_list if normalise(u)]

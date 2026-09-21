@@ -89,8 +89,11 @@ from pathlib import Path
 
 # ---------------------------------------------------------------- constants
 
-#: Env var that overrides where the graph is looked for. Mirrors NVII_MBTILES.
-ENV_OVERRIDE = "NVII_ROUTE_GRAPH"
+#: Env var that overrides where the graph is looked for. Mirrors
+#: AGEDASHII_MBTILES.
+ENV_OVERRIDE = "AGEDASHII_ROUTE_GRAPH"
+#: What it was called before the product was renamed, still honoured.
+LEGACY_ENV_OVERRIDE = "NVII_ROUTE_GRAPH"
 #: The shipped region. Same naming as bayarea.mbtiles, deliberately.
 GRAPH_FILENAME = "bayarea.rg"
 #: Server endpoint that proxies to self-hosted Valhalla (dashbored-v3.py).
@@ -164,7 +167,7 @@ def graph_path():
     Returning None is a normal outcome, not a failure.
     """
     candidates = []
-    override = os.environ.get(ENV_OVERRIDE)
+    override = os.environ.get(ENV_OVERRIDE) or os.environ.get(LEGACY_ENV_OVERRIDE)
     if override:
         candidates.append(Path(override))
     # APP_ROOT is a module global so a test can point the bundled-asset
@@ -172,6 +175,9 @@ def graph_path():
     # assets/, every "nothing is installed" test started finding it.
     candidates += [APP_ROOT / "assets" / "maps" / GRAPH_FILENAME,
                    APP_ROOT / "maps" / GRAPH_FILENAME,
+                   Path.home() / ".agedashii" / GRAPH_FILENAME,
+                   # The dotdir's pre-rename name, where an older install
+                   # will have put a hand-downloaded graph.
                    Path.home() / ".nvii-dash" / GRAPH_FILENAME]
     for c in candidates:
         try:
@@ -190,7 +196,7 @@ _LOAD = {"phase": "idle", "graph": None, "path": None,
 
 NO_GRAPH_DETAIL = (
     "no offline road graph installed - put bayarea.rg beside the map "
-    "archive, or set NVII_ROUTE_GRAPH")
+    "archive, or set AGEDASHII_ROUTE_GRAPH")
 
 
 def start_loading(path=None):
@@ -223,7 +229,7 @@ def start_loading(path=None):
                      nodes=0, edges=0)
         _READY.clear()
         worker = threading.Thread(target=_load_worker, args=(chosen,),
-                                  name="nvii-route-graph", daemon=True)
+                                  name="agedashii-route-graph", daemon=True)
     worker.start()
     return "loading"
 
