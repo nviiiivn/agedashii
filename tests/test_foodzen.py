@@ -194,3 +194,73 @@ class TestMutations(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TemplatesRecipesPurchases(unittest.TestCase):
+    """The five collections the app never touched.
+
+    Shapes are copied from the website (app.js fzScrapeSave, the purchase at
+    app.js:7791, the template at app.js:7438) because both edit the same JSON
+    files - a key spelled differently here shows up as a blank field there.
+    """
+
+    def setUp(self):
+        self.s = fz.blank_state()
+        fz.add_item(self.s, "eggs")
+        fz.add_item(self.s, "milk")
+
+    def test_template_round_trip(self):
+        self.assertEqual(fz.template_save(self.s, "weekly"), {"templates"})
+        tpl = self.s["templates"][0]
+        self.assertEqual([i["name"] for i in tpl["items"]], ["Eggs", "Milk"])
+        self.assertTrue(tpl["id"].startswith("fz-t-"))
+
+        other = fz.blank_state()
+        other["templates"] = self.s["templates"]
+        fz.template_apply(other, tpl["id"])
+        self.assertEqual([i["name"] for i in other["lists"][0]["items"]],
+                         ["Eggs", "Milk"])
+
+    def test_recipe_keeps_the_website_key_for_time(self):
+        # The website writes time_min; a recipe saved from the app with a
+        # different key would show no cooking time there.
+        fz.recipe_save(self.s, {"title": "Carbonara", "time": 25,
+                                "ingredients": ["spaghetti"]})
+        r = self.s["recipes"][0]
+        self.assertEqual(r["time_min"], 25)
+        self.assertTrue(r["id"].startswith("fz-r-"))
+        self.assertEqual(r["ingredients"], [{"qty": "", "name": "spaghetti"}])
+
+    def test_recipe_to_list(self):
+        fz.recipe_save(self.s, {"title": "x", "ingredients": [
+            {"qty": "200g", "name": "spaghetti"}]})
+        fz.recipe_to_list(self.s, self.s["recipes"][0]["id"])
+        self.assertIn("Spaghetti",
+                      [i["name"] for i in self.s["lists"][0]["items"]])
+
+    def test_purchase_totals_and_categorises(self):
+        fz.purchase_save(self.s, {"store": "Safeway", "items": [
+            {"name": "Bananas", "qty": 2, "price": 0.99},
+            {"name": "Milk", "qty": 1, "price": 4.49}]})
+        pur = self.s["purchases"][0]
+        self.assertEqual(pur["total"], 6.47)
+        self.assertEqual([i["cat"] for i in pur["items"]], ["Produce", "Dairy"])
+        self.assertTrue(pur["id"].startswith("fz-p-"))
+
+    def test_a_stated_total_wins_over_the_arithmetic(self):
+        # Receipts carry tax and deposits the line items do not.
+        fz.purchase_save(self.s, {"total": 9.99, "items": [
+            {"name": "Milk", "qty": 1, "price": 4.49}]})
+        self.assertEqual(self.s["purchases"][0]["total"], 9.99)
+
+    def test_refusals_say_why(self):
+        for fn, arg, expect in (
+            (fz.template_save, None, "empty"),
+            (fz.template_apply, "nope", "gone"),
+            (fz.recipe_to_list, "nope", "gone"),
+            (fz.purchase_save, {"items": []}, "no lines"),
+        ):
+            with self.subTest(fn=fn.__name__):
+                with self.assertRaises(ValueError) as cm:
+                    fn(fz.blank_state(), arg)
+                self.assertIn(expect, str(cm.exception))

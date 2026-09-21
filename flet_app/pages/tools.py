@@ -3,13 +3,19 @@ from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
 from .. import api as M
 from .lab import _tabs
 from ._forms import Writer, offline_banner, rebuilder
-from . import eatzen
+from . import foodzen as fzpage
 
 def build(page):
+    """Tools is a FOLDER; FoodZen is a PAGE inside it with its own TABS.
+
+    This was one flat strip - Feeds | Vault | Journal | FoodZen | EatZen |
+    BPM - which put EatZen and BPM next to Journal instead of inside
+    FoodZen, and had no room for the website's meals, scrape and expenses
+    tabs at all.
+    """
     return _tabs(page, [("Feeds", _feeds()), ("Vault", _vault(page)),
-                        ("Journal", _journal(page)), ("FoodZen", _foodzen(page)),
-                        ("EatZen", eatzen.build_eatzen(page)),
-                        ("BPM", eatzen.build_bpm(page))])
+                        ("Journal", _journal(page)),
+                        ("FoodZen", fzpage.build(page))], key="tools")
 
 def _feeds():
     p = PAL()

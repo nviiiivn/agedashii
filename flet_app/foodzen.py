@@ -212,3 +212,116 @@ def need_to_list(state, list_id=None):
         state["need"] = []
         changed.add("need")
     return changed
+
+
+# ---- templates, recipes, purchases ---------------------------------------
+# The five collections the app never touched. Shapes copied from the website
+# so the two stay readable to each other - ids are "fz-<letter>-<epoch ms>"
+# exactly as app.js writes them (fzScrapeSave app.js:7712, the purchase at
+# app.js:7791, the template at app.js:7438).
+
+def _new_id(prefix):
+    return f"fz-{prefix}-{int(time.time() * 1000)}"
+
+
+def template_save(state, name=None):
+    """Save the current list's items as a reusable template."""
+    lst, _ = ensure_list(state)      # returns (list_obj, changed)
+    items = lst.get("items") or []
+    if not items:
+        raise ValueError("the list is empty - nothing to save as a template")
+    state.setdefault("templates", [])
+    state["templates"].insert(0, {
+        "id": _new_id("t"),
+        "name": name or (lst.get("name") or "template"),
+        "items": [{"name": i.get("name", ""), "qty": i.get("qty", 1),
+                   "cat": i.get("cat", "")} for i in items if i.get("name")],
+    })
+    return {"templates"}
+
+
+def template_apply(state, template_id, list_id=None):
+    """Add every item of a template to the current list."""
+    tpl = next((t for t in (state.get("templates") or [])
+                if t.get("id") == template_id), None)
+    if tpl is None:
+        raise ValueError("that template is gone")
+    changed = set()
+    for it in (tpl.get("items") or []):
+        nm = it.get("name") if isinstance(it, dict) else str(it)
+        if nm:
+            changed |= add_item(state, nm, list_id)
+    return changed
+
+
+def recipe_save(state, recipe):
+    """Put a recipe into the vault, in the website's shape."""
+    ings = []
+    for i in (recipe.get("ingredients") or []):
+        if isinstance(i, dict):
+            ings.append({"qty": str(i.get("qty") or ""), "name": str(i.get("name") or "")})
+        else:
+            ings.append({"qty": "", "name": str(i)})
+    state.setdefault("recipes", [])
+    state["recipes"].insert(0, {
+        "id": _new_id("r"),
+        "title": str(recipe.get("title") or "Untitled"),
+        "image": str(recipe.get("image") or ""),
+        "servings": recipe.get("servings"),
+        # The website writes time_min, not time. Using a different key here
+        # would make a recipe saved from the app show no cooking time there.
+        "time_min": recipe.get("time_min", recipe.get("time")),
+        "tags": [str(t) for t in (recipe.get("tags") or [])],
+        "ingredients": ings,
+        "instructions": [str(x) for x in (recipe.get("instructions") or [])],
+        "url": str(recipe.get("url") or ""),
+        "added": int(time.time() * 1000),
+    })
+    return {"recipes"}
+
+
+def recipe_to_list(state, recipe_id, list_id=None):
+    """Add a saved recipe's ingredients to the grocery list."""
+    rec = next((r for r in (state.get("recipes") or [])
+                if r.get("id") == recipe_id), None)
+    if rec is None:
+        raise ValueError("that recipe is gone")
+    changed = set()
+    for i in (rec.get("ingredients") or []):
+        nm = i.get("name") if isinstance(i, dict) else str(i)
+        if nm:
+            changed |= add_item(state, nm, list_id)
+    return changed
+
+
+def purchase_save(state, purchase):
+    """Record a parsed receipt - what Spending and Freq radar are built from."""
+    items = []
+    total = 0.0
+    for it in (purchase.get("items") or []):
+        try:
+            price = round(float(it.get("price") or 0), 2)
+        except (TypeError, ValueError):
+            price = 0.0
+        try:
+            qty = int(float(it.get("qty") or 1))
+        except (TypeError, ValueError):
+            qty = 1
+        items.append({"name": str(it.get("name") or ""), "qty": qty,
+                      "price": price, "cat": str(it.get("cat") or auto_cat(it.get("name")))})
+        total += price * qty
+    if not items:
+        raise ValueError("no lines to save")
+    stated = purchase.get("total")
+    try:
+        total = round(float(stated), 2) if stated else round(total, 2)
+    except (TypeError, ValueError):
+        total = round(total, 2)
+    state.setdefault("purchases", [])
+    state["purchases"].insert(0, {
+        "id": _new_id("p"),
+        "date": str(purchase.get("date") or time.strftime("%Y-%m-%d")),
+        "store": str(purchase.get("store") or ""),
+        "items": items, "total": total, "source": "import",
+    })
+    return {"purchases"}

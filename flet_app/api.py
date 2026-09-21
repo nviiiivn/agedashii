@@ -957,7 +957,17 @@ def foodzen():
             "list_name": lists[0].get("name") if lists else None,
             "items": lst if isinstance(lst, list) else [],
             "need_items": d.get("need") or [],
-            "pantry_items": pitems if isinstance(pitems, list) else []}
+            "pantry_items": pitems if isinstance(pitems, list) else [],
+            # The website has six FoodZen tabs; the app only ever read enough
+            # for one. These are the collections the other five are built
+            # from - list templates, the recipe vault and meal plan, and the
+            # purchase history behind spending and the frequency radar.
+            "lists": lists,
+            "templates": d.get("templates") or [],
+            "recipes": d.get("recipes") or [],
+            "purchases": d.get("purchases") or [],
+            "eatzen": d.get("eatzen") or [],
+            "bpm": d.get("bpm") or []}
 
 
 # ---------------------------------------------------------------- FoodZen writes
@@ -1058,6 +1068,66 @@ def foodzen_pantry_remove(name):
 
 def foodzen_need_to_list():
     return _foodzen_apply(_fz.need_to_list)
+
+
+# ---- the five sections the app was missing --------------------------------
+# All of these go through _foodzen_apply, so they queue offline and coalesce
+# exactly like the grocery writes do.
+
+def foodzen_template_save(name=None):
+    """Save the current grocery list as a reusable template."""
+    return _foodzen_apply(lambda s: _fz.template_save(s, name))
+
+
+def foodzen_template_apply(template_id):
+    """Add every item of a template to the current list."""
+    return _foodzen_apply(lambda s: _fz.template_apply(s, template_id))
+
+
+def foodzen_recipe_save(recipe):
+    """Put a recipe into the vault. Used by Scrape once you approve it."""
+    return _foodzen_apply(lambda s: _fz.recipe_save(s, recipe))
+
+
+def foodzen_recipe_to_list(recipe_id):
+    """Add a saved recipe's ingredients to the grocery list."""
+    return _foodzen_apply(lambda s: _fz.recipe_to_list(s, recipe_id))
+
+
+def foodzen_purchase_save(purchase):
+    """Record a parsed receipt, which is what Spending and Freq radar read."""
+    return _foodzen_apply(lambda s: _fz.purchase_save(s, purchase))
+
+
+def foodzen_scrape(url):
+    """(recipe, error). Ask the server to fetch and parse a recipe URL.
+
+    Not queueable and not cacheable: it is a live fetch of someone else's
+    page, so offline it fails honestly rather than pretending.
+    """
+    if not STATUS_LIVE():
+        return None, "needs a connection - it fetches the page live"
+    data = _post("/api/foodzen/scrape", {"url": url})
+    if data is None:
+        return None, _describe_failure("/api/foodzen/scrape")
+    if data.get("error"):
+        return None, str(data["error"])
+    return data, None
+
+
+def foodzen_receipt(text, store="", date=None):
+    """(parsed, error). Ask the server to turn receipt text into priced rows."""
+    if not STATUS_LIVE():
+        return None, "needs a connection - the parser runs on the server"
+    body = {"mode": "text", "text": text, "store": store}
+    if date:
+        body["date"] = date
+    data = _post("/api/foodzen/receipt", body)
+    if data is None:
+        return None, _describe_failure("/api/foodzen/receipt")
+    if data.get("error"):
+        return None, str(data["error"])
+    return data, None
 
 
 # ------------------------------------------------------------ maps / rides
