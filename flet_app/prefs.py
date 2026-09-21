@@ -42,6 +42,11 @@ KEY_REFRESH_SECS = "nvii.refresh_secs"
 # off gives the height back to the content; the drawer still reaches
 # everything, so nothing becomes unreachable.
 KEY_BOTTOM_ENABLED = "nvii.bottom_enabled"
+# Trip-report tags she invented herself, on top of the 27 the app ships.
+# The website keeps its equivalents in localStorage, so the two lists are
+# per-device by design; what crosses over is the *label* written into a
+# trip's report, which both ends already understand.
+KEY_TRIP_TAGS = "nvii.trip_tags"
 
 # ---------------------------------------------------------------- catalogue
 # The nine pages, in shipped order. Deliberately a copy of main.PAGES rather
@@ -90,6 +95,7 @@ def _defaults():
         KEY_SODIUM_TARGET: 2300,
         KEY_REFRESH_SECS: DEFAULT_REFRESH,
         KEY_BOTTOM_ENABLED: True,
+        KEY_TRIP_TAGS: [],
     }
 
 
@@ -211,6 +217,56 @@ def set_bottom_bar_enabled(on):
 def drawer_pages():
     """Everything reachable from the drawer - the same set as visible_pages."""
     return visible_pages()
+
+
+# ------------------------------------------------------- custom trip tags
+# Stored as "label|severity|category" strings, because SharedPreferences
+# round-trips list[str] and nothing richer. A row that does not parse is
+# dropped rather than raising: a corrupt preference should cost one tag,
+# not the Produce editor.
+
+TAG_SEVERITIES = ("info", "good", "warn", "danger")
+TAG_CATS = ("attribute", "warning", "bolo")
+
+
+def trip_tags():
+    """[(label, severity, category), ...] - her own tags, never the presets."""
+    out = []
+    seen = set()
+    for row in (_V.get(KEY_TRIP_TAGS) or []):
+        if not isinstance(row, str) or "|" not in row:
+            continue
+        label, _, rest = row.partition("|")
+        severity, _, cat = rest.partition("|")
+        label = label.strip().lower()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        out.append((label,
+                    severity if severity in TAG_SEVERITIES else "info",
+                    cat if cat in TAG_CATS else "attribute"))
+    return out
+
+
+def add_trip_tag(label, severity="info", cat="attribute"):
+    label = (label or "").strip().lower()
+    if not label:
+        return False
+    if any(t[0] == label for t in trip_tags()):
+        return False
+    severity = severity if severity in TAG_SEVERITIES else "info"
+    cat = cat if cat in TAG_CATS else "attribute"
+    _V[KEY_TRIP_TAGS] = [f"{a}|{b}|{c}" for a, b, c in trip_tags()] + \
+                        [f"{label}|{severity}|{cat}"]
+    return True
+
+
+def remove_trip_tag(label):
+    label = (label or "").strip().lower()
+    kept = [f"{a}|{b}|{c}" for a, b, c in trip_tags() if a != label]
+    changed = len(kept) != len(trip_tags())
+    _V[KEY_TRIP_TAGS] = kept
+    return changed
 
 
 def home_panel_order():
@@ -503,6 +559,7 @@ async def save(prefs):
         KEY_UNITS: unit_system(),
         KEY_SODIUM_TARGET: sodium_target(),
         KEY_REFRESH_SECS: refresh_seconds(),
+        KEY_TRIP_TAGS: [f"{a}|{b}|{c}" for a, b, c in trip_tags()],
     }
     try:
         for key, value in payload.items():
