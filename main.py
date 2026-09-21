@@ -2,6 +2,7 @@ import asyncio
 
 import flet as ft
 from flet_app.ui import PAL, PAD, BRD, S, apply_theme, dot
+from flet_app.pages.lab import _TAB_INDEX
 from flet_app.theme_data import THEMES, THEME_NAMES
 from flet_app.pages import home, lab, tools, trips, weather, garage, wat2do, extras, settings
 from flet_app import api as M
@@ -27,6 +28,29 @@ ICONS = {"home": ft.Icons.HOME, "lab": ft.Icons.DNS, "tools": ft.Icons.CONSTRUCT
          "weather": ft.Icons.CLOUD, "extras": ft.Icons.WIDGETS, "settings": ft.Icons.SETTINGS,
          MORE: ft.Icons.MORE_HORIZ}
 BOTTOM = MAIN + [MORE]
+
+# What sits inside each page, so the drawer can offer it directly instead of
+# making you land on a page and hunt for the tab. Each entry is
+# (label, [(tab-group key, index), ...], indent depth) - the list sets every
+# level on the way down, which is how Tools > FoodZen > EatZen is reachable
+# in one tap. The keys and indices must match the _tabs(..., key=) calls in
+# the page modules; the test walks both and fails if they drift.
+SUBPAGES = {
+    "lab": [("Machines", [("lab", 0)], 1), ("Network", [("lab", 1)], 1),
+            ("Services", [("lab", 2)], 1), ("Qbit", [("lab", 3)], 1)],
+    "tools": [
+        ("Feeds", [("tools", 0)], 1),
+        ("Vault", [("tools", 1)], 1),
+        ("Journal", [("tools", 2)], 1),
+        ("FoodZen", [("tools", 3)], 1),
+        ("Grocery", [("tools", 3), ("foodzen", 0)], 2),
+        ("Meals", [("tools", 3), ("foodzen", 1)], 2),
+        ("Scrape", [("tools", 3), ("foodzen", 2)], 2),
+        ("Expenses", [("tools", 3), ("foodzen", 3)], 2),
+        ("EatZen", [("tools", 3), ("foodzen", 4)], 2),
+        ("BPM", [("tools", 3), ("foodzen", 5)], 2),
+    ],
+}
 
 # How often the outbox watcher looks up from its book. Matched to
 # api.ONLINE_RECHECK, which is how long a "we are offline" verdict is trusted
@@ -200,21 +224,66 @@ async def main(page):
         """Bottom bar = the owner's chosen pages, plus More for the rest."""
         return prefs.bottom_bar_pages() + [MORE]
 
+    def go_sub(page_key, tab_path):
+        """Jump straight to a tab inside a page, e.g. Tools > FoodZen > EatZen.
+
+        _tabs() reads its starting index out of _TAB_INDEX, keyed by the same
+        name it saves under, so setting those keys before rendering lands on
+        the right tab without any new plumbing.
+        """
+        async def handler(e):
+            for tab_key, index in tab_path:
+                _TAB_INDEX[tab_key] = index
+            await page.close_drawer()
+            render(page_key)
+        return handler
+
     def nav_drawer():
         p = PAL()
         # Rebuilt on every render: the drawer is themed, and one built once at
         # startup would keep the old palette after a theme change.
+        #
+        # Hand-built rows rather than NavigationDrawerDestination, because
+        # that control is flat and the whole point here is depth: every page
+        # with tabs shows them, so Tools > FoodZen > EatZen is one tap from
+        # the menu instead of a page you have to land on and then hunt
+        # through.
         pages = _drawer_pages()
-        here = pages.index(current[0]) if current[0] in pages else 0
-        return ft.NavigationDrawer(
-            bgcolor=p["bg2"], selected_index=here,
-            controls=[
-                ft.Container(height=12),
-                *[ft.NavigationDrawerDestination(icon=ICONS[k], label=LABELS[k])
-                  for k in pages],
-            ],
-            on_change=drawer_pick,
-        )
+        rows = [ft.Container(height=12)]
+
+        def page_row(k):
+            on = k == current[0]
+            return ft.Container(
+                padding=PAD(14, 9), border_radius=8, ink=True,
+                bgcolor=ft.Colors.with_opacity(0.12, p["accent"]) if on else None,
+                on_click=lambda e, key=k: _drawer_go(key),
+                content=ft.Row(spacing=12, controls=[
+                    ft.Icon(ICONS[k], size=19,
+                            color=p["accent"] if on else p["text2"]),
+                    ft.Text(LABELS[k], size=14,
+                            weight=ft.FontWeight.W_600 if on else ft.FontWeight.W_400,
+                            color=p["text"] if on else p["text2"]),
+                ]))
+
+        def sub_row(label, page_key, tab_path, depth=1):
+            return ft.Container(
+                padding=ft.Padding(14 + 20 * depth, 6, 14, 6), border_radius=8,
+                ink=True, on_click=go_sub(page_key, tab_path),
+                content=ft.Text(label, size=12.5, color=p["text2"]))
+
+        for k in pages:
+            rows.append(page_row(k))
+            for label, tab_path, depth in SUBPAGES.get(k, []):
+                rows.append(sub_row(label, k, tab_path, depth))
+
+        return ft.NavigationDrawer(bgcolor=p["bg2"], controls=rows)
+
+    def _drawer_go(key):
+        page.run_task(_drawer_go_async, key)
+
+    async def _drawer_go_async(key):
+        await page.close_drawer()
+        render(key)
 
     async def open_menu(e):
         await page.show_drawer()
@@ -308,11 +377,13 @@ async def main(page):
         body.bgcolor = p["bg"]
         page.drawer = nav_drawer()
         page.controls.clear()
-        page.add(ft.Column(spacing=0, expand=True, controls=[
-            ft.Container(padding=PAD(8, 12), bgcolor=p["bg"], content=topbar()),
-            body,
-            bottom_bar(),
-        ]))
+        chrome = [ft.Container(padding=PAD(8, 12), bgcolor=p["bg"], content=topbar()),
+                  body]
+        # The bar repeats what the drawer lists; off, the content gets the
+        # height back and the drawer still reaches every page.
+        if prefs.bottom_bar_enabled():
+            chrome.append(bottom_bar())
+        page.add(ft.Column(spacing=0, expand=True, controls=chrome))
         page.update()
 
     # A page that writes to the server needs to re-read and repaint after the

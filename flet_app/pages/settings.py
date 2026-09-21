@@ -147,6 +147,29 @@ def layout_card(page, saver, on_layout=None):
             size=10, color=p["text3"])
         rows.controls.append(ft.Container(padding=PAD(6, 8), content=count))
 
+        # The bar duplicates the drawer, which now lists every page *and* its
+        # tabs, so it is worth switching off entirely rather than only
+        # choosing what rides on it. Nothing becomes unreachable either way.
+        async def toggle_bar(e):
+            prefs.set_bottom_bar_enabled(e.control.value)
+            await saver.commit("bottom bar " + ("on" if e.control.value else "off"))
+            paint()
+            if on_layout:
+                on_layout()
+
+        rows.controls.append(ft.Container(
+            padding=PAD(6, 6),
+            border=ft.Border(top=ft.BorderSide(1, p["border"])),
+            content=ft.Row(vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                ft.Column(spacing=1, expand=True, controls=[
+                    ft.Text("Bottom bar", size=13, color=p["text"]),
+                    ft.Text("Off gives the height back to the page. The menu "
+                            "still reaches everything.", size=10, color=p["text3"]),
+                ]),
+                ft.Switch(value=prefs.bottom_bar_enabled(), on_change=toggle_bar,
+                          active_color=p["accent"]),
+            ])))
+
     def row(key, i, order):
         hidden = key in set(prefs.hidden_pages())
         bar = key in set(prefs.bottom_bar_pages())

@@ -337,3 +337,77 @@ class TestSettingsPageBuilds(PrefsTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BottomBarEnabled(unittest.TestCase):
+    """The bar can be switched off; the drawer still reaches every page."""
+
+    def setUp(self):
+        prefs._V = prefs._defaults()
+
+    def test_on_by_default(self):
+        self.assertTrue(prefs.bottom_bar_enabled())
+
+    def test_toggles(self):
+        prefs.set_bottom_bar_enabled(False)
+        self.assertFalse(prefs.bottom_bar_enabled())
+        prefs.set_bottom_bar_enabled(True)
+        self.assertTrue(prefs.bottom_bar_enabled())
+
+    def test_survives_a_round_trip_through_stringy_storage(self):
+        # SharedPreferences can hand a bool back as a string, and
+        # bool("false") is True - so without coercion, switching the bar off
+        # and reopening the app would silently switch it back on.
+        cases = {None: True, True: True, False: False, 1: True, 0: False,
+                 "true": True, "True": True, "false": False, "False": False,
+                 "0": False, "off": False, "": False, "yes": True}
+        for stored, expected in cases.items():
+            with self.subTest(stored=stored):
+                prefs._V[prefs.KEY_BOTTOM_ENABLED] = stored
+                self.assertIs(prefs.bottom_bar_enabled(), expected)
+
+    def test_switching_it_off_hides_nothing(self):
+        prefs.set_bottom_bar_enabled(False)
+        # Every page must still be listed somewhere, i.e. in the drawer.
+        self.assertEqual(set(prefs.drawer_pages()), set(prefs.visible_pages()))
+
+
+class DrawerSubpagesMatchTheRealTabs(unittest.TestCase):
+    """main.SUBPAGES hardcodes tab indices; this fails if they drift.
+
+    The drawer jumps straight to a tab by writing its index into _TAB_INDEX,
+    so a tab reordered in a page module without updating SUBPAGES would send
+    you silently to the wrong place.
+    """
+
+    def test_indices_line_up(self):
+        import importlib.util
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        src = open(os.path.join(root, "main.py")).read()
+        # main.py calls ft.run() at import, so read SUBPAGES out of the AST
+        # rather than importing it.
+        import ast
+        tree = ast.parse(src)
+        subpages = None
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(
+                    getattr(t, "id", None) == "SUBPAGES" for t in node.targets):
+                subpages = ast.literal_eval(node.value)
+        self.assertIsNotNone(subpages, "SUBPAGES not found in main.py")
+
+        expected = {
+            "lab": ["Machines", "Network", "Services", "Qbit"],
+            "tools": ["Feeds", "Vault", "Journal", "FoodZen"],
+            "foodzen": ["Grocery", "Meals", "Scrape", "Expenses", "EatZen", "BPM"],
+        }
+        for label, path, _depth in subpages["tools"]:
+            group, index = path[-1]
+            self.assertLess(index, len(expected[group]),
+                            f"{label}: index {index} past the end of {group}")
+            self.assertEqual(expected[group][index], label,
+                             f"{label} points at {group}[{index}], which is "
+                             f"{expected[group][index]}")
+        for label, path, _depth in subpages["lab"]:
+            group, index = path[-1]
+            self.assertEqual(expected[group][index], label)

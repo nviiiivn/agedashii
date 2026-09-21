@@ -38,6 +38,10 @@ KEY_HOME_HIDDEN = "nvii.home_hidden"
 KEY_UNITS = "nvii.units"
 KEY_SODIUM_TARGET = "nvii.sodium_target"
 KEY_REFRESH_SECS = "nvii.refresh_secs"
+# The bottom bar duplicates the drawer, which lists every page. Switching it
+# off gives the height back to the content; the drawer still reaches
+# everything, so nothing becomes unreachable.
+KEY_BOTTOM_ENABLED = "nvii.bottom_enabled"
 
 # ---------------------------------------------------------------- catalogue
 # The nine pages, in shipped order. Deliberately a copy of main.PAGES rather
@@ -85,6 +89,7 @@ def _defaults():
         KEY_UNITS: "imperial",
         KEY_SODIUM_TARGET: 2300,
         KEY_REFRESH_SECS: DEFAULT_REFRESH,
+        KEY_BOTTOM_ENABLED: True,
     }
 
 
@@ -179,6 +184,28 @@ def bottom_bar_pages():
     if not bar and visible:
         bar = visible[:1]
     return bar
+
+
+def bottom_bar_enabled():
+    """Whether to draw the bottom bar at all.
+
+    It repeats what the drawer already lists, so it is worth being able to
+    turn off outright rather than only choosing what rides on it.
+    """
+    v = _V.get(KEY_BOTTOM_ENABLED)
+    if v is None:
+        return True                       # never set: ship it on
+    if isinstance(v, str):
+        # SharedPreferences is not consistent about booleans and can hand
+        # back "true"/"false". bool("false") is True, so a round trip
+        # through storage would have made "off" read as "on".
+        return v.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(v)
+
+
+def set_bottom_bar_enabled(on):
+    _V[KEY_BOTTOM_ENABLED] = bool(on)
+    return True
 
 
 def drawer_pages():
