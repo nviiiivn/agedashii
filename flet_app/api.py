@@ -39,6 +39,7 @@ Nothing here ever presents sample data as real: the store only ever holds
 bytes the server sent or writes the user made.
 """
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -746,7 +747,262 @@ def machines():
                     "online": online, "error": str(w.get("error") or ""),
                     "os": osname or "—", "uptime": w.get("uptime", "—"),
                     "cpu": w.get("cpu", "—"), "ram": ram, "temp": w.get("temp", "—"),
+                    # What the topbar dots draw. None, not 0, when the
+                    # machine is down or did not report - an empty ring says
+                    # "unknown" where a full-circle 0% says "idle".
+                    "load": _reading(w.get("cpu_percent"), online),
+                    "mem_load": _reading(w.get("memory_percent"), online),
                     "docker": "", "host": ""})
+    return out
+
+
+# --------------------------------------------------------- one machine, fully
+# /api/dashboard has always carried far more per machine than the app read:
+# the fetch greeting alone holds the kernel, the CPU's name and the LAN
+# address, and the network widget holds per-interface byte counters. The
+# server-side probes added alongside this fill the rest - chassis, hardware
+# model, OS base, drives, GPU temperature, current network rate.
+#
+# One rule runs through every function below: a value that was not measured
+# comes back as None, never as 0 and never as a guess. An unreachable
+# machine answers {"error": "unreachable"} for each widget, and that dict is
+# truthy - the trap that once had SP3 showing green everywhere - so aliveness
+# is `widget_alive`, and when the system widget is not alive every field
+# derived from it is None regardless of what else the payload contains.
+
+# Interfaces that are not the machine's link to the network: loopback,
+# docker's bridges and veth pairs, VPN tunnels. Summing these into "network
+# traffic" double-counts every container byte and makes a quiet host look
+# busy - lil-faegola carries ten of them.
+_VIRTUAL_IFACE_PREFIXES = ("lo", "docker", "br-", "veth", "virbr", "vnet",
+                           "tun", "tap", "wg", "tailscale", "zt", "cni",
+                           "flannel", "kube", "dummy")
+
+
+def iface_is_physical(name):
+    """Whether an interface name is the machine's own link, not a virtual one."""
+    n = str(name or "").strip().lower()
+    if not n:
+        return False
+    if n == "lo" or n.startswith("lo:"):
+        return False
+    return not any(n.startswith(pre) for pre in _VIRTUAL_IFACE_PREFIXES)
+
+
+def greeting_field(greeting, label):
+    """One "Label: value" line out of a fetch-style greeting blob, or None.
+
+    lil-faegola's greeting arrives with the backslash-n escaped rather than
+    newlines, so both are treated as line breaks. A label is matched on its
+    own line only - "Local IP (eth0)" has to match the prefix "Local IP"
+    because the interface name is baked into the key.
+    """
+    want = str(label or "").strip().lower()
+    if not want:
+        return None
+    for line in str(greeting or "").replace("\\n", "\n").split("\n"):
+        line = line.strip()
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        key = key.strip().lower()
+        if key == want or key.startswith(want + " "):
+            value = value.strip()
+            if value:
+                return value
+    return None
+
+
+def _pos_int(v):
+    """A whole number above zero, or None. "?" and "" and 0 are all None."""
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _reading(v, known=True):
+    """A percentage the machine actually reported, or None."""
+    if not known:
+        return None
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return None
+    return n if 0.0 <= n <= 100.0 else None
+
+
+def _text(v):
+    s = str(v if v is not None else "").strip()
+    # "?" is what the server's shell fallbacks print when a command failed.
+    return None if s in ("", "?", "-", "—") else s
+
+
+def gpu_columns(raw):
+    """nvidia-smi's CSV row -> (name, used MB, total MB, load %). None each.
+
+    Shape, live: "NVIDIA GeForce RTX 3080, 13315 MiB, 20480 MiB, 0 %". Only
+    the Tower has one; every other machine sends "" and must not report a
+    0 % GPU it does not have.
+    """
+    parts = [p.strip() for p in str(raw or "").split(",")]
+    if not parts or not parts[0]:
+        return None, None, None, None
+    def mib(i):
+        if len(parts) <= i:
+            return None
+        digits = re.sub(r"[^\d]", "", parts[i])
+        return int(digits) if digits else None
+    load = None
+    if len(parts) > 3:
+        digits = re.sub(r"[^\d]", "", parts[3])
+        load = float(digits) if digits else None
+    return parts[0], mib(1), mib(2), load
+
+
+def _disk_split(raw):
+    """"1.7T/1.9T (89%)" -> ("1.7T", "1.9T", 89.0), each None if unreadable."""
+    s = str(raw or "").strip()
+    m = re.match(r"^\s*([^/\s]+)\s*/\s*([^\s(]+)\s*(?:\((\d+)%?\))?\s*$", s)
+    if not m:
+        return None, None, None
+    used, total, pct = m.group(1), m.group(2), m.group(3)
+    if "?" in used or "?" in total:
+        return None, None, None
+    return used, total, (float(pct) if pct is not None else None)
+
+
+def machine_detail(dash, mid, cfg=None, docker=None):
+    """Everything the server knows about one machine. None means unmeasured.
+
+    `cfg` is /api/config, `docker` is /api/docker_list; both optional,
+    because the caller may have them already and neither is worth a second
+    request. Never raises on an odd payload - a machine the server has never
+    heard of comes back as an offline record rather than an exception.
+    """
+    m = (dash or {}).get(mid)
+    m = m if isinstance(m, dict) else {}
+    sysw = machine_widget(dash, mid, "system")
+    netw = machine_widget(dash, mid, "network")
+    svcw = machine_widget(dash, mid, "services")
+    alive = widget_alive(sysw)
+    greeting = sysw.get("greeting") if alive else None
+    conf = ((cfg or {}).get(mid) or {}) if isinstance(cfg, dict) else {}
+
+    out = {
+        "id": mid,
+        "nickname": m.get("display") or mid,
+        "color": m.get("color") or "#58a6ff",
+        "online": alive,
+        "error": _text(sysw.get("error")),
+    }
+
+    def sysfield(key):
+        return _text(sysw.get(key)) if alive else None
+
+    # ---- identity
+    out["name"] = sysfield("model") or (greeting_field(greeting, "Host") if alive else None)
+    out["hostname"] = sysfield("hostname")
+    out["machine_type"] = sysfield("machine_type")
+    out["os"] = ((greeting_field(greeting, "OS") if alive else None)
+                 or sysfield("os_name"))
+    out["os_base"] = sysfield("os_base")
+    out["kernel"] = (greeting_field(greeting, "Kernel") if alive else None)
+    out["uptime"] = sysfield("uptime")
+
+    # ---- address. The greeting names the interface it read, which is the
+    # one the machine itself considers primary; the interface list is the
+    # fallback, and /api/config's host is the address *we* reach it on, which
+    # is a different fact and kept separate.
+    ip = greeting_field(greeting, "Local IP") if alive else None
+    if not ip and alive:
+        for i in (netw.get("interfaces") or []):
+            if isinstance(i, dict) and iface_is_physical(i.get("name")) \
+                    and "." in str(i.get("ip") or ""):
+                ip = str(i["ip"])
+                break
+    out["ip"] = ip
+    out["address"] = (f"{conf.get('user')}@{conf['host']}"
+                      if conf.get("host") and conf.get("user")
+                      else _text(conf.get("host")))
+
+    # ---- cpu
+    out["cpu_name"] = sysfield("cpu_name") or (greeting_field(greeting, "CPU") if alive else None)
+    out["cpu_cores"] = _pos_int(sysw.get("cpu_cores")) if alive else None
+    out["cpu_pct"] = _reading(sysw.get("cpu_percent"), alive)
+    out["cpu_temp"] = sysfield("temp")
+
+    # ---- memory
+    out["ram_used_mb"] = _pos_int(sysw.get("mem_used")) if alive else None
+    out["ram_total_mb"] = _pos_int(sysw.get("mem_total")) if alive else None
+    out["ram_pct"] = _reading(sysw.get("memory_percent"), alive and bool(out["ram_total_mb"]))
+    rtype = sysfield("ram_type")
+    rspeed = sysfield("ram_speed")
+    out["ram_type"] = (f"{rtype} @ {rspeed}" if rtype and rspeed else rtype)
+
+    # ---- gpu. gpu_percent is 0 on every machine with no GPU, so it is only
+    # a reading when nvidia-smi actually answered.
+    gname, gused, gtotal, gload = gpu_columns(sysw.get("gpu") if alive else "")
+    out["gpu_name"] = gname or sysfield("gpu_pci")
+    out["gpu_mem_used_mb"] = gused
+    out["gpu_mem_total_mb"] = gtotal
+    out["gpu_pct"] = gload if gname else None
+    out["gpu_temp"] = sysfield("gpu_temp")
+
+    # ---- disks
+    used, total, dpct = _disk_split(sysw.get("disk") if alive else "")
+    out["disk_used"], out["disk_total"] = used, total
+    out["disk_pct"] = dpct if dpct is not None else _reading(sysw.get("disk_percent"),
+                                                         alive and total is not None)
+    out["disks"] = [d for d in (sysw.get("disks") or []) if isinstance(d, dict)] if alive else []
+
+    # ---- network. Counters are since boot, so their sum is this uptime's
+    # total; the rate is the server differencing two samples and is absent
+    # until it has two.
+    bw = netw.get("bandwidth") if isinstance(netw.get("bandwidth"), dict) else {}
+    rates = netw.get("rates") if isinstance(netw.get("rates"), dict) else {}
+    net_alive = widget_alive(netw)
+
+    def _sum(src, field):
+        vals = [v.get(field) for n, v in src.items()
+                if iface_is_physical(n) and isinstance(v, dict)
+                and isinstance(v.get(field), (int, float))]
+        return sum(vals) if vals else None
+
+    out["net_rx_total"] = _sum(bw, "rx") if net_alive else None
+    out["net_tx_total"] = _sum(bw, "tx") if net_alive else None
+    out["net_rx_rate"] = _sum(rates, "rx") if net_alive else None
+    out["net_tx_rate"] = _sum(rates, "tx") if net_alive else None
+    out["net_ifaces"] = [i for i in (netw.get("interfaces") or [])
+                         if isinstance(i, dict) and iface_is_physical(i.get("name"))
+                         ] if net_alive else []
+    out["net_connections"] = (netw.get("connections")
+                              if net_alive and isinstance(netw.get("connections"), int)
+                              else None)
+
+    # ---- services. The server's probe lists listening ports, all of which
+    # are by definition up, so "up of total" comes from systemd instead; a
+    # machine with no systemd (void runs runit) reports neither, and that is
+    # an em dash, not 0 of 0.
+    out["services_listening"] = (len([s for s in (svcw.get("services") or [])
+                                      if isinstance(s, dict)])
+                                 if widget_alive(svcw) else None)
+    out["units_running"] = sysw.get("units_running") if alive else None
+    out["units_total"] = _pos_int(sysw.get("units_total")) if alive else None
+    if out["units_total"] is None:
+        out["units_running"] = None
+
+    # ---- docker
+    out["containers_running"] = out["containers_total"] = None
+    host = (docker or {}).get(mid) if isinstance(docker, dict) else None
+    # An unreachable host answers containers: [] with an error beside it, and
+    # a machine that is down cannot be asked at all - both are unknown, not
+    # zero. Only a live host that really answered gets a count.
+    if isinstance(host, dict) and not host.get("error") and alive:
+        rows = [c for c in (host.get("containers") or []) if isinstance(c, dict)]
+        out["containers_total"] = len(rows)
+        out["containers_running"] = sum(1 for c in rows if c.get("state") == "running")
     return out
 
 
