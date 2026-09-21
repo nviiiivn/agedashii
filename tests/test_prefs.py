@@ -400,7 +400,9 @@ class DrawerSubpagesMatchTheRealTabs(unittest.TestCase):
             "lab": ["Machines", "Network", "Services", "Docker", "Qbit"],
             "tools": ["Feeds", "Vault", "Journal", "FoodZen"],
             "foodzen": ["Grocery", "Meals", "Scrape", "Expenses", "EatZen", "BPM"],
-            "extras": ["Projects", "AI", "Future", "Obligations"],
+            # Future lives on Wat2Do, matching the website; it was briefly
+            # mounted here too.
+            "extras": ["Projects", "AI", "Obligations"],
         }
         for group in ("tools", "lab", "extras"):
             for label, path, _depth in subpages[group]:

@@ -58,14 +58,10 @@ BIKES = [
      "status": "project"},
 ]
 
-FLIPPER = [
-    {"title": "1996 Honda Nighthawk 750", "price": 950, "score": 82,
-     "net": 1180, "flag": "clean"},
-    {"title": "2003 Kawasaki Vulcan 800", "price": 1200, "score": 67,
-     "net": 640, "flag": "needs carb clean"},
-    {"title": "1988 Yamaha Virago 535", "price": 700, "score": 74,
-     "net": 905, "flag": "no start"},
-]
+# Deleted, not emptied. It was never in api._MAP, so any code that read
+# M.FLIPPER would have rendered three invented bike listings forever -
+# which is exactly what Garage did until it was wired to the real scanner.
+# Removing the name means that mistake fails loudly instead.
 
 FEEDS = [
     {"src": "riders-share", "tag": "route", "title": "Grizzly Peak twisties — full loop",

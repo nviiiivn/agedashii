@@ -62,8 +62,7 @@ SUBPAGES = {
     "weather": [("Bay Area", [("weather", 0)], 1),
                 ("Explore", [("weather", 1)], 1)],
     "extras": [("Projects", [("extras", 0)], 1), ("AI", [("extras", 1)], 1),
-               ("Future", [("extras", 2)], 1),
-               ("Obligations", [("extras", 3)], 1)],
+               ("Obligations", [("extras", 2)], 1)],
 }
 
 # How often the outbox watcher looks up from its book. Matched to

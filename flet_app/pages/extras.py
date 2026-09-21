@@ -28,7 +28,6 @@ from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
 from .. import api as M
 from .. import panels
 from .lab import _tabs, _show, _dismiss, _error_card
-from . import future
 
 
 def build(page):
@@ -43,8 +42,10 @@ def build(page):
     # thing. `key` makes the tab bar remember which one you were on across
     # the repaint every write triggers - without it, saving a gem bounced
     # you back to Projects.
+    # Future lives on Wat2Do, which is where the website keeps it. It was
+    # mounted here as well for a while; two mounts of one module is not
+    # mirroring, and the drawer would have offered the same page twice.
     return _tabs(page, [("Projects", _projects(page)), ("AI", _ai(page)),
-                        ("Future", future.build(page)),
                         ("Obligations", _obl())], key="extras")
 
 
