@@ -3,6 +3,7 @@ import asyncio
 import flet as ft
 from flet_app.ui import PAL, PAD, BRD, S, apply_theme, dot
 from flet_app.pages.lab import _TAB_INDEX
+from flet_app.pages.eatzen import _show, _dismiss
 from flet_app.theme_data import THEMES, THEME_NAMES
 from flet_app.pages import home, lab, tools, trips, weather, garage, wat2do, extras, settings
 from flet_app import api as M
@@ -288,32 +289,75 @@ async def main(page):
     async def open_menu(e):
         await page.show_drawer()
 
-    def cycle_theme(e):
-        """Step to the next theme and repaint where you are.
+    def open_theme_picker(e):
+        """A named, tappable list of every theme.
 
-        THEME_NAMES is the ordered list the Settings grid uses, so the button
-        and the grid walk the same themes in the same order.
+        This button used to step blindly to the next theme, naming the
+        current one only in a tooltip - and a tooltip needs a mouse, which a
+        phone does not have. So you could change the theme but never see
+        what you were on or get back to one you liked. 21 themes is too many
+        to walk one tap at a time.
         """
-        keys = list(THEME_NAMES)
-        i = keys.index(S.theme) if S.theme in keys else -1
-        apply_theme(page, keys[(i + 1) % len(keys)])
-        render(current[0])
+        p = PAL()
+
+        def pick(key):
+            def handler(e):
+                _dismiss(page, dlg)
+                apply_theme(page, key)
+                render(current[0])
+            return handler
+
+        def swatch(key):
+            t = THEMES[key]
+            on = key == S.theme
+            return ft.Container(
+                padding=PAD(10, 8), border_radius=8, ink=True, on_click=pick(key),
+                bgcolor=ft.Colors.with_opacity(0.14, p["accent"]) if on else None,
+                content=ft.Row(spacing=10, controls=[
+                    # The theme's own colours, so the row previews itself.
+                    ft.Container(width=34, height=18, border_radius=5,
+                                 bgcolor=t["bg2"], border=BRD(t["border"], 1),
+                                 content=ft.Row(spacing=2, controls=[
+                                     ft.Container(width=6, height=6, border_radius=3,
+                                                  bgcolor=t[c])
+                                     for c in ("accent", "green", "pink")])),
+                    ft.Text(THEME_NAMES.get(key, key), size=13,
+                            weight=ft.FontWeight.W_600 if on else ft.FontWeight.W_400,
+                            color=p["text"], expand=True),
+                    ft.Icon(ft.Icons.CHECK, size=16, color=p["accent"])
+                    if on else ft.Container(width=16),
+                ]))
+
+        dlg = ft.AlertDialog(
+            bgcolor=p["bg2"],
+            title=ft.Text(f"Theme - {THEME_NAMES.get(S.theme, S.theme)}",
+                          size=15, color=p["text"]),
+            content=ft.Container(width=300, height=380, content=ft.Column(
+                spacing=2, scroll=ft.ScrollMode.AUTO,
+                controls=[swatch(k) for k in THEME_NAMES])),
+            actions=[ft.TextButton("Close", on_click=lambda e: _dismiss(page, dlg))],
+        )
+        _show(page, dlg)
 
     def topbar():
         p = PAL()
         return ft.Row(spacing=10, controls=[
             ft.IconButton(ft.Icons.MENU, icon_color=p["text2"], on_click=open_menu),
             brand_chip(),
+            # Machine status. It lives here, next to the brand, rather than
+            # beside the palette: a row of coloured circles touching a
+            # palette icon reads as theme swatches you can tap, and these
+            # are neither tappable nor themes.
+            machine_dots(),
             ft.Container(expand=True),
             sync_chip,
-            machine_dots(),
             # There was an ft.Icon(SEARCH) here: a picture of a button that
             # could not be clicked and searched nothing. Removed rather than
             # faked - the drawer now lists every page, which is the jump-to-a-
             # page affordance the icon pretended to offer.
             ft.IconButton(ft.Icons.PALETTE, icon_color=p["text2"],
-                          tooltip=f"Theme: {THEME_NAMES.get(S.theme, S.theme)} — tap for the next",
-                          on_click=cycle_theme),
+                          tooltip=f"Theme: {THEME_NAMES.get(S.theme, S.theme)}",
+                          on_click=open_theme_picker),
             ft.IconButton(ft.Icons.SETTINGS, icon_color=p["text2"],
                           on_click=lambda e: render("settings")),
         ])
