@@ -397,20 +397,19 @@ class DrawerSubpagesMatchTheRealTabs(unittest.TestCase):
         self.assertIsNotNone(subpages, "SUBPAGES not found in main.py")
 
         expected = {
-            "lab": ["Machines", "Network", "Services", "Qbit"],
+            "lab": ["Machines", "Network", "Services", "Docker", "Qbit"],
             "tools": ["Feeds", "Vault", "Journal", "FoodZen"],
             "foodzen": ["Grocery", "Meals", "Scrape", "Expenses", "EatZen", "BPM"],
+            "extras": ["Projects", "AI", "Future", "Obligations"],
         }
-        for label, path, _depth in subpages["tools"]:
-            group, index = path[-1]
-            self.assertLess(index, len(expected[group]),
-                            f"{label}: index {index} past the end of {group}")
-            self.assertEqual(expected[group][index], label,
-                             f"{label} points at {group}[{index}], which is "
-                             f"{expected[group][index]}")
-        for label, path, _depth in subpages["lab"]:
-            group, index = path[-1]
-            self.assertEqual(expected[group][index], label)
+        for group in ("tools", "lab", "extras"):
+            for label, path, _depth in subpages[group]:
+                key, index = path[-1]
+                self.assertLess(index, len(expected[key]),
+                                f"{label}: index {index} past the end of {key}")
+                self.assertEqual(expected[key][index], label,
+                                 f"{label} points at {key}[{index}], which is "
+                                 f"{expected[key][index]}")
 
 
 class PanelLayout(unittest.TestCase):

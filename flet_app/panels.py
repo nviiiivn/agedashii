@@ -58,12 +58,57 @@ SURFACES = {
         ("receipt", "Import receipt"), ("spending", "Spending"),
         ("radar", "Freq radar"),
     ],
+    "trips.selekt": [
+        ("planner", "Plan a route"), ("plannermap", "Planner map"),
+        ("turns", "Turn by turn"), ("builder", "Trip builder"),
+        ("cards", "Trip cards"),
+    ],
+    "trips.produce": [
+        ("picker", "Route picker"), ("map", "Route map"),
+        ("waypoints", "Waypoints"), ("meta", "Forks & stacking"),
+        ("report", "Trip report"),
+    ],
+    "trips.rides": [
+        ("guidance", "Follow a route"), ("upload", "Upload GPX"),
+        ("list", "Recorded rides"), ("viewer", "Ride replay"),
+    ],
+    "trips.xnav": [
+        ("live", "Live GPS & recording"), ("route", "Route picker"),
+        ("next", "Next turn"), ("pois", "POI overlays"),
+        ("map", "Map"), ("elevation", "Elevation profile"),
+        ("stats", "Route stats"), ("maneuvers", "Turn-by-turn"),
+    ],
+    "lab.machines": [
+        ("portal", "Portal & addresses"), ("machines", "Machine cards"),
+    ],
+    "lab.services": [
+        ("reachability", "LAN reachability"), ("control", "Control a service"),
+        ("listening", "Listening ports"),
+    ],
+    "lab.docker": [
+        ("summary", "Containers summary"), ("containers", "Containers by host"),
+    ],
+    "extras.projects": [
+        ("search", "Search & count"), ("repos", "Repositories"),
+    ],
+    "garage.home": [
+        ("bikes", "Bike picker"), ("stats", "Stats"),
+        ("detail", "Selected bike"),
+    ],
+    "garage.flipper": [
+        ("search", "Search & scan"), ("listings", "Scored listings"),
+    ],
 }
 
 SURFACE_LABELS = {
     "home": "Home", "weather": "Weather", "wat2do": "Wat2Do",
     "foodzen.grocery": "FoodZen - Grocery", "foodzen.meals": "FoodZen - Meals",
     "foodzen.expenses": "FoodZen - Expenses",
+    "trips.selekt": "Trips - Selekt", "trips.produce": "Trips - Produce",
+    "trips.rides": "Trips - Rides", "trips.xnav": "Trips - xNav",
+    "lab.machines": "Lab - Machines", "lab.services": "Lab - Services",
+    "lab.docker": "Lab - Docker", "extras.projects": "Extras - Projects",
+    "garage.home": "Garage - Home", "garage.flipper": "Garage - Flipper",
 }
 
 

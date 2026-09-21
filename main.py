@@ -38,7 +38,8 @@ BOTTOM = MAIN + [MORE]
 # the page modules; the test walks both and fails if they drift.
 SUBPAGES = {
     "lab": [("Machines", [("lab", 0)], 1), ("Network", [("lab", 1)], 1),
-            ("Services", [("lab", 2)], 1), ("Qbit", [("lab", 3)], 1)],
+            ("Services", [("lab", 2)], 1), ("Docker", [("lab", 3)], 1),
+            ("Qbit", [("lab", 4)], 1)],
     "tools": [
         ("Feeds", [("tools", 0)], 1),
         ("Vault", [("tools", 1)], 1),
@@ -51,6 +52,14 @@ SUBPAGES = {
         ("EatZen", [("tools", 3), ("foodzen", 4)], 2),
         ("BPM", [("tools", 3), ("foodzen", 5)], 2),
     ],
+    "garage": [("Home", [("garage", 0)], 1),
+               ("Mechanic", [("garage", 1)], 1),
+               ("Flipper", [("garage", 2)], 1)],
+    "weather": [("Bay Area", [("weather", 0)], 1),
+                ("Explore", [("weather", 1)], 1)],
+    "extras": [("Projects", [("extras", 0)], 1), ("AI", [("extras", 1)], 1),
+               ("Future", [("extras", 2)], 1),
+               ("Obligations", [("extras", 3)], 1)],
 }
 
 # How often the outbox watcher looks up from its book. Matched to
