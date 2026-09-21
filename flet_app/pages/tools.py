@@ -40,7 +40,7 @@ _F = {"kind": "all"}
 _V = {"host": M.VAULT_DEFAULT_HOST, "lib": "DeVault",
       "open": set(), "file": None, "text": None, "editing": False}
 _J = {"cat": "all", "q": "", "sort": "new", "mode": "list", "open": None,
-      "body": None, "editing": None}
+      "editing": None, "title": "", "body": ""}
 
 # Category colour and icon, matching the website's JN_CATS so an entry is the
 # same colour in both clients.
@@ -378,13 +378,18 @@ def _vault(page):
             rebuilder(page, build)()
         return handler
 
-    hosts = [m for m in (M.MACHINES or []) if m.get("id")]
+    # machine_config(), not M.MACHINES. The capitalised name falls through
+    # api._MAP to mock.MACHINES when the read fails, so with no signal this
+    # picker would offer five machines off a hardcoded list, two of which do
+    # not have the addresses the mock claims. None here means offer only the
+    # machine already selected, which is at least true.
+    cfg = M.machine_config() or {}
+    opts = [ft.DropdownOption(key=mid, text=(m or {}).get("display", mid))
+            for mid, m in sorted(cfg.items())]
     host_pick = ft.Dropdown(
         value=_V["host"], dense=True, filled=True, text_size=11, width=130,
         border_color=p["border"], color=p["text"],
-        options=[ft.DropdownOption(key=m["id"], text=m.get("display", m["id"]))
-                 for m in hosts] or [ft.DropdownOption(key=_V["host"],
-                                                       text=_V["host"])])
+        options=opts or [ft.DropdownOption(key=_V["host"], text=_V["host"])])
 
     def pick_host(e):
         # Flet 0.86: Dropdown fires on_select, not on_change. Wiring
@@ -587,9 +592,14 @@ def _journal(page):
     compose = ft.Column(spacing=8, visible=_J["mode"] == "compose")
     cat_choice = {"key": _J["editing"] and _entry_cat(entries, _J["editing"])
                   or list(JN_CATS)[0]}
-    title_field = _field(p, "entry title...", expand=True)
+    # Seeded from the session and written back on every keystroke. Any write
+    # anywhere on this page rebuilds the whole tab, and a compose form that
+    # comes back empty has eaten what you were writing.
+    title_field = _field(p, "entry title...", expand=True, value=_J["title"])
     body_field = _field(p, "write it here...", multiline=True, min_lines=10,
-                        max_lines=24)
+                        max_lines=24, value=_J["body"])
+    title_field.on_change = lambda e: _J.__setitem__("title", e.control.value or "")
+    body_field.on_change = lambda e: _J.__setitem__("body", e.control.value or "")
     cat_row = ft.Row(spacing=6, wrap=True)
 
     def paint_cat_row():
@@ -624,27 +634,26 @@ def _journal(page):
         _J["editing"] = path
         compose.visible = True
         if path:
-            title_field.value = _entry_title(entries, path)
+            title_field.value = _J["title"] = _entry_title(entries, path)
             cat_choice["key"] = _entry_cat(entries, path) or list(JN_CATS)[0]
             body_field.value = "loading..."
             paint_cat_row()
             repaint()
             text = await asyncio.to_thread(M.journal_read, path)
-            body_field.value = text if text is not None else ""
+            body_field.value = _J["body"] = text if text is not None else ""
             if text is None:
                 w.report(False, "could not read that entry")
         else:
-            title_field.value = ""
+            title_field.value = _J["title"] = ""
             body_field.value = "loading template..."
             paint_cat_row()
             repaint()
-            body_field.value = await asyncio.to_thread(
+            body_field.value = _J["body"] = await asyncio.to_thread(
                 M.journal_template, cat_choice["key"])
         repaint()
 
     def close_compose(e):
-        _J["mode"] = "list"
-        _J["editing"] = None
+        _J.update({"mode": "list", "editing": None, "title": "", "body": ""})
         rebuilder(page, build)()
 
     async def save_entry(e):
@@ -668,16 +677,15 @@ def _journal(page):
                 # body into yet. Saying so beats writing it to a guessed path.
                 w.report(True, "entry queued - reopen it to add the body once "
                                "it has been created")
-                _J["mode"] = "list"
-                _J["editing"] = None
+                _J.update({"mode": "list", "editing": None, "title": "",
+                           "body": ""})
                 rebuilder(page, build)()
                 return
             path = res
         ok, msg = await asyncio.to_thread(M.journal_save, path, body_field.value or "")
         w.report(ok, msg)
         if ok:
-            _J["mode"] = "list"
-            _J["editing"] = None
+            _J.update({"mode": "list", "editing": None, "title": "", "body": ""})
             rebuilder(page, build)()
             return
         repaint()
@@ -810,7 +818,7 @@ def _journal(page):
     ])
 
     return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
-        *([] if live else [offline_banner(p, "the journal")]),
+        *([] if live else [offline_banner(p, "the journal", sample=False)]),
         header, compose, reader, listing_box, w.control,
     ])
 

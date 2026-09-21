@@ -460,8 +460,15 @@ def build(page):
         return card(ft.Column(spacing=8, controls=body))
 
     # ------------------------------------------------------ wat2do progress
-    done = sum(1 for it in M.WAT2DO["items"] if it.get("done"))
-    total = len(M.WAT2DO["items"])
+    # wat2do_state(), not M.WAT2DO. The capitalised name goes through
+    # api._MAP, which substitutes mock.WAT2DO when the read comes back
+    # None - six invented tasks with two of them ticked. On a phone with no
+    # signal and a cold store, Home would have shown "2/6" and a checklist
+    # nobody wrote. None here means the day is unknown, and the card says so.
+    day = M.wat2do_state()
+    day_items = (day or {}).get("items") or []
+    done = sum(1 for it in day_items if it.get("done"))
+    total = len(day_items)
 
     def wat2do_mini():
         def row(it):
@@ -477,14 +484,17 @@ def build(page):
                         offset=ft.Offset(0.6, 0) if it.get("sub") else None),
             ])
         head = [title("Wat2Do"), ft.Container(expand=True),
-                ft.Text(f"{done}/{total}", size=12, color=p["accent"],
-                        weight=ft.FontWeight.W_600)]
+                ft.Text(f"{done}/{total}" if day else "—", size=12,
+                        color=p["accent"], weight=ft.FontWeight.W_600)]
         jump = _goto("wat2do")
+        rows = ([row(it) for it in day_items[:4]] if day
+                else [sub("Today's checklist has not been read from the "
+                          "server on this device.", 11)])
         inner = ft.Column(spacing=6, controls=[
             ft.Row(head),
             ft.ProgressBar(value=(done / total) if total else 0, color=p["orange"],
                            bgcolor=p["bg2"], bar_height=4, border_radius=2),
-            *[row(it) for it in M.WAT2DO["items"][:4]],
+            *rows,
         ])
         if jump is None:
             return card(inner)

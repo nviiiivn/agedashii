@@ -103,10 +103,18 @@ def rebuilder(page, build_fn):
     return rebuild
 
 
-def offline_banner(p, what="this page"):
+def offline_banner(p, what="this page", sample=True):
+    """The "you are offline" strip.
+
+    `sample=False` for a page that shows nothing rather than sample data
+    when it cannot reach the server. Several now do - the claim that sample
+    data is on screen is itself a small untruth when the list below the
+    banner is honestly empty, and this app cannot afford those.
+    """
     from ..ui import card
+    lead = ("Showing sample data - not connected to the server."
+            if sample else "Not connected to the server.")
     return card(ft.Row(spacing=8, controls=[
         ft.Icon(ft.Icons.INFO_OUTLINE, size=16, color=p["yellow"]),
-        ft.Text(f"Showing sample data - not connected to the server. "
-                f"Changes to {what} will not save.", size=11,
+        ft.Text(f"{lead} Changes to {what} will not save.", size=11,
                 color=p["text2"], expand=True)]), pad=10)

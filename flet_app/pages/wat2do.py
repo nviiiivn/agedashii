@@ -970,7 +970,7 @@ def _present(page):
     # The offline banner and the save status are chrome, not panels: they
     # must not be hideable, or a failed write would have nowhere to show.
     return ft.Column(spacing=10, expand=True, controls=[
-        *([] if live else [offline_banner(p, "your day")]),
+        *([] if live else [offline_banner(p, "your day", sample=False)]),
         ft.Container(expand=True, content=body),
         ft.Container(padding=PAD(0, 4), content=status),
     ])
