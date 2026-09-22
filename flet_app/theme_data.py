@@ -1,23 +1,219 @@
-# AUTO-GENERATED from dashbored-v3.py CSS themes — do not edit by hand
-# 21 themes
-THEMES = {
-    'dracula': {
-        'bg': '#282a36',
-        'bg2': '#1e1f2b',
-        'surface': '#21222c',
-        'border': 'rgba(189,147,249,0.18)',
-        'text': '#f8f8f2',
-        'text2': '#6272a4',
-        'text3': '#8898b8',
-        'accent': '#bd93f9',
-        'green': '#50fa7b',
-        'yellow': '#f1fa8c',
-        'red': '#ff5555',
-        'orange': '#ffb86c',
-        'purple': '#bd93f9',
-        'pink': '#ff79c6',
-        'cyan': '#8be9fd',
-    },
+"""Every colour the app paints with, and the rule that fills in the gaps.
+
+Where the colours come from
+---------------------------
+Twenty-four themes, in two blocks.
+
+The first fifteen are alola.lol's own, copied from ``~/www/shared/theme.js``
+verbatim.  alola.lol is the source of truth for anything that shares a name
+with it: ``white`` here and ``white`` there are the same white, so the site
+and the app read as one system instead of two that happen to use the same
+words.  Twelve of those names used to exist here with different, locally
+chosen values (GitHub Dark for ``dark``, Catppuccin Mocha for ``catppuccin``,
+and so on); those have been replaced.  If a theme's colours look wrong, fix
+theme.js and re-derive, do not patch this file.
+
+The remaining nine - nord, everforest, rosepine, monokai, ayu, kanagawa,
+nightowl, one-dark, synthwave - have no alola equivalent, so they keep the
+full palettes they always had and sit below the alola block.
+
+The derivation rule
+-------------------
+alola stores eight values per theme::
+
+    [bg, bg2, surface, border, text, text2, accent, green]
+
+The app needs fifteen: the eight above plus ``text3`` and six semantic hues
+(``red``, ``orange``, ``yellow``, ``cyan``, ``purple``, ``pink``) that pages
+use for status - a gauge is green under 60%, yellow under 80%, red above.
+``derive()`` computes the seven missing ones, the same way for every theme,
+so adding a sixteenth alola theme means adding eight numbers and nothing
+else:
+
+1. ``text3`` is ``text2`` brought 30% of the way toward ``text``.  It is a
+   third tier, not a dimmer one: blending toward ``bg`` instead produced
+   values under 2:1 on the dark themes (the old hand-written matrix text3
+   sat at 1.4:1 and was effectively invisible).
+
+2. Each semantic hue is the theme's own ``accent`` rotated to a fixed hue,
+   keeping the accent's saturation and lightness, so the set stays in the
+   theme's register rather than importing six stock colours.  An accent with
+   almost no saturation (alola's ``dark`` accent is plain ``#888``) would
+   rotate to six identical greys, so saturation is floored at 0.60 first.
+
+3. The rotated colour is then walked in lightness until it clears 4.5:1
+   against all three grounds it can land on - ``bg``, ``bg2`` and
+   ``surface``.  Hue and saturation never move.  This is what stops
+   ``yellow`` from being a 2:1 smear on the white theme: it darkens to an
+   olive that can actually be read, on the page and on a card.
+
+``green`` is not derived - alola supplies it, and it is used as given, even
+where alola chose a monochrome one (``white``'s green is near-black, and
+``black``'s is near-white; on those themes "fine" is deliberately silent and
+only trouble is coloured).
+
+Keeping the website in step
+---------------------------
+dashbored-web/ carries the same palettes as CSS custom properties and as the
+THEME_NAMES / THEME_COLORS / THEME_BG maps in app.js.  ``tools/gen-themes.py``
+regenerates both from this module; run it rather than editing them by hand.
+"""
+
+# ── colour maths ────────────────────────────────────────────────────────────
+
+
+def _hex(colour):
+    """'#abc' -> '#aabbcc'; anything already six digits is returned as-is."""
+    c = colour.strip().lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    return "#" + c.lower()
+
+
+def _rgb(colour):
+    c = _hex(colour)[1:]
+    return tuple(int(c[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+def _unrgb(rgb):
+    return "#" + "".join("%02x" % max(0, min(255, round(v * 255))) for v in rgb)
+
+
+def _channel_luminance(v):
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def luminance(colour):
+    """WCAG relative luminance, 0 (black) to 1 (white)."""
+    r, g, b = (_channel_luminance(v) for v in _rgb(colour))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a, b):
+    """WCAG contrast ratio between two colours, 1.0 to 21.0."""
+    la, lb = luminance(a), luminance(b)
+    if la < lb:
+        la, lb = lb, la
+    return (la + 0.05) / (lb + 0.05)
+
+
+def _hsl(colour):
+    r, g, b = _rgb(colour)
+    hi, lo = max(r, g, b), min(r, g, b)
+    l = (hi + lo) / 2
+    if hi == lo:
+        return 0.0, 0.0, l
+    d = hi - lo
+    s = d / (2 - hi - lo) if l > 0.5 else d / (hi + lo)
+    if hi == r:
+        h = ((g - b) / d) % 6
+    elif hi == g:
+        h = (b - r) / d + 2
+    else:
+        h = (r - g) / d + 4
+    return h * 60.0, s, l
+
+
+def _unhsl(h, s, l):
+    h = h % 360.0
+    c = (1 - abs(2 * l - 1)) * s
+    x = c * (1 - abs((h / 60.0) % 2 - 1))
+    m = l - c / 2
+    r, g, b = [(c, x, 0), (x, c, 0), (0, c, x),
+               (0, x, c), (x, 0, c), (c, 0, x)][int(h // 60) % 6]
+    return _unrgb((r + m, g + m, b + m))
+
+
+def _mix(a, b, t):
+    """Blend `t` of `b` into `a`."""
+    return _unrgb(tuple(x + (y - x) * t for x, y in zip(_rgb(a), _rgb(b))))
+
+
+# ── the rule ────────────────────────────────────────────────────────────────
+
+#: Where each semantic colour sits on the wheel once the accent is rotated.
+HUES = {"red": 352.0, "orange": 28.0, "yellow": 45.0,
+        "cyan": 187.0, "purple": 268.0, "pink": 325.0}
+
+#: Every derived colour must clear this against the theme's own background.
+MIN_CONTRAST = 4.5
+
+#: A near-grey accent rotates to six near-identical greys, so lift it first.
+SAT_FLOOR = 0.60
+
+#: How far text3 travels from text2 toward text.
+TEXT3_MIX = 0.30
+
+
+def legible(colour, grounds, target=MIN_CONTRAST):
+    """Move `colour` in lightness until it clears `target` on every ground.
+
+    `grounds` is every surface the colour can land on - the page, the panels
+    behind it, the cards on top - because a status colour that reads on the
+    page and vanishes on a card is still a bug. Hue and saturation are
+    untouched, so the result still belongs to the theme; only how light it
+    is changes.
+    """
+    h, s, l = _hsl(colour)
+    darkest = min(grounds, key=luminance)
+    step = 0.02 if contrast("#ffffff", darkest) >= contrast("#000000", darkest) else -0.02
+    for _ in range(60):
+        if min(contrast(colour, g) for g in grounds) >= target:
+            break
+        nl = min(0.98, max(0.02, l + step))
+        if nl == l:
+            break
+        l = nl
+        colour = _unhsl(h, s, l)
+    return colour
+
+
+def derive(eight):
+    """Expand alola's eight values into the fifteen the app paints with."""
+    bg, bg2, surface, border, text, text2, accent, green = (_hex(c) for c in eight)
+    pal = {"bg": bg, "bg2": bg2, "surface": surface, "border": border,
+           "text": text, "text2": text2, "accent": accent, "green": green,
+           "text3": _mix(text2, text, TEXT3_MIX)}
+    h, s, l = _hsl(accent)
+    s = max(s, SAT_FLOOR)
+    grounds = (bg, bg2, surface)
+    for name, hue in HUES.items():
+        pal[name] = legible(_unhsl(hue, s, l), grounds)
+    return pal
+
+
+# ── alola.lol's fifteen, verbatim from ~/www/shared/theme.js ────────────────
+# [bg, bg2, surface, border, text, text2, accent, green]
+
+ALOLA = {
+    'white': ['#ffffff', '#f5f5f5', '#ececec', '#d4d4d4', '#0a0a0a', '#555555', '#e11d48', '#111111'],
+    'red': ['#1a0004', '#2a0008', '#3a0010', '#7a2030', '#ffe0e4', '#cc9999', '#ff2a44', '#ff7a66'],
+    'black': ['#000000', '#0a0a0a', '#161616', '#2e2e2e', '#f5f5f5', '#888888', '#ff2a44', '#e5e5e5'],
+    'dark': ['#0a0a0a', '#111', '#1a1a1a', '#2a2a2a', '#e0e0e0', '#666', '#888', '#0f0'],
+    'light': ['#fafafa', '#f0f0f4', '#e6e6ea', '#d4d4da', '#1a1a1e', '#6b7280', '#4f46e5', '#16a34a'],
+    'sepia': ['#fdf6e3', '#f5e6c8', '#efe0b8', '#d8c8a0', '#433422', '#7a6a5a', '#b58900', '#589500'],
+    'cyberpunk': ['#0a0020', '#120030', '#1a0045', '#6633cc', '#f0e0ff', '#8877bb', '#ff00ff', '#00ffaa'],
+    'ocean': ['#0a1628', '#0f1f3a', '#152a4a', '#1e3a5f', '#e0f0ff', '#6080b0', '#4fc3ff', '#4caf88'],
+    'dracula': ['#282a36', '#1e1f2b', '#21222c', '#44475a', '#f8f8f2', '#6272a4', '#bd93f9', '#50fa7b'],
+    'gruvbox': ['#282828', '#1d2021', '#32302f', '#504945', '#ebdbb2', '#928374', '#fabd2f', '#b8bb26'],
+    'tokyo': ['#1a1b26', '#16161e', '#1f2335', '#363b54', '#c0d0ff', '#565f89', '#7aa2f7', '#9ece6a'],
+    'matrix': ['#000', '#001100', '#002200', '#003300', '#00ff00', '#006600', '#00ff00', '#00ff00'],
+    'solarized': ['#002b36', '#073642', '#093b46', '#1a5a6a', '#d0d0a0', '#586e75', '#b58900', '#859900'],
+    'pastel': ['#1a1a2e', '#16213e', '#1f2a47', '#3a4a6a', '#f0e0ff', '#a0a0c0', '#ff88cc', '#88dd88'],
+    'catppuccin': ['#1e1e2e', '#181825', '#232340', '#45475a', '#cdd6f4', '#6c7086', '#89b4fa', '#a6e3a1'],
+}
+
+ALOLA_NAMES = {
+    'white': 'White', 'red': 'Red', 'black': 'Black', 'dark': 'Dark',
+    'light': 'Light', 'sepia': 'Sepia', 'cyberpunk': 'Cyberpunk',
+    'ocean': 'Ocean', 'dracula': 'Dracula', 'gruvbox': 'Gruvbox',
+    'tokyo': 'Tokyo Night', 'matrix': 'Matrix', 'solarized': 'Solarized',
+    'pastel': 'Pastel', 'catppuccin': 'Catppuccin',
+}
+
+# ── the nine with no alola equivalent, kept as they were ────────────────────
+
+LOCAL = {
     'nord': {
         'bg': '#2e3440',
         'bg2': '#242933',
@@ -35,57 +231,6 @@ THEMES = {
         'pink': '#b48ead',
         'cyan': '#8fbcbb',
     },
-    'catppuccin': {
-        'bg': '#1e1e2e',
-        'bg2': '#181825',
-        'surface': '#313244',
-        'border': 'rgba(203,166,247,0.18)',
-        'text': '#cdd6f4',
-        'text2': '#6c7086',
-        'text3': '#9399b2',
-        'accent': '#cba6f7',
-        'green': '#a6e3a1',
-        'yellow': '#f9e2af',
-        'red': '#f38ba8',
-        'orange': '#fab387',
-        'purple': '#cba6f7',
-        'pink': '#f5c2e7',
-        'cyan': '#89dceb',
-    },
-    'tokyo': {
-        'bg': '#1a1b26',
-        'bg2': '#16161e',
-        'surface': '#1f2335',
-        'border': 'rgba(122,162,247,0.18)',
-        'text': '#a9b1d6',
-        'text2': '#565f89',
-        'text3': '#737aa2',
-        'accent': '#7aa2f7',
-        'green': '#9ece6a',
-        'yellow': '#e0af68',
-        'red': '#f7768e',
-        'orange': '#ff9e64',
-        'purple': '#9d7cd8',
-        'pink': '#f7768e',
-        'cyan': '#7dcfff',
-    },
-    'gruvbox': {
-        'bg': '#282828',
-        'bg2': '#1d2021',
-        'surface': '#32302f',
-        'border': 'rgba(254,128,25,0.18)',
-        'text': '#ebdbb2',
-        'text2': '#928374',
-        'text3': '#a89984',
-        'accent': '#fe8019',
-        'green': '#b8bb26',
-        'yellow': '#fabd2f',
-        'red': '#fb4934',
-        'orange': '#fe8019',
-        'purple': '#d3869b',
-        'pink': '#d3869b',
-        'cyan': '#8ec07c',
-    },
     'everforest': {
         'bg': '#2d353b',
         'bg2': '#272e33',
@@ -102,142 +247,6 @@ THEMES = {
         'purple': '#d699b6',
         'pink': '#d699b6',
         'cyan': '#7fbbb3',
-    },
-    'dark': {
-        'bg': '#0d1117',
-        'bg2': '#161b22',
-        'surface': '#1c2333',
-        'border': 'rgba(48,54,61,0.6)',
-        'text': '#c9d1d9',
-        'text2': '#8b949e',
-        'text3': '#768390',
-        'accent': '#58a6ff',
-        'green': '#3fb950',
-        'yellow': '#d29922',
-        'red': '#f85149',
-        'orange': '#db6d28',
-        'purple': '#bc8cff',
-        'pink': '#ff7b9c',
-        'cyan': '#39d2c0',
-    },
-    'light': {
-        'bg': '#ffffff',
-        'bg2': '#f6f8fa',
-        'surface': '#eef1f5',
-        'border': 'rgba(208,215,222,0.6)',
-        'text': '#1f2328',
-        'text2': '#656d76',
-        'text3': '#8c959f',
-        'accent': '#0969da',
-        'green': '#1a7f37',
-        'yellow': '#9a6700',
-        'red': '#cf222e',
-        'orange': '#bd5612',
-        'purple': '#8250df',
-        'pink': '#c4436b',
-        'cyan': '#1b7c83',
-    },
-    'matrix': {
-        'bg': '#000000',
-        'bg2': '#0a0a0a',
-        'surface': '#0f1a0f',
-        'border': 'rgba(26,58,26,0.6)',
-        'text': '#33ff33',
-        'text2': '#1a7a1a',
-        'text3': '#0f4a0f',
-        'accent': '#00ff41',
-        'green': '#33ff33',
-        'yellow': '#99ff00',
-        'red': '#ff0033',
-        'orange': '#ff6600',
-        'purple': '#66ff99',
-        'pink': '#ff66aa',
-        'cyan': '#00ffff',
-    },
-    'cyberpunk': {
-        'bg': '#0a0020',
-        'bg2': '#120030',
-        'surface': '#1a0045',
-        'border': 'rgba(102,51,204,0.5)',
-        'text': '#e0d0ff',
-        'text2': '#8877bb',
-        'text3': '#6655aa',
-        'accent': '#ff00ff',
-        'green': '#00ffaa',
-        'yellow': '#ffee00',
-        'red': '#ff0055',
-        'orange': '#ff8800',
-        'purple': '#aa44ff',
-        'pink': '#ff66cc',
-        'cyan': '#00ffff',
-    },
-    'ocean': {
-        'bg': '#0a1628',
-        'bg2': '#0f1f3a',
-        'surface': '#152a4a',
-        'border': 'rgba(30,58,95,0.5)',
-        'text': '#b0d0ff',
-        'text2': '#6080b0',
-        'text3': '#406090',
-        'accent': '#4fc3ff',
-        'green': '#4caf88',
-        'yellow': '#ffc107',
-        'red': '#ff5252',
-        'orange': '#ff9800',
-        'purple': '#7c8aff',
-        'pink': '#ff6b9d',
-        'cyan': '#26c6da',
-    },
-    'sepia': {
-        'bg': '#fdf6e3',
-        'bg2': '#f5e6c8',
-        'surface': '#efe0b8',
-        'border': 'rgba(216,200,160,0.5)',
-        'text': '#433422',
-        'text2': '#7a6a5a',
-        'text3': '#9a8a7a',
-        'accent': '#b58900',
-        'green': '#589500',
-        'yellow': '#b58900',
-        'red': '#cb4b16',
-        'orange': '#d3360b',
-        'purple': '#6c71c4',
-        'pink': '#d33682',
-        'cyan': '#2aa198',
-    },
-    'solarized': {
-        'bg': '#002b36',
-        'bg2': '#073642',
-        'surface': '#094454',
-        'border': 'rgba(42,90,106,0.5)',
-        'text': '#839496',
-        'text2': '#586e75',
-        'text3': '#657b83',
-        'accent': '#268bd2',
-        'green': '#859900',
-        'yellow': '#b58900',
-        'red': '#dc322f',
-        'orange': '#cb4b16',
-        'purple': '#6c71c4',
-        'pink': '#d33682',
-        'cyan': '#2aa198',
-    },
-    'pastel': {
-        'bg': '#faf0f5',
-        'bg2': '#f5e6ee',
-        'surface': '#f0dae5',
-        'border': 'rgba(224,200,213,0.5)',
-        'text': '#5a4060',
-        'text2': '#9a7a95',
-        'text3': '#ba9ab5',
-        'accent': '#c97ea5',
-        'green': '#8bc98a',
-        'yellow': '#e8c87a',
-        'red': '#e87a8a',
-        'orange': '#e8a87a',
-        'purple': '#c08ad0',
-        'pink': '#e87aa0',
-        'cyan': '#8ad0c0',
     },
     'rosepine': {
         'bg': '#191724',
@@ -360,28 +369,28 @@ THEMES = {
     },
 }
 
-THEME_NAMES = {
-    'dracula': 'Dracula',
-    'nord': 'Nord',
-    'catppuccin': 'Catppuccin',
-    'tokyo': 'Tokyo Night',
-    'gruvbox': 'Gruvbox',
-    'everforest': 'Everforest',
-    'dark': 'GitHub Dark',
-    'light': 'GitHub Light',
-    'matrix': 'Matrix',
-    'cyberpunk': 'Cyberpunk',
-    'ocean': 'Ocean',
-    'sepia': 'Sepia',
-    'solarized': 'Solarized',
-    'pastel': 'Pastel',
-    'rosepine': 'Rosé Pine',
-    'monokai': 'Monokai',
-    'ayu': 'Ayu Mirage',
-    'kanagawa': 'Kanagawa',
-    'nightowl': 'Night Owl',
-    'one-dark': 'One Dark',
-    'synthwave': 'Synthwave',
+LOCAL_NAMES = {
+    'nord': 'Nord', 'everforest': 'Everforest', 'rosepine': 'Rosé Pine',
+    'monokai': 'Monokai', 'ayu': 'Ayu Mirage', 'kanagawa': 'Kanagawa',
+    'nightowl': 'Night Owl', 'one-dark': 'One Dark', 'synthwave': 'Synthwave',
 }
 
-DEFAULT = 'dark'
+# ── the list the app offers, alola's fifteen first, in alola's order ────────
+
+KEYS = list(ALOLA) + list(LOCAL)
+
+THEMES = {k: derive(ALOLA[k]) for k in ALOLA}
+THEMES.update(LOCAL)
+
+THEME_NAMES = dict(ALOLA_NAMES)
+THEME_NAMES.update(LOCAL_NAMES)
+
+#: alola.lol's own default, so a browser and the app open on the same thing.
+DEFAULT = 'white'
+
+#: Themes whose background is light. Material needs to be told, and asking the
+#: background is more reliable than a hand-kept list that silently goes stale
+#: when a theme changes side - alola's `pastel` is dark, ours used to be light.
+LIGHT_THEMES = frozenset(
+    k for k, p in THEMES.items()
+    if contrast('#000000', p['bg']) > contrast('#ffffff', p['bg']))

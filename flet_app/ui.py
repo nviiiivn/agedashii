@@ -1,5 +1,5 @@
 import flet as ft
-from .theme_data import THEMES, THEME_NAMES, DEFAULT
+from .theme_data import THEMES, THEME_NAMES, DEFAULT, LIGHT_THEMES
 
 class State:
     theme = DEFAULT
@@ -61,7 +61,11 @@ def apply_theme(page, key=None):
         S.theme = key if key in THEMES else DEFAULT
     p = PAL()
     S.page = page
-    page.theme_mode = ft.ThemeMode.LIGHT if S.theme in ("light", "sepia", "pastel") else ft.ThemeMode.DARK
+    # Which themes are light is asked of the palette, not kept in a list here:
+    # the list said "light, sepia, pastel" and went stale the moment pastel
+    # became a dark theme, leaving Material painting light-mode widgets on a
+    # near-black page.
+    page.theme_mode = ft.ThemeMode.LIGHT if S.theme in LIGHT_THEMES else ft.ThemeMode.DARK
     page.theme = ft.Theme(
         color_scheme_seed=p["accent"],
         scaffold_bgcolor=p["bg"],
