@@ -1,7 +1,7 @@
 # Agedashii — what is done, what is not
 
-Updated 2026-09-21 evening. Branch `app-config`, 730 tests green (app),
-70 green (website).
+Updated 2026-09-21 late. Branch `app-config`, 758 tests green (app),
+110 green (website).
 
 This replaces the version written before the parity work. Where a claim has
 a number behind it, the number was measured, not estimated.
@@ -82,6 +82,11 @@ clicks vanished.
 - card layout: reorder, hide and resize per surface, plus a Customize mode
   that does it on the page itself
 
+### On the web, at agedashii.alola.lol
+The PWA is live and answering — "Add to Home Screen" is the no-cost route
+onto the iPhone, since a real iOS install needs a paid Apple Developer
+account. `/apk`, `/ipa` and `/downloads` all answer too.
+
 ### Elsewhere
 - offline maps and routing: edge snapping (median error 72 m to 6.1 m),
   21,806 turn restrictions honoured (9 banned turns over 120 routes to 0)
@@ -93,20 +98,42 @@ clicks vanished.
 
 ---
 
+### Photo to EatZen
+Point the camera at a plate; Tower's vision model names the foods, and every
+number comes from the local USDA table — the model is told in its system
+prompt that it is not a nutrition database.
+
+- `Red_Apple.jpg` → "apple" → `Apples, raw` 161 g, Na 0.0 mg, in **9.6 s**
+- `Banana-Single.jpg` → "banana" → `Bananas, raw` 118 g, Na 1.2 mg, in 19.4 s
+- a counted item ("1 banana") is a fact; a guessed weight ("170 g chicken")
+  is flagged `*` and is editable, as asked
+
+It was 75–87 s a photo until today: the ranking was "largest vision model
+under 10 GB", and Ollama reports the vision capability for most of Tower's
+100-model library, so a general chat model won every time. Dedicated vision
+families now rank first. Tower also cannot load `llama3.2-vision:11b` at all
+(`unknown model architecture: 'mllama'`) — that is now remembered per machine
+so it costs a request, not one of the three attempts.
+
+### The food she meant
+Running the photo feature's own vocabulary through the matcher found nine
+wrong answers — "1 orange" was answering with orange **peel**, "1 cup coffee"
+with 240 g of **cream**, "2 tbsp peanut butter" with a **cereal**, and every
+counted item came back at its smallest size (a banana at 81 g against a
+medium's 118 g). All nine fixed; the phrase battery is now 30 cases with
+controls, and it caught a regression on the way.
+
 ## In flight
 
-| Work | State |
-|---|---|
-| Photo to EatZen rows, via Tower's vision models | agent running |
-| Animated reordering (`ReorderableListView`) | agent running |
-| Collapsible drawer sections | agent running |
+Nothing. Everything below is either done or listed as not done.
 
 ## Not done
 
 | Work | Note |
 |---|---|
 | APK / IPA | blocked on Actions minutes; the IPA also needs a Mac |
-| PWA at `agedashii.alola.lol` | needs a web build, a Caddy block, a tunnel entry and a DNS record — none exist yet |
+| `1 salmon fillet` matches smoked salmon | that entry is the only one that says "filets". Its alternatives list the rest |
+| `1 cup oatmeal` matches QUAKER | the table has no plain cooked oatmeal to answer with |
 | Forks: FoodZen, Trips+Garage, Wat2Do as separate apps | agreed, not started |
 | Sensors: accelerometer, gyro, lean, g-force | deferred by her |
 | Routing takes no heading | on a divided highway a fix nearer the opposite carriageway starts the route the wrong way |
