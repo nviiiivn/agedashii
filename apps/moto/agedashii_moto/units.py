@@ -102,6 +102,18 @@ def metres_to_distance(m):
     return None if n is None else (n / 1000.0 if metric() else n / M_PER_MI)
 
 
+def per_distance(per_mile):
+    """Something *per mile* as the same thing per the chosen unit.
+
+    Garage's "cost / mile". The conversion runs the other way from
+    `distance()` - a cost spread over more kilometres than miles is a
+    smaller number per kilometre - and getting that backwards would make
+    riding to Reno look like it cost 2.6x what it did.
+    """
+    n = _number(per_mile)
+    return None if n is None else (n / KM_PER_MI if metric() else n)
+
+
 # -------------------------------------------------------------- formatting
 def _fmt(value, digits, dash):
     if value is None:

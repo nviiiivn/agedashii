@@ -131,23 +131,32 @@ def pill(label, *, on, on_click, tooltip=None, width=None):
                         color=p["accent"] if on else p["text2"])))
 
 
-def switch_row(label, why, value, on_change, *, icon=None, disabled=False):
+def switch_row(label, why, value, on_change, *, icon=None, disabled=False,
+               switch=None):
     """One labelled switch with the sentence that says what it does.
 
     The sentence is not optional. Every switch in this app changes something
     you cannot see from the switch itself, and a row of unexplained toggles
     is how a settings screen becomes something you are afraid to touch.
+
+    `switch` lets the caller build the control itself and keep the handle.
+    That is for the one case where flipping one switch has to reach another
+    without repainting the page - turning pain and spoons off greys out the
+    switch that says whether they steer the day - because a repaint there
+    would scroll Settings back to the top for no other reason.
     """
     p = PAL()
     lead = [glyph(icon, size=17, color=p["text3"] if disabled else None)] if icon else []
+    if switch is None:
+        switch = ft.Switch(value=value, on_change=on_change, disabled=disabled,
+                           active_color=p["accent"])
     return ft.Row(vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
         *lead,
         ft.Column(spacing=1, expand=True, controls=[
             ft.Text(label, size=13, color=p["text3"] if disabled else p["text"]),
             ft.Text(why, size=10, color=p["text3"]),
         ]),
-        ft.Switch(value=value, on_change=on_change, disabled=disabled,
-                  active_color=p["accent"]),
+        switch,
     ])
 
 

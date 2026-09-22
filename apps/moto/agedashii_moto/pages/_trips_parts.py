@@ -32,6 +32,8 @@ import flet as ft
 from agedashii_washi import api as M
 from agedashii_washi import config
 
+from .. import units as _units
+
 #: Vulcan Lofts. Byte-for-byte the website's `TRIPS_HOME`, because it is
 #: written into every saved trip and a second spelling would fork the data.
 HOME = {"name": "Home — Vulcan Lofts (4401 San Leandro)",
@@ -1208,13 +1210,12 @@ def maneuver_icon(kind):
 
 
 def fmt_miles(mi):
-    """'now' / '300 ft' / '1.4 mi'. The website's `gpsxFmtDist`."""
-    try:
-        mi = float(mi or 0)
-    except (TypeError, ValueError):
-        return "—"
-    if mi < 0.01:
-        return "now"
-    if mi < 0.1:
-        return f"{int(round(mi * 5280))} ft"
-    return f"{mi:.1f} mi"
+    """'now' / '300 ft' / '1.4 mi'. The website's `gpsxFmtDist`.
+
+    The name describes what comes *in* - a Valhalla leg length, which is
+    always miles - not what goes out. What goes out is whichever unit
+    Settings is set to, because this is the number on the turn card the
+    rider is actually reading, and a countdown in the wrong unit is worse
+    than no countdown.
+    """
+    return _units.near_text(mi)

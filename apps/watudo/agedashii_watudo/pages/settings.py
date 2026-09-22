@@ -44,6 +44,15 @@ from .. import prefs as wprefs
 from .. import ui as U
 
 
+# The last thing the status line said, kept out here rather than on the
+# _Saver instance. Appearance and navigation settings repaint the whole
+# shell, which builds a brand new Settings page with a brand new status
+# line - so a message written to the old one would be thrown away in the
+# same breath it was written. Seeding each new line from here is what makes
+# "saved" survive the repaint that the setting itself caused.
+_STATUS = {"msg": "", "bad": False}
+
+
 class _Saver:
     """One shared status line for every edit on this page.
 
@@ -55,8 +64,10 @@ class _Saver:
     """
 
     def __init__(self, page):
+        p = PAL()
         self.page = page
-        self.text = ft.Text("", size=11, color=PAL()["text2"], selectable=True)
+        self.text = ft.Text(_STATUS["msg"], size=11, selectable=True,
+                            color=p["pink"] if _STATUS["bad"] else p["text2"])
 
     @property
     def control(self):
@@ -64,6 +75,7 @@ class _Saver:
 
     def note(self, msg, bad=False):
         p = PAL()
+        _STATUS.update({"msg": msg, "bad": bad})
         self.text.value = msg
         self.text.color = p["pink"] if bad else p["text2"]
 
@@ -131,6 +143,7 @@ def server_card(page, saver, on_change=None):
         status.color = p["text2"] if ok else p["pink"]
         saver.note("server address saved" if ok else "saved, but it did not answer",
                    bad=not ok)
+        saver.refresh()
         repaint()
 
     address.on_submit = check
@@ -177,8 +190,8 @@ def theme_card(page, saver, on_change=None):
         async def pick(e):
             apply_theme(page, key)
             wprefs.set_theme(key)
-            repaint()
             await saver.commit(f"theme - {THEME_NAMES.get(key, key)}")
+            repaint()
 
         # Fixed width, and nothing inside it expands: these are laid out in
         # a Row(wrap=True), which hands its children unbounded constraints.
@@ -224,14 +237,14 @@ def appearance_card(page, saver, on_change=None):
         so there is nothing to read back and nothing to get wrong."""
         async def handler(e):
             prefs.set_corner_radius(value)
-            repaint()
             await saver.commit(f"corners - {RADIUS_LABELS.get(value, value)}")
+            repaint()
         return handler
 
     async def toggle_glow(e):
         prefs.set_accent_glow(bool(e.control.value))
-        repaint()
         await saver.commit("accent glow " + ("on" if e.control.value else "off"))
+        repaint()
 
     intensity_text = ft.Text(f"{prefs.crt_intensity()}%", size=11, color=p["text2"])
     intensity = ft.Slider(
@@ -248,8 +261,8 @@ def appearance_card(page, saver, on_change=None):
     async def commit_intensity(e):
         prefs.set_crt_intensity(round(e.control.value))
         intensity_text.value = f"{prefs.crt_intensity()}%"
-        repaint()
         await saver.commit(f"CRT intensity {prefs.crt_intensity()}%")
+        repaint()
 
     intensity.on_change = preview
     intensity.on_change_end = commit_intensity
@@ -257,8 +270,8 @@ def appearance_card(page, saver, on_change=None):
     async def toggle_crt(e):
         prefs.set_crt_overlay(bool(e.control.value))
         intensity.disabled = not e.control.value
-        repaint()
         await saver.commit("CRT overlay " + ("on" if e.control.value else "off"))
+        repaint()
 
     return card(ft.Column(spacing=12, controls=[
         _head("Appearance", ft.Icons.TUNE),
@@ -312,13 +325,14 @@ def navigation_card(page, saver, on_change=None, reach=None):
 
     async def toggle_bar(e):
         prefs.set_bottom_bar_enabled(bool(e.control.value))
-        repaint()
         await saver.commit("bottom bar " + ("on" if e.control.value else "off"))
+        repaint()
 
     async def toggle_menu(e):
         wprefs.set_menu_button(bool(e.control.value))
+        await saver.commit("menu button "
+                           + ("shown" if e.control.value else "hidden"))
         repaint()
-        await saver.commit("menu button " + ("shown" if e.control.value else "hidden"))
 
     bar_on = prefs.bottom_bar_enabled()
     forced = not bar_on
@@ -352,12 +366,10 @@ def day_card(page, saver, on_change=None):
 
     async def toggle_friendly(e):
         wprefs.set_friendly_dates(bool(e.control.value))
-        repaint()
         await saver.commit("dates " + ("friendly" if e.control.value else "plain"))
 
     async def toggle_hide(e):
         wprefs.set_hide_done(bool(e.control.value))
-        repaint()
         await saver.commit("finished tasks "
                            + ("hidden" if e.control.value else "kept on screen"))
 
@@ -376,36 +388,48 @@ def day_card(page, saver, on_change=None):
 
 
 def vitals_card(page, saver, on_change=None):
-    """Pain and spoons: whether they are recorded, and whether they decide."""
-    repaint = _repainter(on_change)
+    """Pain and spoons: whether they are recorded, and whether they decide.
+
+    Neither switch repaints the shell. They change the Wat2Do surface, which
+    is not the surface you are looking at while you set them, and a repaint
+    would scroll Settings back to the top to update a page nobody can see.
+    The one thing that *does* have to react immediately is the second switch
+    greying out when the first goes off, so this card repaints itself - the
+    same `rows`/`paint` shape the dashboard's layout card uses.
+    """
+    rows = ft.Column(spacing=12)
 
     async def toggle_track(e):
         wprefs.set_track_vitals(bool(e.control.value))
-        repaint()
+        paint()
         await saver.commit("pain & spoons "
                            + ("tracked" if e.control.value else "not tracked"))
 
     async def toggle_steer(e):
         wprefs.set_vitals_steer(bool(e.control.value))
-        repaint()
         await saver.commit("steering " + ("on" if e.control.value else "off"))
 
-    tracking = wprefs.track_vitals()
-    return card(ft.Column(spacing=12, controls=[
-        _head("Pain & spoons", ft.Icons.MONITOR_HEART),
-        U.switch_row("Track them",
-                     "The two sliders on Wat2Do, saved to the day's record "
-                     "when you let go. Off, the card is not drawn and neither "
-                     "number is written.",
-                     tracking, toggle_track, icon=ft.Icons.HEALING),
-        U.switch_row("Let them steer the day",
-                     "Low spoons keeps the suggestion close, high pain makes "
-                     "it indoor, and the mission rolls a smaller radius. Off, "
-                     "only the weather decides." if tracking else
-                     "Nothing to steer with while they are not being tracked.",
-                     wprefs.vitals_steer(), toggle_steer,
-                     icon=ft.Icons.LIGHTBULB_OUTLINE, disabled=not tracking),
-    ]))
+    def paint():
+        tracking = wprefs.track_vitals()
+        rows.controls = [
+            _head("Pain & spoons", ft.Icons.MONITOR_HEART),
+            U.switch_row("Track them",
+                         "The two sliders on Wat2Do, saved to the day's record "
+                         "when you let go. Off, the card is not drawn and "
+                         "neither number is written.",
+                         tracking, toggle_track, icon=ft.Icons.HEALING),
+            U.switch_row("Let them steer the day",
+                         "Low spoons keeps the suggestion close, high pain "
+                         "makes it indoor, and the mission rolls a smaller "
+                         "radius. Off, only the weather decides." if tracking
+                         else "Nothing to steer with while they are not being "
+                         "tracked.",
+                         wprefs.vitals_steer(), toggle_steer,
+                         icon=ft.Icons.LIGHTBULB_OUTLINE, disabled=not tracking),
+        ]
+
+    paint()
+    return card(rows)
 
 
 def template_card(page, saver, on_change=None):
@@ -416,14 +440,12 @@ def template_card(page, saver, on_change=None):
     async def pick_marker(e):
         wprefs.set_sub_marker(U.picked(e, set(wprefs.SUB_MARKERS),
                                        wprefs.sub_marker()))
-        repaint()
         await saver.commit("sub-task marker saved")
 
     async def pick_subjects(e):
         valid = {str(n) for n in wprefs.MISSION_SUBJECT_CHOICES}
         wprefs.set_mission_subjects(
             U.picked(e, valid, str(wprefs.mission_subjects())))
-        repaint()
         await saver.commit("mission size saved")
 
     counts = [(str(n), "3 to 6 - let the dice decide" if n == 0
@@ -480,7 +502,6 @@ def origin_card(page, saver, on_change=None):
         # Every cached answer was measured from somewhere else.
         M.refresh()
         say_where()
-        repaint()
         await saver.commit("measuring from " + W.origin_label())
 
     async def reset(e=None):
@@ -488,7 +509,6 @@ def origin_card(page, saver, on_change=None):
         entry.value = ""
         M.refresh()
         say_where()
-        repaint()
         await saver.commit("measuring from home again")
 
     entry.on_submit = use

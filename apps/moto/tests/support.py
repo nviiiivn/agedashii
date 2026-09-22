@@ -193,6 +193,16 @@ class ShellCase(unittest.TestCase):
         self.addCleanup(lambda: (prefs._V.clear(), prefs._V.update(saved_prefs),
                                  setattr(prefs, "LOADED", loaded)))
 
+        # Moto's own two keys, restored the same way. A test that picks a
+        # theme or hides the hamburger must not leave the next one with it.
+        from agedashii_moto import motoprefs
+
+        saved_moto = dict(motoprefs._V)
+        moto_loaded = motoprefs.LOADED
+        self.addCleanup(lambda: (motoprefs._V.clear(),
+                                 motoprefs._V.update(saved_moto),
+                                 setattr(motoprefs, "LOADED", moto_loaded)))
+
         tabs = dict(_TAB_INDEX)
         self.addCleanup(lambda: (_TAB_INDEX.clear(), _TAB_INDEX.update(tabs)))
         self.addCleanup(lambda: panels.set_editing(False))
@@ -203,14 +213,23 @@ class ShellCase(unittest.TestCase):
         self.addCleanup(reset_page_state)
         reset_page_state()
 
-    def build_shell(self, page=None):
-        """Run `main(page)` to completion and hand back the page it built."""
+    def build_shell(self, page=None, store=None):
+        """Run `main(page)` to completion and hand back the page it built.
+
+        `store` is a StubPrefs to launch against. Passing one that a
+        previous shell already wrote to is how a *restart* is tested: the
+        second launch reads exactly what the first one stored, which is the
+        only way to prove a preference survives one.
+        """
         import asyncio
 
         page = page or StubPage()
         module = load_main()
         real = ft.SharedPreferences
-        ft.SharedPreferences = StubPrefs
+        # `main()` constructs the service itself - it has to, a Flet service
+        # is registered by being constructed inside the page context - so a
+        # specific store is supplied by making the class hand that one back.
+        ft.SharedPreferences = (lambda: store) if store is not None else StubPrefs
         try:
             asyncio.run(module.main(page))
         finally:

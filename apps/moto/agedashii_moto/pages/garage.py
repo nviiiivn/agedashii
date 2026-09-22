@@ -257,8 +257,7 @@ def _stats_strip(slug, stats):
          if stats.get("total_spent") else "—"),
         ("mpg avg", _dash(stats.get("mpg_avg"))),
         (f"cost / {U.distance_unit()}",
-         _money(U.speed(stats.get("cost_per_mile")) and None
-                or _per_unit(stats.get("cost_per_mile")))
+         _money(U.per_distance(stats.get("cost_per_mile")))
          if stats.get("cost_per_mile") is not None else "—"),
         ("since service", U.odometer_text(stats.get("miles_since_service"))),
         ("days since svc", f"{stats.get('days_since_service')}d"

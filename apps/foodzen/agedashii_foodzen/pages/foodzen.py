@@ -205,9 +205,10 @@ def _grocery(page):
 
     def need_card():
         return card(ft.Column(spacing=6, controls=[
-            ft.Row([title("Need", 13), ft.Container(expand=True),
-                    ft.TextButton("move all to list", on_click=run(M.foodzen_need_to_list))
-                    if need_items else ft.Container()]),
+            glyphs.head(glyphs.ICON_NEED, "Need", 13,
+                        trailing=ft.TextButton(content="move all to list",
+                                               on_click=run(M.foodzen_need_to_list))
+                        if need_items else None),
             *([simple_row(n.get("name", ""), M.foodzen_need_remove, n.get("cat"))
                for n in need_items] if need_items else [sub("nothing needed", 11)]),
             add_row("need to restock...", M.foodzen_need_add),
@@ -248,11 +249,12 @@ def _browse(page, run):
         tooltip=("hide the catalogue" if _OPEN["browse"]
                  else "the whole catalogue, tap an item to add it"),
         content=ft.Row([
-            title("Browse", 13), ft.Container(expand=True),
+            glyphs.mark(glyphs.ICON_BROWSE, size=16), title("Browse", 13),
+            ft.Container(expand=True),
             chip(f"{len(CATALOG)} items", p["accent"], small=True),
             ft.Icon(ft.Icons.EXPAND_LESS if _OPEN["browse"]
                     else ft.Icons.EXPAND_MORE, size=20, color=p["text2"]),
-        ]))
+        ], spacing=7, vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
     if not _OPEN["browse"]:
         return card(head)
@@ -317,7 +319,7 @@ def _meals(page):
 
     def pantry_card():
         return card(ft.Column(spacing=6, controls=[
-            title("Pantry", 13),
+            glyphs.head(glyphs.ICON_PANTRY, "Pantry", 13),
             *([pantry_row(x) for x in pantry_items] if pantry_items
               else [sub("pantry empty", 11)]),
             add_row("already have...", M.foodzen_pantry_add),
@@ -325,8 +327,8 @@ def _meals(page):
 
     def recipes_card():
         return card(ft.Column(spacing=6, controls=[
-            ft.Row([title("Recipe vault", 13), ft.Container(expand=True),
-                    chip(str(len(recipes)), p["accent"], small=True)]),
+            glyphs.head(glyphs.ICON_RECIPES, "Recipe vault", 13,
+                        trailing=chip(str(len(recipes)), p["accent"], small=True)),
             *([recipe_row(r) for r in recipes[:40]] if recipes
               else [sub("no recipes saved - use Scrape to pull one in from a URL", 11)]),
         ]))
@@ -363,9 +365,9 @@ def _mealplan(recipes):
     ]) for d in days]
 
     return card(ft.Column(spacing=6, controls=[
-        ft.Row([title("Meal plan", 13), ft.Container(expand=True),
-                chip(f"{sum(len(v) for v in planned.values())} planned",
-                     p["green"], small=True)]),
+        glyphs.head(glyphs.ICON_PLAN, "Meal plan", 13,
+                    trailing=chip(f"{sum(len(v) for v in planned.values())} planned",
+                                  p["green"], small=True)),
         *rows,
         sub("Mirrors the day set on each recipe.", 10),
     ]))
@@ -441,13 +443,14 @@ def _scrape(page):
 
     return ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, controls=[
         card(ft.Column(spacing=8, controls=[
-            title("Recipe scanner", 13),
+            glyphs.head(glyphs.ICON_SCRAPE, "Recipe scanner", 13),
             sub("Paste a recipe URL. The server fetches and parses it; nothing "
                 "is saved until you say so.", 11),
             ft.Row(spacing=6, controls=[
                 url, ft.FilledButton("Fetch", height=38, on_click=fetch)]),
         ])),
-        card(ft.Column(spacing=6, controls=[title("Result", 13), result])),
+        card(ft.Column(spacing=6, controls=[
+            glyphs.head(ft.Icons.PLAYLIST_ADD_CHECK, "Result", 13), result])),
         ft.Container(padding=PAD(0, 4), content=status),
     ])
 
@@ -540,7 +543,7 @@ def _expenses(page):
 
     def receipt_card():
         return card(ft.Column(spacing=8, controls=[
-            title("Import receipt", 13),
+            glyphs.head(glyphs.ICON_EXPENSES, "Import receipt", 13),
             ft.Row(spacing=6, controls=[store, ft.Container(expand=True)]),
             body,
             ft.Row(spacing=6, controls=[
@@ -550,15 +553,15 @@ def _expenses(page):
 
     def spending_card():
         return card(ft.Column(spacing=6, controls=[
-            ft.Row([title("Spending", 13), ft.Container(expand=True),
-                    chip(f"${total:,.2f} · {len(purchases)} orders",
-                         p["green"], small=True)]),
+            glyphs.head(ft.Icons.PAYMENTS, "Spending", 13,
+                        trailing=chip(f"${total:,.2f} · {len(purchases)} orders",
+                                      p["green"], small=True)),
             *(spend_rows or [sub("no purchases saved yet", 11)]),
         ]))
 
     def radar_card():
         return card(ft.Column(spacing=6, controls=[
-            ft.Row([title("Freq radar", 13), ft.Container(expand=True)]),
+            glyphs.head(ft.Icons.RADAR, "Freq radar", 13),
             *(radar or [sub("nothing bought twice yet", 11)]),
         ]))
 
