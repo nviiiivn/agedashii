@@ -311,9 +311,14 @@ def panels_card(page, saver, on_layout=None):
     page's tabs are edited separately, which is the only way tabs and
     panels can both be arranged.
 
-    Width is the new part: nothing in the app could be resized. It applies
-    from tablet width up; on a phone every card is full width whatever is
-    set here, because a third-width card at 400px cannot be read.
+    Width and height: nothing in the app could be resized before either,
+    and both are now genuinely custom - a slider over every column or
+    cell, not a menu of a few presets ("are you saying i can't just set a
+    custom length?" - she could not, and now she can). Width applies from
+    tablet width up; on a phone every card is full width whatever the
+    slider is set to, because a narrow card at 400px cannot be read.
+    Height has no such floor - a short card scrolls its own content on
+    any screen, phone included, so it applies everywhere.
     """
     p = PAL()
     surfaces = list(panels.SURFACES)
@@ -331,6 +336,7 @@ def panels_card(page, saver, on_layout=None):
     def row(surface, key, i, order, labels, hidden_set):
         hidden = key in hidden_set
         width = prefs.panel_width(surface, key)
+        height = prefs.panel_height(surface, key)
 
         async def up(e):
             prefs.move_panel(surface, key, -1)
@@ -353,36 +359,80 @@ def panels_card(page, saver, on_layout=None):
             if on_layout:
                 on_layout()
 
-        def set_width(w):
-            async def handler(e):
-                prefs.set_panel_width(surface, key, w)
-                paint()
-                await saver.commit(f"{labels.get(key, key)} set to {panels.WIDTH_LABELS[w]}")
-                if on_layout:
-                    on_layout()
-            return handler
+        # Live labels, updated straight from the slider's own on_change so
+        # dragging feels continuous - `paint()` rebuilds every row on this
+        # surface, which is the wrong amount of work to repeat on every
+        # frame of a drag; the actual save only happens once, on release.
+        width_text = ft.Text(panels.width_label(width), size=10, color=p["text3"])
+        height_text = ft.Text(panels.height_label(height), size=10, color=p["text3"])
 
-        width_buttons = [
-            ft.Container(
-                padding=PAD(7, 3), border_radius=RAD(6), ink=True,
-                bgcolor=ft.Colors.with_opacity(0.16, p["accent"]) if w == width else None,
-                on_click=set_width(w), tooltip=f"{panels.WIDTH_LABELS[w]} width",
-                content=ft.Text(panels.WIDTH_LABELS[w], size=11,
-                                color=p["accent"] if w == width else p["text3"]))
-            for w in panels.WIDTH_ORDER]
+        def on_width_drag(e):
+            width_text.value = panels.width_label(round(e.control.value))
+            width_text.update()
+
+        async def on_width_settle(e):
+            span = panels.snap_width(round(e.control.value))
+            prefs.set_panel_width(surface, key, span)
+            e.control.value = span
+            width_text.value = panels.width_label(span)
+            e.control.update()
+            width_text.update()
+            await saver.commit(f"{labels.get(key, key)} width set to {panels.width_label(span)}")
+            if on_layout:
+                on_layout()
+
+        def on_height_drag(e):
+            height_text.value = panels.height_label(round(e.control.value))
+            height_text.update()
+
+        async def on_height_settle(e):
+            cells = round(e.control.value)
+            prefs.set_panel_height(surface, key, cells)
+            height_text.value = panels.height_label(cells)
+            height_text.update()
+            await saver.commit(f"{labels.get(key, key)} height set to {panels.height_label(cells)}")
+            if on_layout:
+                on_layout()
+
+        width_slider = ft.Slider(
+            min=panels.MIN_WIDTH, max=panels.MAX_WIDTH, value=width,
+            divisions=panels.MAX_WIDTH - panels.MIN_WIDTH,
+            active_color=p["accent"], expand=True,
+            on_change=on_width_drag, on_change_end=on_width_settle)
+
+        height_slider = ft.Slider(
+            min=panels.MIN_HEIGHT, max=panels.MAX_HEIGHT, value=height,
+            divisions=panels.MAX_HEIGHT - panels.MIN_HEIGHT,
+            active_color=p["accent"], expand=True,
+            on_change=on_height_drag, on_change_end=on_height_settle)
 
         return ft.Container(
-            padding=PAD(2, 0),
+            padding=PAD(2, 8),
             border=ft.Border(bottom=ft.BorderSide(1, p["border"])) if i < len(order) - 1 else None,
-            content=ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-                *_arrows(i == 0, i == len(order) - 1, up, down),
-                ft.Container(expand=True, content=ft.Text(
-                    labels.get(key, key), size=13,
-                    color=p["text3"] if hidden else p["text"])),
-                ft.Row(spacing=2, controls=width_buttons),
-                _icon_toggle(ft.Icons.VISIBILITY_OFF if hidden else ft.Icons.VISIBILITY,
-                             not hidden, "Show this card" if hidden else "Hide this card",
-                             toggle),
+            content=ft.Column(spacing=2, controls=[
+                ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                    *_arrows(i == 0, i == len(order) - 1, up, down),
+                    ft.Container(expand=True, content=ft.Text(
+                        labels.get(key, key), size=13,
+                        color=p["text3"] if hidden else p["text"])),
+                    _icon_toggle(ft.Icons.VISIBILITY_OFF if hidden else ft.Icons.VISIBILITY,
+                                 not hidden, "Show this card" if hidden else "Hide this card",
+                                 toggle),
+                ]),
+                ft.Row(spacing=6, controls=[
+                    ft.Text("Width", size=9, color=p["text3"]),
+                    ft.Container(expand=True), width_text]),
+                width_slider,
+                # Repeated here, not only in the card's own sub() note above
+                # the list: she asked directly whether a custom width was
+                # even possible, so the one screen-size caveat it has gets
+                # said again right next to the control that sets it.
+                sub("Tablet and desktop only - always full width on a phone.", 9),
+                ft.Row(spacing=6, controls=[
+                    ft.Text("Height", size=9, color=p["text3"]),
+                    ft.Container(expand=True), height_text]),
+                height_slider,
+                sub("Applies on every screen size, phone included.", 9),
             ]))
 
     def pick_surface(e):

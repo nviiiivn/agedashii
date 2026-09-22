@@ -404,7 +404,7 @@ def _panel_keys_for_storage():
     """
     from . import panels as _panels
     return [_pkey(s, part) for s in _panels.SURFACES
-            for part in ("order", "hidden", "width")]
+            for part in ("order", "hidden", "width", "height")]
 
 
 def _surface_keys(surface):
@@ -428,11 +428,18 @@ def panels(surface):
 
 
 def panel_width(surface, key):
-    """'full', 'half' or 'third'. Stored as "<panel>:<width>" strings.
+    """The card's ResponsiveRow column span, 1-60 (of 60). Default is 60 (full).
 
-    An unrecognised width - from an older build, or a corrupt value - reads
-    as full rather than raising: the cost of being wrong here is a card
-    that is too wide, and the cost of raising is no page at all.
+    Stored as "<panel>:<span>" strings. A build before this one stored one
+    of three names - "full"/"half"/"third" - instead of a number; those
+    are still read and mapped to the span they meant (60/30/20), so a
+    layout saved before widths were a continuous range still comes back
+    at the width it was rather than silently resetting to full.
+
+    Anything else unrecognised - junk, a span outside 1-60, a corrupt
+    value - reads as full rather than raising: the cost of being wrong
+    here is a card that is too wide, and the cost of raising is no page
+    at all.
     """
     from . import panels as _panels
     raw = _V.get(_pkey(surface, "width"))
@@ -441,19 +448,28 @@ def panel_width(surface, key):
             if not isinstance(entry, str) or ":" not in entry:
                 continue
             k, _, w = entry.partition(":")
-            if k == key and w in _panels.WIDTHS:
-                return w
+            if k != key:
+                continue
+            if w in _panels.LEGACY_WIDTH_NAMES:
+                return _panels.LEGACY_WIDTH_NAMES[w]
+            span = _as_int(w, range(_panels.MIN_WIDTH, _panels.MAX_WIDTH + 1), None)
+            if span is not None:
+                return span
     return _panels.DEFAULT_WIDTH
 
 
 def set_panel_width(surface, key, width):
+    """Store `width` as a column span, 1-60. False if it is out of range."""
     from . import panels as _panels
-    if key not in _surface_keys(surface) or width not in _panels.WIDTHS:
+    if key not in _surface_keys(surface):
+        return False
+    span = _as_int(width, range(_panels.MIN_WIDTH, _panels.MAX_WIDTH + 1), None)
+    if span is None:
         return False
     kept = [e for e in (_V.get(_pkey(surface, "width")) or [])
             if isinstance(e, str) and e.partition(":")[0] != key]
-    if width != _panels.DEFAULT_WIDTH:
-        kept.append(f"{key}:{width}")
+    if span != _panels.DEFAULT_WIDTH:
+        kept.append(f"{key}:{span}")
     _V[_pkey(surface, "width")] = kept
     return True
 
@@ -474,6 +490,12 @@ def move_panel_onto(surface, key, target):
     Works on the full order, hidden panels included, so a hidden card keeps
     its place in the list relative to its neighbours and comes back where
     she left it rather than at the end.
+
+    Not called from panels.py any more - edit mode reorders through
+    `ReorderableListView`, which hands back positions, not a target key -
+    but kept and still tested directly: it is the one place "drop onto"
+    semantics (land next to a specific neighbour) live, as opposed to
+    `reorder_visible_panels`'s "here is the whole new order" below.
     """
     order = panel_order(surface)
     if key == target or key not in order or target not in order:
@@ -485,28 +507,150 @@ def move_panel_onto(surface, key, target):
     return True
 
 
+def reorder_visible_panels(surface, new_visible_order):
+    """Replace the *visible* panels' order with `new_visible_order`.
+
+    `ReorderableListView` only ever draws the panels `panels()` returns -
+    a hidden one is not a row in that list at all - so its `on_reorder`
+    event can only describe a new arrangement of what it drew, as a list
+    of positions. This is where that gets folded back into the full,
+    hidden-included order the store actually keeps: walk that order and
+    replace each visible slot with the next key from `new_visible_order`,
+    in turn, leaving every hidden panel exactly where it already was.
+    That is the same "a hidden neighbour keeps its place" guarantee
+    `move_panel_onto` gives the arrow/old drag path, just reached by
+    merging a whole permutation instead of moving one key at a time.
+
+    `new_visible_order` must be some ordering of exactly the panels
+    `panels(surface)` currently returns; anything else - a stale key from
+    a slower-than-expected event, a panel hidden mid-drag - is refused
+    rather than guessed at, and nothing is written.
+    """
+    visible = panels(surface)
+    if sorted(new_visible_order) != sorted(visible):
+        return False
+    order = panel_order(surface)
+    values = iter(new_visible_order)
+    visible_set = set(visible)
+    merged = [next(values) if k in visible_set else k for k in order]
+    _V[_pkey(surface, "order")] = merged
+    return True
+
+
 def cycle_panel_width(surface, key, step=1, wrap=True):
-    """Step a card's width through full -> half -> third. The new one, or None.
+    """Nudge a card's width by `step` columns (of 60). The new span, or None.
 
-    The keyboard-free, pointer-free way to resize: a tap on the width pill
-    wraps round, so three taps come back where they started and nothing is
-    ever out of reach.
+    The fine-grained move: one column at a time, for the resize grip's
+    drag, which converts pixels moved into columns crossed and calls this
+    once per column so the card visibly tracks the finger.
 
-    `wrap=False` clamps instead, for the resize grip: dragging hard to the
-    right means "as wide as it goes" and should stop at full, not come out
-    the other side at a third. None when nothing changed, so the caller can
-    skip a repaint it does not need.
+    `wrap=False` clamps instead of wrapping, because that is what a drag
+    means: dragging hard to the right should stop at 60/60 (full), not
+    come out the other side back down at 1/60. None when nothing changed,
+    so the caller can skip a repaint it does not need.
     """
     from . import panels as _panels
     if key not in _surface_keys(surface):
         return None
-    order = list(_panels.WIDTH_ORDER)
-    i = order.index(panel_width(surface, key))
-    j = (i + step) % len(order) if wrap else max(0, min(len(order) - 1, i + step))
-    if j == i:
+    lo, hi = _panels.MIN_WIDTH, _panels.MAX_WIDTH
+    span = panel_width(surface, key)
+    want = span + step
+    want = lo + (want - lo) % (hi - lo + 1) if wrap else max(lo, min(hi, want))
+    if want == span:
         return None
-    want = order[j]
     return want if set_panel_width(surface, key, want) else None
+
+
+def cycle_panel_width_preset(surface, key, step=1):
+    """Step through the common fractions - full, 3/4, 2/3, half, ... - wrapping.
+
+    The tap shortcut on the resize grip and the fast path to "a width she
+    probably meant": reaching 1/3 one column at a time (`cycle_panel_width`)
+    would take up to nineteen taps from full. A drag, or the settings
+    slider, still reaches every column in between; this only jumps between
+    the tidy stops.
+
+    A span that is not currently one of the stops at all - reached by a
+    drag, or the slider, landing somewhere in between - moves to the
+    *nearest* stop rather than indexing into the list, so a tap from any
+    custom width always lands somewhere sane instead of jumping to
+    whichever stop happens to share its list position.
+    """
+    from . import panels as _panels
+    if key not in _surface_keys(surface):
+        return None
+    stops = list(_panels.COMMON_WIDTHS)
+    current = panel_width(surface, key)
+    if current in stops:
+        i = (stops.index(current) + step) % len(stops)
+    else:
+        i = min(range(len(stops)), key=lambda x: abs(stops[x] - current))
+    want = stops[i]
+    if want == current:
+        return None
+    return want if set_panel_width(surface, key, want) else None
+
+
+def panel_height(surface, key):
+    """The card's fixed height in 100px cells, 0-8. 0 ('auto') is the default.
+
+    Stored as "<panel>:<cells>" strings. An unrecognised value - an
+    out-of-range number, a corrupt entry - reads as 0 (auto) rather than
+    raising: the cost of being wrong here is a card sized like it always
+    was, and the cost of raising is no page at all.
+    """
+    from . import panels as _panels
+    raw = _V.get(_pkey(surface, "height"))
+    if isinstance(raw, (list, tuple)):
+        for entry in raw:
+            if not isinstance(entry, str) or ":" not in entry:
+                continue
+            k, _, h = entry.partition(":")
+            if k != key:
+                continue
+            cells = _as_int(h, range(_panels.MIN_HEIGHT, _panels.MAX_HEIGHT + 1), None)
+            if cells is not None:
+                return cells
+    return _panels.DEFAULT_HEIGHT
+
+
+def set_panel_height(surface, key, height):
+    """Store `height` as a cell count, 0 (auto) to 8. False if out of range."""
+    from . import panels as _panels
+    if key not in _surface_keys(surface):
+        return False
+    cells = _as_int(height, range(_panels.MIN_HEIGHT, _panels.MAX_HEIGHT + 1), None)
+    if cells is None:
+        return False
+    kept = [e for e in (_V.get(_pkey(surface, "height")) or [])
+            if isinstance(e, str) and e.partition(":")[0] != key]
+    if cells != _panels.DEFAULT_HEIGHT:
+        kept.append(f"{key}:{cells}")
+    _V[_pkey(surface, "height")] = kept
+    return True
+
+
+def cycle_panel_height(surface, key, step=1, wrap=True):
+    """Step a card's height by `step` cells (0 = auto, up to 8). The new value, or None.
+
+    Tap-only - there is no drag here at all, unlike width. A vertical drag
+    on a card living in a vertically-scrolling ReorderableListView is
+    exactly the gesture-arena collision the width grip avoids by being
+    horizontal-only (see panels._editable): there is no axis a height drag
+    could use that would not contend with either the list's own scroll or
+    its own reorder drag, both already vertical. A tap cycle sidesteps the
+    problem entirely rather than fighting it.
+    """
+    from . import panels as _panels
+    if key not in _surface_keys(surface):
+        return None
+    lo, hi = _panels.MIN_HEIGHT, _panels.MAX_HEIGHT
+    cells = panel_height(surface, key)
+    want = cells + step
+    want = lo + (want - lo) % (hi - lo + 1) if wrap else max(lo, min(hi, want))
+    if want == cells:
+        return None
+    return want if set_panel_height(surface, key, want) else None
 
 
 def set_panel_hidden(surface, key, hidden):
@@ -523,8 +667,8 @@ def set_panel_hidden(surface, key, hidden):
 
 
 def reset_panels(surface):
-    """Back to the shipped order, everything visible, everything full width."""
-    for part in ("order", "hidden", "width"):
+    """Back to the shipped order, everything visible, full width, auto height."""
+    for part in ("order", "hidden", "width", "height"):
         _V.pop(_pkey(surface, part), None)
     return True
 
@@ -775,7 +919,7 @@ async def load(prefs):
         return False
     read_any = False
     saw_scheme = False
-    # Every fixed key, plus the three per-surface panel keys. Without these
+    # Every fixed key, plus the four per-surface panel keys. Without these
     # the layout editor wrote to memory only: reorder a card, resize it,
     # hide it, restart the app, and it was all back to the shipped order.
     keys = list(_defaults()) + _panel_keys_for_storage()
@@ -818,8 +962,38 @@ async def load(prefs):
     _V[KEY_RADIUS] = corner_radius()
     _V[KEY_GLOW] = accent_glow()
     _V[KEY_CRT] = crt_overlay()
+    # Widths specifically: a store written before width became a 1-60 span
+    # can still hold the three old names ("full"/"half"/"third"), which
+    # `panel_width()` already translates on every read. Rewriting the
+    # stored entries here, once, in that same canonical span form is what
+    # makes the translation stick - otherwise the very next `save()` would
+    # read the untouched old strings straight out of `_V` and hand them
+    # right back, and the store would carry the legacy names forever.
+    from . import panels as _panels
+    for _surface in _panels.SURFACES:
+        _normalise_panel_widths(_surface)
     apply_runtime()
     return read_any
+
+
+def _normalise_panel_widths(surface):
+    """Rewrite `surface`'s stored width entries into canonical span form.
+
+    Only touches the panels a stored entry actually names - nothing is
+    invented for a panel that was never customised, and a surface with no
+    width entries at all does nothing here.
+    """
+    raw = _V.get(_pkey(surface, "width"))
+    if not isinstance(raw, (list, tuple)):
+        return
+    keys = []
+    for entry in raw:
+        if isinstance(entry, str) and ":" in entry:
+            k = entry.partition(":")[0]
+            if k not in keys:
+                keys.append(k)
+    for key in keys:
+        set_panel_width(surface, key, panel_width(surface, key))
 
 
 def save_payload():
