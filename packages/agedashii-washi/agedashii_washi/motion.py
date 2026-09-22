@@ -110,18 +110,36 @@ def resizable(control, duration=CARD_MS):
     rearranged - the "expanding / resizing / organizing components" case.
     Flet animates a Container's own width and height, so the thing that
     changes size has to be the Container, not a child of it.
+
+    SIZE only - deliberately not `animate_position`. `animate_position`
+    animates `left`/`top`/`right`/`bottom`, and those only exist for a
+    control inside a Stack, so setting it on an ordinary card made Flet
+    refuse to draw the card at all and put this in its place:
+
+        Error displaying Container
+        Control can be positioned absolutely with "left", "top", "right"
+        and "bottom" properties inside Stack control only and page.overlay.
+
+    Every panel goes through here (see panels._animated), so that one line
+    replaced every card on every panel surface with a red error box: eight
+    on Tofu's Home, four on Foodzen's Grocery. Measured on the emulator -
+    removing this line and rebuilding renders all of them correctly.
+
+    Nothing is lost with it gone. These cards are laid out by a
+    ResponsiveRow or a ReorderableListView, neither of which positions a
+    child absolutely, so the property could never have animated anything
+    here; and reordering already animates, because ReorderableListView
+    does that itself.
     """
     if _still():
         return (control if isinstance(control, ft.Container)
                 else ft.Container(content=control))
     if isinstance(control, ft.Container):
         control.animate_size = ft.Animation(duration, BOTH)
-        control.animate_position = ft.Animation(duration, BOTH)
         return control
     return ft.Container(
         content=control,
         animate_size=ft.Animation(duration, BOTH),
-        animate_position=ft.Animation(duration, BOTH),
     )
 
 

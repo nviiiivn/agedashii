@@ -111,28 +111,43 @@ class TheEatZenRowIsBounded(unittest.TestCase):
         An isolating probe on a real emulator is what settled it - a
         wrapping Row of plain Texts renders fine; the same Row with one
         filled TextField in it produces the slab.
+
+        A height on the TextField itself is NOT enough, which is the fourth
+        thing this bug survived. An APK built with `ft.TextField(height=40)`
+        was installed on the emulator and was still the full grey slab:
+        Flet feeds that height into the field's own InputDecoration instead
+        of wrapping the control in a box, so nothing ever tells the outer
+        render box how tall it may be. A Container around the field does
+        constrain it, and that is what this checks for - a height anywhere
+        on the path between the wrapping Row and the field.
         """
         unbounded = []
         seen = set()
 
-        def walk(control, in_wrap):
+        def walk(control, in_wrap, bounded):
             if id(control) in seen:
                 return
             seen.add(id(control))
-            if (in_wrap and isinstance(control, ft.TextField)
-                    and getattr(control, "filled", False)
-                    and not getattr(control, "height", None)):
+            if (in_wrap and not bounded
+                    and isinstance(control, ft.TextField)
+                    and getattr(control, "filled", False)):
                 unbounded.append(
-                    f"TextField(hint={control.hint_text!r}) has no height")
+                    f"TextField(hint={control.hint_text!r}) has no bounded "
+                    f"height between it and the wrapping Row")
             wraps = in_wrap or (isinstance(control, ft.Row)
                                 and getattr(control, "wrap", False))
+            # A height on an ancestor bounds everything below it. Reset to
+            # False when leaving the wrap is unnecessary - `wraps` only ever
+            # turns on - but `bounded` must only count heights seen at or
+            # below the wrap, which is what threading it through does.
+            below = bounded or bool(getattr(control, "height", None))
             for child in (getattr(control, "controls", None) or []):
-                walk(child, wraps)
+                walk(child, wraps, below if wraps else False)
             content = getattr(control, "content", None)
             if content is not None and "flet" in type(content).__module__:
-                walk(content, wraps)
+                walk(content, wraps, below if wraps else False)
 
-        walk(self._build(), False)
+        walk(self._build(), False, False)
         self.assertEqual(unbounded, [], "\n".join(unbounded))
 
     def test_the_food_field_has_a_real_width(self):

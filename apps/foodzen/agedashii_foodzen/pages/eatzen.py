@@ -263,14 +263,28 @@ def build_eatzen(page):
             recalc()
             paint()
             page.update()
-        return ft.TextField(
+        # The height goes on a Container AROUND the field, not on the field.
+        # `ft.TextField(height=FIELD_H)` was the fourth attempt and it does
+        # not work: measured on the emulator, an APK built with it is still
+        # the full grey slab. Flet feeds TextField.height into the field's
+        # own InputDecoration rather than wrapping the control in a box, so
+        # under the Wrap's unbounded cross-axis constraint there is still
+        # nothing telling the outer render box how tall it may be.
+        #
+        # A Container DOES constrain it, which an isolating probe settled on
+        # a real emulator: in one build, the same field rendered correctly in
+        # a non-wrapping Row and inside Container(height=...) in a wrapping
+        # Row, and rendered as the slab bare in a wrapping Row.
+        #
+        # `width` is set on BOTH - the Container so the box it hands down is
+        # the right shape, and the field so `expand=width is None` keeps
+        # meaning what it meant.
+        return ft.Container(height=FIELD_H, width=width, content=ft.TextField(
             value=str(row[key]), hint_text=hint, dense=True, filled=True, text_size=12,
-            # height is NOT optional here - see FIELD_H. This row wraps, and
-            # an unconstrained filled field paints grey to the bottom of the
-            # screen.
-            width=width, height=FIELD_H, expand=width is None, on_change=on_change,
+            width=width, expand=width is None, on_change=on_change,
             keyboard_type=ft.KeyboardType.NUMBER if numeric else None,
-            border_color=p["border"], focused_border_color=p["accent"], color=p["text"])
+            border_color=p["border"], focused_border_color=p["accent"],
+            color=p["text"]))
 
     def row_controls(i, row):
         res = row.get("res")
