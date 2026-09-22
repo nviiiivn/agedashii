@@ -580,7 +580,13 @@ class Rides(unittest.TestCase):
         self.assertEqual(T.fmt_miles(0.005), "now")
         self.assertEqual(T.fmt_miles(0.05), "264 ft")
         self.assertEqual(T.fmt_miles(1.44), "1.4 mi")
-        self.assertEqual(T.fmt_miles(None), "now")
+        # None is NOT "now". This used to conflate them, which meant a turn
+        # card with no distance told the rider to turn immediately - the
+        # app saying "now" when what it meant was "I do not know". Unknown
+        # reads as a dash, the same as every other unknown in the app; only
+        # a distance that really is ~zero says "now".
+        self.assertEqual(T.fmt_miles(None), "—")
+        self.assertEqual(T.fmt_miles(0.0), "now")
 
 
 class PoiQueries(unittest.TestCase):
@@ -880,7 +886,10 @@ class ThePageBuilds(ApiOfflineCase):
         built, _ = self.build()
         said = "\n".join(_texts(built))
         self.assertIn("berkeley-hills-north-loop", said)
-        self.assertIn("107.63", said)
+        # One decimal, not two. The distance now goes through the units
+        # formatter, which is also what makes it follow the miles/km
+        # setting; 107.63 mi implied a precision a GPX track does not have.
+        self.assertIn("107.6", said)
         self.assertIn("synthetic", said)
         # A missing max speed is a dash, never a zero.
         self.assertIn("—", said)

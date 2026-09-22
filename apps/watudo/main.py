@@ -41,13 +41,17 @@ import asyncio
 
 import flet as ft
 
-from agedashii_qi import (GLOW, PAL, RAD, RADIUS_CHOICES, S, THEME_NAMES,
-                          THEMES, apply_theme, crt_overlay)
+from agedashii_qi import (GLOW, PAL, RAD, S, THEME_NAMES, THEMES, apply_theme,
+                          crt_overlay)
 from agedashii_washi import api as M
 from agedashii_washi import config, panels, prefs
 from agedashii_washi.surface import _TAB_INDEX, _dismiss, _error_card, _show
-from agedashii_washi.widgets import BRD, PAD, sub
+from agedashii_washi.widgets import BRD, PAD
 
+from agedashii_watudo import prefs as wprefs
+from agedashii_watudo import ui as U
+from agedashii_watudo.pages import help as help_page
+from agedashii_watudo.pages import settings as settings_page
 from agedashii_watudo.pages import wat2do
 
 # The Agedashii pill's three colours, shared with the dashboard and with
@@ -59,21 +63,50 @@ ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 # index is stored under. Navigation here is a write to that index.
 TAB_KEY = "wat2do"
 
-# The app's two destinations, in menu order, and which tab of the page each
-# one is. Both halves of the drawer and the whole bottom bar are derived
-# from these three tables, so adding a surface means adding a line.
-PAGES = ["wat2do", "future"]
-TAB_OF = {"wat2do": 0, "future": 1}
-LABELS = {"wat2do": "Wat2Do", "future": "Future Finds"}
-ICONS = {"wat2do": ft.Icons.CHECK_CIRCLE, "future": ft.Icons.EXPLORE}
+# The app's four destinations, in menu order. The drawer, the bottom bar and
+# Settings' own description of the navigation are all derived from these
+# tables, so adding a surface means adding a line rather than editing three
+# places that can disagree.
+PAGES = ["wat2do", "future", "settings", "help"]
 
-# Where this app remembers its theme. `agedashii_washi.prefs` does not own a
-# theme key - in the dashboard the picker is per-session and the theme is
-# back to the default every launch, which is a small annoyance there and a
-# larger one in an app you open to tick three boxes. The name is the one
-# prefs would use if it ever adopted it, so adopting it later reads the
-# same value rather than starting again.
-KEY_THEME = "agedashii.theme"
+# The two that are tabs of one page, and which tab each one is. These are
+# the surfaces whose "am I here" is read back out of the page's own tab
+# index rather than stored - see `surface_of`.
+TAB_PAGES = ("wat2do", "future")
+TAB_OF = {"wat2do": 0, "future": 1}
+
+LABELS = {"wat2do": "Wat2Do", "future": "Future Finds",
+          "settings": "Settings", "help": "How this works"}
+
+BLURB = {"wat2do": "today's checklist, pain, spoons and a mission",
+         "future": "places worth a ride someday",
+         "settings": "server, theme, the day, the origin",
+         "help": "what each part does, and what needs the server"}
+
+# Two marks per surface: the outline is the resting state and the filled one
+# is where you are. Material draws both in a NavigationBar, and the pair is
+# what makes a destination recognisable at a glance instead of four grey
+# glyphs that differ only in outline.
+ICONS = {"wat2do": ft.Icons.CHECK_CIRCLE_OUTLINE,
+         "future": ft.Icons.EXPLORE_OUTLINED,
+         "settings": ft.Icons.SETTINGS_OUTLINED,
+         "help": ft.Icons.HELP_OUTLINE}
+ICONS_ON = {"wat2do": ft.Icons.CHECK_CIRCLE, "future": ft.Icons.EXPLORE,
+            "settings": ft.Icons.SETTINGS, "help": ft.Icons.HELP}
+
+# What rides the bottom bar. Help is not on it: it is one screen you read
+# once, it lives under Settings the way a manual lives in a drawer, and a
+# fourth stop would push the three that are used daily closer together.
+# Every other surface is here, which is what makes the bar - and not the
+# hamburger - the way around this app.
+BAR_PAGES = ["wat2do", "future", "settings"]
+
+# Where this app remembers its theme, re-exported from its own preferences
+# module. `agedashii_washi.prefs` does not own a theme key - in the dashboard
+# the picker is per-session and the theme is back to the default every
+# launch, which is a small annoyance there and a larger one in an app you
+# open to tick three boxes.
+KEY_THEME = wprefs.KEY_THEME
 
 # How often the outbox watcher looks up from its book, matched to
 # api.ONLINE_RECHECK the same way the dashboard's is: one cadence for the
@@ -81,16 +114,62 @@ KEY_THEME = "agedashii.theme"
 SYNC_POLL_SECS = 20
 
 
-def surface_of(index=None):
-    """Which destination the page's tab index means.
+# Which surface the shell is parked on, for the ones that have no tab bar of
+# their own to read it back out of. Wat2Do and Future Finds are NOT tracked
+# here - see `surface_of` - so there is still nothing that can disagree with
+# the page's own tab bar about which of those two is showing.
+_HERE = {"key": "wat2do"}
 
-    Derived rather than stored. The tab bar inside the page writes
-    `_TAB_INDEX` when she swipes, and a second copy of "where am I" kept up
-    here would be wrong from that moment until the next render.
+
+def surface_of(index=None):
+    """Which destination is on screen.
+
+    Two halves, because there are two kinds of surface. Wat2Do and Future
+    Finds are tabs of one page, and the page's own tab bar writes
+    `_TAB_INDEX` when she swipes - so which of those two is showing is
+    *derived* from that index, never stored, because a second copy would be
+    wrong from the moment of a swipe until the next render. Settings and
+    How this works have no tab bar, so the shell remembers them; they are
+    forgotten again the instant either tab page is shown.
+
+    `index` forces the first half, for a caller that has a tab index in
+    hand and wants to know what it means.
     """
+    if index is None and _HERE["key"] not in TAB_PAGES:
+        return _HERE["key"]
     if index is None:
         index = _TAB_INDEX.get(TAB_KEY, 0)
     return "future" if index == 1 else "wat2do"
+
+
+def menu_visible():
+    """Whether the hamburger trigger is drawn at all.
+
+    Her setting, with one rail: something has to reach every surface. With
+    the bottom bar switched off the drawer is the only thing left that does,
+    so the trigger comes back whether or not it is switched on - and
+    Settings says so on the switch rather than letting the app quietly
+    disagree with it. A setting that can strand you on one page is not a
+    setting, it is a trap.
+    """
+    return wprefs.menu_button() or not prefs.bottom_bar_enabled()
+
+
+def reach_lines():
+    """How each surface can be reached, in the app's own words.
+
+    Passed to Settings so its navigation card describes the navigation this
+    shell actually builds, rather than a second opinion about it that can
+    drift.
+    """
+    bar = (", ".join(LABELS[k] for k in BAR_PAGES)
+           if prefs.bottom_bar_enabled() else "off")
+    menu = ("every surface, " + LABELS["help"].lower() + " included"
+            if menu_visible() else "hidden")
+    return [f"Bottom bar: {bar}",
+            f"Menu button: {menu}",
+            f"{LABELS['help']} is always reachable from Settings.",
+            "Present and Future are also the page's own two tabs."]
 
 
 async def main(page):
@@ -265,7 +344,7 @@ async def main(page):
     def go(key):
         """Move to a destination. Fast, because a slow handler drops taps.
 
-        All this does is write a tab index and repaint. Flet runs a
+        All this does is write where we are and repaint. Flet runs a
         synchronous handler on its event loop, so anything expensive here
         would hold the old frame on screen and swallow the next taps - the
         exact failure that once made the dashboard's status dots look dead.
@@ -293,7 +372,11 @@ async def main(page):
         await page.show_drawer()
 
     def nav_drawer():
-        """Everything this app can show, plus the two things it can change.
+        """Every surface, plus the one thing the bar cannot carry.
+
+        Only built and attached when the trigger is visible - there is no
+        point keeping a drawer nobody can open, and building one costs a
+        walk of four rows on every render.
 
         Rebuilt on every render because it is themed, and one built once at
         startup would keep the old palette after a theme change.
@@ -306,63 +389,42 @@ async def main(page):
         p = PAL()
         here = surface_of()
         rows = [ft.Container(height=12)]
-
-        def page_row(k):
-            on = k == here
-            return ft.Container(
-                padding=PAD(14, 9), border_radius=RAD(8), ink=True,
-                on_click=lambda e, key=k: _drawer_go(key),
-                # The row you are standing on is the app's active nav item;
-                # glow on, it gets alola's accent shadow. Only the active
-                # one, so the drawer does not become a wall of light.
-                shadow=GLOW(blur=14, opacity=0.35) if on else None,
-                bgcolor=ft.Colors.with_opacity(0.12, p["accent"]) if on else None,
-                content=ft.Row(spacing=12, controls=[
-                    ft.Icon(ICONS[k], size=19,
-                            color=p["accent"] if on else p["text2"]),
-                    ft.Text(LABELS[k], size=14,
-                            weight=ft.FontWeight.W_600 if on else ft.FontWeight.W_400,
-                            color=p["text"] if on else p["text2"]),
-                ]))
-
-        def action_row(label, icon, run):
-            return ft.Container(
-                padding=PAD(14, 9), border_radius=RAD(8), ink=True,
-                on_click=lambda e: run(),
-                content=ft.Row(spacing=12, controls=[
-                    ft.Icon(icon, size=19, color=p["text2"]),
-                    ft.Text(label, size=14, color=p["text2"]),
-                ]))
-
-        rows += [page_row(k) for k in PAGES]
+        rows += [U.nav_row(k, LABELS[k], ICONS_ON[k] if k == here else ICONS[k],
+                           lit=k == here, on_click=_drawer_go, detail=BLURB[k])
+                 for k in PAGES]
         rows += [
             ft.Container(height=1, bgcolor=p["border"],
                          margin=ft.Margin(left=14, top=10, right=14, bottom=10)),
-            # The bottom bar carries the two surfaces and nothing else, so
-            # these two live here. That is what stops the drawer from being
-            # a second copy of the bar.
-            action_row(f"Theme - {THEME_NAMES.get(S.theme, S.theme)}",
-                       ft.Icons.PALETTE, _drawer_dialog(open_theme_picker)),
-            action_row("Settings", ft.Icons.SETTINGS,
-                       _drawer_dialog(open_settings)),
+            # The bar carries three of the four surfaces, so the drawer has
+            # to carry something it does not or it is a second copy of the
+            # bar: How this works, above, and the quick theme switch here.
+            U.action_row(f"Theme - {THEME_NAMES.get(S.theme, S.theme)}",
+                         ft.Icons.PALETTE, _drawer_dialog(open_theme_picker),
+                         detail="all 24, without leaving this page"),
         ]
         return ft.NavigationDrawer(bgcolor=p["bg2"], controls=rows)
 
     def bottom_pick(e):
         idx = e.control.selected_index
-        if 0 <= idx < len(PAGES):
-            go(PAGES[idx])
+        if 0 <= idx < len(BAR_PAGES):
+            go(BAR_PAGES[idx])
 
     def bottom_bar():
-        # selected_index must be a real index (Flet asserts on it), and
-        # `surface_of` can only ever answer with a member of PAGES, so there
-        # is no "not on the bar" case to fall back from.
-        here = PAGES.index(surface_of())
+        """The primary navigation: three stops, always the same three.
+
+        `selected_index` must be a real index - Flet asserts on it - and one
+        surface is deliberately not on the bar. How this works lives under
+        Settings, so standing on it lights Settings, which is both a true
+        statement about where it is and the way back.
+        """
+        here = surface_of()
+        lit = BAR_PAGES.index(here if here in BAR_PAGES else "settings")
         return ft.NavigationBar(
-            selected_index=here,
-            destinations=[ft.NavigationBarDestination(icon=ICONS[k],
-                                                      label=LABELS[k])
-                          for k in PAGES],
+            selected_index=lit,
+            destinations=[ft.NavigationBarDestination(
+                icon=ICONS[k], selected_icon=ICONS_ON[k], label=LABELS[k])
+                for k in BAR_PAGES],
+            animation_duration=U.MOTION_MS,
             on_change=bottom_pick,
         )
 
@@ -416,143 +478,6 @@ async def main(page):
                                    on_click=lambda e: _dismiss(page, dlg))],
         )
         _show(page, dlg)
-
-    def open_settings(e):
-        """The server, and the three knobs that are not the theme.
-
-        Deliberately small. The dashboard has a full Settings page and this
-        app does not need one - but it does need to be pointable at a
-        server, because it has its own preferences store and so cannot
-        inherit an address set over there.
-        """
-        p = PAL()
-        status = ft.Text(_server_line(), size=11, color=p["text2"],
-                         selectable=True)
-        field = ft.TextField(
-            value=config.SERVER_URL, hint_text="http://host:6900", dense=True,
-            filled=True, text_size=12, border_color=p["border"],
-            focused_border_color=p["accent"], color=p["text"], expand=True)
-
-        async def check(e=None):
-            url = (field.value or "").strip()
-            if not url:
-                return
-            status.value = "checking..."
-            status.color = p["text2"]
-            page.update()
-            # Blocking: probe() opens a socket with a 3 s timeout, and a
-            # three-second synchronous handler is three seconds of dropped
-            # taps. Off the loop it goes.
-            ok, detail = await asyncio.to_thread(config.set_url, url)
-            await config.save(S.prefs, url)
-            # Pointing somewhere else invalidates every cached answer; they
-            # came from a different server.
-            M.refresh()
-            status.value = f"{config.SERVER_URL} - {detail}"
-            status.color = p["text2"] if ok else p["pink"]
-            page.update()
-            render()
-
-        field.on_submit = check
-
-        def knob(label, detail, value, on_change):
-            return ft.Row(vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                          controls=[
-                ft.Column(spacing=1, expand=True, controls=[
-                    ft.Text(label, size=13, color=p["text"]),
-                    sub(detail, 11)]),
-                ft.Switch(value=value, on_change=on_change,
-                          active_color=p["accent"]),
-            ])
-
-        def set_glow(e):
-            prefs.set_accent_glow(bool(e.control.value))
-            _persist_and_render()
-
-        def set_crt(e):
-            prefs.set_crt_overlay(bool(e.control.value))
-            _persist_and_render()
-
-        def set_bar(e):
-            prefs.set_bottom_bar_enabled(bool(e.control.value))
-            _persist_and_render()
-
-        def radius_chip(value, label):
-            on = prefs.corner_radius() == value
-
-            def pick(e):
-                prefs.set_corner_radius(value)
-                _persist_and_render()
-                _dismiss(page, dlg)
-                open_settings(None)
-
-            return ft.Container(
-                padding=PAD(4, 10), border_radius=RAD(20), ink=True,
-                on_click=pick,
-                bgcolor=ft.Colors.with_opacity(0.14, p["accent"]) if on else None,
-                border=BRD(p["accent"] if on else p["border"], 1),
-                content=ft.Text(label, size=11,
-                                color=p["accent"] if on else p["text2"]))
-
-        dlg = ft.AlertDialog(
-            bgcolor=p["bg2"],
-            title=ft.Text("Settings", size=15, color=p["text"]),
-            content=ft.Container(width=320, content=ft.Column(
-                spacing=14, tight=True, scroll=ft.ScrollMode.AUTO, controls=[
-                    ft.Column(spacing=6, controls=[
-                        ft.Text("Server", size=13, color=p["text"]),
-                        sub("Where the day's record and the Future lists "
-                            "come from. Everything else is on the device.", 11),
-                        ft.Row(spacing=6, controls=[
-                            field,
-                            ft.IconButton(ft.Icons.REFRESH,
-                                          icon_color=p["accent"],
-                                          tooltip="Check this address",
-                                          on_click=check)]),
-                        status,
-                    ]),
-                    ft.Container(height=1, bgcolor=p["border"]),
-                    # Worth having here rather than only in the dashboard's
-                    # Settings page: the page already carries a Present |
-                    # Future tab bar of its own, so on a small screen the
-                    # bottom bar is a second row of the same two choices.
-                    # Some people want both; this is how to have one.
-                    knob("Bottom bar", "The two surfaces along the bottom. "
-                         "The page's own tab bar reaches them either way.",
-                         prefs.bottom_bar_enabled(), set_bar),
-                    knob("Accent glow", "alola's accent shadow on headings "
-                         "and the active nav item.", prefs.accent_glow(),
-                         set_glow),
-                    knob("CRT overlay", "Scanlines, halftone and a vignette "
-                         "over the whole app.", prefs.crt_overlay(), set_crt),
-                    ft.Column(spacing=6, controls=[
-                        ft.Text("Corner radius", size=13, color=p["text"]),
-                        ft.Row(spacing=6, wrap=True, controls=[
-                            radius_chip(v, f"{v}px" if v else "Square")
-                            for v in RADIUS_CHOICES]),
-                    ]),
-                ])),
-            actions=[ft.TextButton(content="Close",
-                                   on_click=lambda e: _dismiss(page, dlg))],
-        )
-        _show(page, dlg)
-
-    def _server_line():
-        st = config.STATUS
-        return f"{st.get('url') or config.SERVER_URL} - {st.get('detail') or ''}"
-
-    def _persist_and_render():
-        """Push a changed knob into the drawing layer, repaint, and save.
-
-        `apply_runtime` is what makes a preference *apply* - the appearance
-        values live on `agedashii_qi`'s S, not in prefs, so that RAD() and
-        GLOW() cost one attribute lookup per control.
-        """
-        prefs.apply_runtime()
-        render()
-        run_task = getattr(page, "run_task", None)
-        if callable(run_task) and S.prefs is not None:
-            run_task(prefs.save, S.prefs)
 
     def _remember_theme(key):
         run_task = getattr(page, "run_task", None)

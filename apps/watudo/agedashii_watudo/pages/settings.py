@@ -360,9 +360,13 @@ def navigation_card(page, saver, on_change=None, reach=None):
 
 
 # ------------------------------------------------------------------- day
-def day_card(page, saver, on_change=None):
-    """How Wat2Do shows a day."""
-    repaint = _repainter(on_change)
+def day_card(page, saver):
+    """How Wat2Do shows a day.
+
+    Neither switch repaints the shell: both change the Wat2Do surface, which
+    is not the one on screen while you are setting them, and it will be
+    built with the new answer the moment you go back to it.
+    """
 
     async def toggle_friendly(e):
         wprefs.set_friendly_dates(bool(e.control.value))
@@ -387,7 +391,7 @@ def day_card(page, saver, on_change=None):
     ]))
 
 
-def vitals_card(page, saver, on_change=None):
+def vitals_card(page, saver):
     """Pain and spoons: whether they are recorded, and whether they decide.
 
     Neither switch repaints the shell. They change the Wat2Do surface, which
@@ -432,10 +436,8 @@ def vitals_card(page, saver, on_change=None):
     return card(rows)
 
 
-def template_card(page, saver, on_change=None):
+def template_card(page, saver):
     """What the checklist template editor writes, and how big a mission is."""
-    p = PAL()
-    repaint = _repainter(on_change)
 
     async def pick_marker(e):
         wprefs.set_sub_marker(U.picked(e, set(wprefs.SUB_MARKERS),
@@ -467,7 +469,7 @@ def template_card(page, saver, on_change=None):
     ]))
 
 
-def origin_card(page, saver, on_change=None):
+def origin_card(page, saver):
     """Where every distance in this app is measured from.
 
     The honest half of the location story. This app declares no location
@@ -478,7 +480,6 @@ def origin_card(page, saver, on_change=None):
     and every distance column together.
     """
     p = PAL()
-    repaint = _repainter(on_change)
     from . import _wat2do_parts as W
 
     current = wprefs.origin()
@@ -608,10 +609,10 @@ def build(page, on_change=None, go=None, reach=None):
         navigation_card(page, saver, on_change, reach),
         theme_card(page, saver, on_change),
         appearance_card(page, saver, on_change),
-        day_card(page, saver, on_change),
-        vitals_card(page, saver, on_change),
-        template_card(page, saver, on_change),
-        origin_card(page, saver, on_change),
+        day_card(page, saver),
+        vitals_card(page, saver),
+        template_card(page, saver),
+        origin_card(page, saver),
         help_card(page, go),
         diagnostics_card(page),
     ]

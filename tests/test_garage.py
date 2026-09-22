@@ -184,7 +184,11 @@ class AbsentRendersAsAbsent(unittest.TestCase):
                  "days_since_service": 0, "mileage_count": 1,
                  "service_count": 1, "expense_count": 1}
         shown = _texts(garage._stats_strip("x", stats))
-        self.assertIn("10,212", shown)
+        # The value carries its unit now ("10,212 mi"), so this is a
+        # substring check rather than exact list membership - the unit is
+        # the point, since the same strip has to read in km when Settings
+        # says km.
+        self.assertTrue(any("10,212" in x for x in shown), shown)
         self.assertIn("$114", shown)
         self.assertIn("$0.01", shown)
         # measured now, so a zero here is a measurement and must be shown
