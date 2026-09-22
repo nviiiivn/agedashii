@@ -17,14 +17,18 @@
 [project]
 name = "agedashii"
 version = "1.0.0"
-description = "Companion app for dashbored - nvii's homelab dashboard"
+description = "Agedashii Tofu - the whole dashboard, every surface on one home"
 requires-python = ">=3.12"
 
 [tool.flet]
 # Display name: window title, .desktop entry, macOS product, app launcher,
 # and the label Android shows in the launcher and the multitasking view.
-# Capital A: it is a name, not a package.
-product = "Agedashii"
+#
+# Tofu is the base dish, and this is the base dashboard - the one that has
+# everything on it. Moto, Watudo and Foodzen are the pieces taken off it;
+# Qi and Washi are what they are all made of. "Agedashii" on its own is the
+# family, not this app.
+product = "Agedashii Tofu"
 org = "online.iamprettyfamous"
 # Pinned rather than left to be composed from org + project name, so the
 # identity the OS installs under can never drift with a directory rename.

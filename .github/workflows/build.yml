@@ -131,7 +131,7 @@ jobs:
           cat > AppDir/$APP.desktop <<EOF
           [Desktop Entry]
           Type=Application
-          Name=Agedashii
+          Name=Agedashii Tofu
           GenericName=Homelab dashboard
           Comment=Homelab, rides, food and weather - offline first
           Exec=$BINNAME

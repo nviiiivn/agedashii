@@ -77,7 +77,7 @@ async def main(page):
     # Without this the window, the taskbar and alt-tab all say "flet" - the
     # framework's own default. It is the first thing anyone sees and it was
     # never set.
-    page.title = "Agedashii"
+    page.title = "Agedashii Tofu"
     apply_theme(page)
 
     # Persistent storage is a Flet *service*: constructing it inside the page
@@ -113,7 +113,10 @@ async def main(page):
             # The pill is this app's equivalent of that title, so it gets the
             # wide version of the glow rather than the 10px heading one.
             shadow=GLOW(blur=24, opacity=0.40),
-            content=ft.Text("Agedashii", size=13, weight=ft.FontWeight.W_800,
+            # The full product name, so the pill says which of the four
+            # apps this is. Moto, Watudo and Foodzen carry theirs the same
+            # way; one pill, one name, and "Agedashii" alone is the family.
+            content=ft.Text("Agedashii Tofu", size=13, weight=ft.FontWeight.W_800,
                             color="#0d1117"),
         )
 
