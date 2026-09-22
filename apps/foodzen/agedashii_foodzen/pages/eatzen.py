@@ -279,7 +279,14 @@ def build_eatzen(page):
         # place, which is what turned one bug into a worse one.
         line = ft.Row(spacing=6, wrap=True,
                       vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-            ft.Container(width=FOOD_FIELD_W, content=field(row, "food", "food")),
+            # The WIDTH goes to field(), not to a wrapper around it.
+            # field() sets `expand = width is None`, so calling it with no
+            # width left expand=True on the TextField itself - and wrapping
+            # that in a fixed-width Container did not help, because a
+            # Container is not a Flex and does not consume `expand`. The
+            # field stayed unbounded inside the Wrap and the grey slab came
+            # back. Verified by dumping the control tree, not by looking.
+            field(row, "food", "food", width=FOOD_FIELD_W),
             field(row, "qty", "1", width=52),
             field(row, "unit", "unit", width=72),
             field(row, "na", "sodium mg", width=96, numeric=True),

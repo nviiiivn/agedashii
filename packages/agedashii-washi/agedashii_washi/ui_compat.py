@@ -13,7 +13,8 @@ defined here, everything is re-exported - and a page is free to import
 from Qi and Washi directly instead.
 """
 from agedashii_qi import (  # noqa: F401
-    CRT_INTENSITY_MAX, CRT_INTENSITY_MIN, DEFAULT_CRT_INTENSITY,
+    CRT_INTENSITY_MAX, CRT_INTENSITY_MIN, CRT_MAX_OPACITY,
+    DEFAULT_CRT_INTENSITY,
     DEFAULT_RADIUS, FOCUS_WIDTH, GLOW, GLOW_STYLE, PAL, RAD, RADIUS_CHOICES,
     RADIUS_LABELS, S, State, apply_theme, crt_overlay,
 )

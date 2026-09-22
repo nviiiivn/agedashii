@@ -104,8 +104,35 @@ import re, sys
 p = sys.argv[1]
 s = open(p).read()
 
+def strip_comments(inner):
+    """Drop TOML # comments, so a quoted phrase inside one is not read as a
+    dependency. Watudo's list explains flet-map by saying the app's
+    `"route to here"` would have nowhere to draw - and the naive
+    findall below turned that sentence fragment into a requirement:
+
+        ERROR: Invalid requirement: 'route to here'
+
+    which failed the whole build in two seconds. A # only starts a comment
+    when it is outside a string, so the scan tracks quoting rather than
+    cutting at the first # it sees."""
+    out = []
+    for line in inner.splitlines():
+        q = None
+        for i, ch in enumerate(line):
+            if q:
+                if ch == q:
+                    q = None
+            elif ch in '"\'':
+                q = ch
+            elif ch == "#":
+                line = line[:i]
+                break
+        out.append(line)
+    return "\n".join(out)
+
+
 def drop_shared(m):
-    inner = m.group(1)
+    inner = strip_comments(m.group(1))
     kept = [d for d in re.findall(r'"[^"]*"', inner)
             if not d.strip('"').lower().startswith("agedashii-")]
     return "dependencies = [" + ", ".join(kept) + "]"

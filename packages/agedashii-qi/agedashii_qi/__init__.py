@@ -24,6 +24,7 @@ Everything reads the current theme off the shared ``S``; set it through
 
 from .appearance import (
     CRT_INTENSITY_MAX,
+    CRT_MAX_OPACITY,
     CRT_INTENSITY_MIN,
     DEFAULT_CRT_INTENSITY,
     DEFAULT_RADIUS,
@@ -43,6 +44,7 @@ from .themes import DEFAULT, LIGHT_THEMES, THEME_NAMES, THEMES
 
 __all__ = [
     "CRT_INTENSITY_MAX",
+    "CRT_MAX_OPACITY",
     "CRT_INTENSITY_MIN",
     "DEFAULT",
     "DEFAULT_CRT_INTENSITY",

@@ -13,6 +13,6 @@ from agedashii_qi import *            # noqa: F401,F403
 from agedashii_qi import S, State, PAL, RAD, GLOW, GLOW_STYLE, FOCUS_WIDTH  # noqa: F401
 from agedashii_qi import apply_theme, crt_overlay  # noqa: F401
 from agedashii_qi import (RADIUS_CHOICES, DEFAULT_RADIUS, RADIUS_LABELS,  # noqa: F401
-                          CRT_INTENSITY_MIN, CRT_INTENSITY_MAX,
+                          CRT_INTENSITY_MIN, CRT_INTENSITY_MAX, CRT_MAX_OPACITY,
                           DEFAULT_CRT_INTENSITY)
 from agedashii_washi.widgets import BRD, PAD, card, chip, dot, sub, title  # noqa: F401

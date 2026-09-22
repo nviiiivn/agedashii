@@ -113,6 +113,14 @@ async def main(page):
     page.title = "Agedashii Moto"
     apply_theme(page)
 
+    # Flet's Page defaults to Padding.all(10). That inset sits OUTSIDE the
+    # CRT overlay and outside SafeArea, so the effect stopped 10px short of
+    # every edge and the scaffold showed through as a pale border all the
+    # way round - "there's a white border around everything and it breaks
+    # immersion". The app draws its own padding on the body container, so
+    # the page-level inset was only ever doing harm.
+    page.padding = 0
+
     # Persistent storage is a Flet *service*: constructing it inside the page
     # context registers it, and it is unregistered again the moment nothing
     # holds a strong reference - hence parking it on S rather than a local.

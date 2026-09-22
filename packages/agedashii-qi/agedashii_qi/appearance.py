@@ -198,7 +198,12 @@ def _tile_png_data_uri(width, height, pixels):
 
 
 # One dark row, three transparent - a 4-logical-pixel vertical period.
-_SCANLINE_TILE = _tile_png_data_uri(1, 4, [
+# VERTICAL lines: a 4x1 tile, one dark COLUMN of four. It was a 1x4 tile -
+# one dark row - which draws the horizontal scanlines of a broadcast CRT.
+# Her call, and it is the right one for a phone held upright: vertical
+# stripes read as an aperture grille (a Trinitron) rather than as interlace
+# banding, and they do not fight the horizontal rhythm of a list of cards.
+_SCANLINE_TILE = _tile_png_data_uri(4, 1, [
     (0, 0, 0, 140), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)])
 
 # One dot in sixteen - the same 4px period on both axes, at low enough
@@ -211,8 +216,21 @@ _HALFTONE_TILE = _tile_png_data_uri(4, 4, [
 
 CRT_INTENSITY_MIN = 0
 CRT_INTENSITY_MAX = 100
-# Tasteful, not maximum - she asked to be able to control it, not for it to
-# default to more of what she was already complaining was too much.
+
+# What 100 on the slider is actually worth. "the current 30% should be the
+# NEW 100%.. so essentially intensity focuses on the area only between
+# 0-30%" - so the whole slider now spans what used to be its bottom third.
+# The old scale spent two thirds of its travel in a range she called far
+# too intense, which made the control useless: everything above about 30
+# looked the same kind of wrong.
+#
+# Applied as a multiplier on the one opacity lever (see crt_overlay), so
+# all three layers still scale together and nothing has to be retuned.
+CRT_MAX_OPACITY = 0.30
+
+# Tasteful, not maximum. On the new scale this is 0.40 * 0.30 = 12% real
+# opacity - about where the old slider's 40 used to sit before the ceiling
+# came down, which is roughly what she was happy with.
 DEFAULT_CRT_INTENSITY = 40
 
 
@@ -224,7 +242,7 @@ def crt_overlay():
     nested container is the entire safety story.
     """
     t = max(CRT_INTENSITY_MIN,
-            min(CRT_INTENSITY_MAX, S.crt_intensity)) / 100
+            min(CRT_INTENSITY_MAX, S.crt_intensity)) / 100 * CRT_MAX_OPACITY
 
     halftone = ft.Container(
         expand=True, ignore_interactions=True,

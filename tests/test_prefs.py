@@ -1386,12 +1386,20 @@ class CrtOverlayDoesNotEatTaps(unittest.TestCase):
         from agedashii_tofu import ui
         self._saved_intensity = ui.S.crt_intensity
         try:
+            # The slider spans 0..CRT_MAX_OPACITY, not 0..1. The old scale
+            # spent two thirds of its travel above the point she called
+            # "far too intense", so every setting over about 30 looked the
+            # same kind of wrong and the control was useless. Her words:
+            # "the current 30% should be the NEW 100%.. so essentially
+            # intensity focuses on the area only between 0-30%".
+            cap = ui.CRT_MAX_OPACITY
+            self.assertEqual(cap, 0.30)
             ui.S.crt_intensity = 0
             self.assertEqual(ui.crt_overlay().opacity, 0.0)
             ui.S.crt_intensity = 100
-            self.assertEqual(ui.crt_overlay().opacity, 1.0)
+            self.assertAlmostEqual(ui.crt_overlay().opacity, cap)
             ui.S.crt_intensity = 25
-            self.assertEqual(ui.crt_overlay().opacity, 0.25)
+            self.assertAlmostEqual(ui.crt_overlay().opacity, 0.25 * cap)
             # Only the outermost container carries the lever; the two
             # nested layers stay at full internal opacity and are scaled
             # by inheriting the outer Flutter Opacity, not by a value of
