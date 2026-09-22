@@ -75,6 +75,16 @@ KEY_TRIP_TAGS = NS + "trip_tags"
 KEY_RADIUS = NS + "radius"
 KEY_GLOW = NS + "glow"
 KEY_CRT = NS + "crt"
+# Which drawer sections (pages with sub-items) she has expanded - "collapse
+# Tools once it has ten rows in it". Stored as "<page>:1"/"<page>:0", the
+# same explicit-flag-per-key shape `panel_width` already uses, rather than
+# a raw bool per entry: SharedPreferences is not consistent about booleans
+# ("false" comes back as the string "false", and `bool("false")` is True -
+# see `_as_bool`), and encoding the flag INTO the string sidesteps that
+# footgun entirely instead of adding a second place that has to remember
+# to guard against it. A page never explicitly touched here has no entry
+# at all, which is not the same as "closed" - see `drawer_section_open`.
+KEY_DRAWER_OPEN = NS + "drawer_open"
 
 
 def legacy_key(key):
@@ -157,6 +167,9 @@ def _defaults():
         KEY_RADIUS: 8,
         KEY_GLOW: False,
         KEY_CRT: False,
+        # No explicit opens or closes yet - see drawer_section_open() for
+        # what a page with no entry here defaults to.
+        KEY_DRAWER_OPEN: [],
     }
 
 
@@ -317,6 +330,53 @@ def set_bottom_bar_enabled(on):
 def drawer_pages():
     """Everything reachable from the drawer - the same set as visible_pages."""
     return visible_pages()
+
+
+def drawer_section_open(page_key, current_key):
+    """Whether `page_key`'s sub-items should be drawn under it.
+
+    A page she has explicitly toggled (tapped the chevron on, at any
+    point, on any visit) stays however she left it - that is the "remember
+    the open/closed set" part, and it is why this is read from storage
+    rather than recomputed from `current_key` on every call.
+
+    A page she has *never* touched has no entry in storage at all, and
+    defaults to open only if it is the page she is currently standing on,
+    closed otherwise. That default is picked over "everything open"
+    because Tools alone was already adding ten rows to a menu meant to be
+    a quick jump list, and over "everything closed" because then landing
+    on a page for the first time would hide the very sub-items she is
+    there to reach - Garage's Home/Mechanic/Flipper tabs, say - behind a
+    chevron she has not been told exists yet.
+    """
+    raw = _V.get(KEY_DRAWER_OPEN) or []
+    if isinstance(raw, (list, tuple)):
+        for entry in raw:
+            if not isinstance(entry, str) or ":" not in entry:
+                continue
+            k, _, flag = entry.partition(":")
+            if k != page_key or flag not in ("0", "1"):
+                # Coerced by construction, not by trusting the flag as a
+                # bool: only a literal "1" or "0" counts as explicitly
+                # set, so a corrupt or foreign value (storage handing
+                # back "true"/"false" as text, the way it does for real
+                # booleans - see `_as_bool` - included) falls through to
+                # the same "she has never told us" default below, rather
+                # than reading as an arbitrary explicit choice.
+                continue
+            return flag == "1"
+    return page_key == current_key
+
+
+def set_drawer_open(page_key, open_):
+    """Record an explicit open/closed choice for `page_key`'s chevron."""
+    if page_key not in PAGE_KEYS:
+        return False
+    kept = [e for e in (_V.get(KEY_DRAWER_OPEN) or [])
+            if isinstance(e, str) and e.partition(":")[0] != page_key]
+    kept.append(f"{page_key}:{'1' if open_ else '0'}")
+    _V[KEY_DRAWER_OPEN] = kept
+    return True
 
 
 # ------------------------------------------------------- custom trip tags

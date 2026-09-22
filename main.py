@@ -342,7 +342,9 @@ async def main(page):
     def nav_drawer():
         p = PAL()
         # Rebuilt on every render: the drawer is themed, and one built once at
-        # startup would keep the old palette after a theme change.
+        # startup would keep the old palette after a theme change. Also
+        # rebuilt, on its own, by _toggle_drawer_section - see there for why
+        # that path does not go through render().
         #
         # Hand-built rows rather than NavigationDrawerDestination, because
         # that control is flat and the whole point here is depth: every page
@@ -354,21 +356,54 @@ async def main(page):
 
         def page_row(k):
             on = k == current[0]
-            return ft.Container(
-                padding=PAD(14, 9), border_radius=RAD(8), ink=True,
+            highlight = dict(
                 # The drawer row you are standing on is the app's "active nav
                 # item"; glow on, it gets alola's accent shadow. Only the
                 # active one, so the drawer does not become a wall of light.
                 shadow=GLOW(blur=14, opacity=0.35) if on else None,
-                bgcolor=ft.Colors.with_opacity(0.12, p["accent"]) if on else None,
-                on_click=lambda e, key=k: _drawer_go(key),
-                content=ft.Row(spacing=12, controls=[
-                    ft.Icon(ICONS[k], size=19,
-                            color=p["accent"] if on else p["text2"]),
-                    ft.Text(LABELS[k], size=14,
-                            weight=ft.FontWeight.W_600 if on else ft.FontWeight.W_400,
-                            color=p["text"] if on else p["text2"]),
-                ]))
+                bgcolor=ft.Colors.with_opacity(0.12, p["accent"]) if on else None)
+            label_row = ft.Row(spacing=12, controls=[
+                ft.Icon(ICONS[k], size=19, color=p["accent"] if on else p["text2"]),
+                ft.Text(LABELS[k], size=14,
+                        weight=ft.FontWeight.W_600 if on else ft.FontWeight.W_400,
+                        color=p["text"] if on else p["text2"]),
+            ])
+            # Tapping the label or the icon always navigates - that is
+            # unconditional, chevron or not. A page with no sub-items (Home,
+            # Settings) gets exactly the row it always had: no chevron, no
+            # indent, no extra wrapper Container around it either, so this
+            # is the majority path and costs nothing beyond what shipped.
+            if not SUBPAGES.get(k):
+                return ft.Container(
+                    padding=PAD(14, 9), border_radius=RAD(8), ink=True,
+                    on_click=lambda e, key=k: _drawer_go(key),
+                    content=label_row, **highlight)
+
+            # A page with sub-items additionally gets a chevron - a separate
+            # tap target from the label/icon, per her request ("clicking on
+            # the icon should still go to the page... only [the chevron]
+            # collapses it"). 40x40 is a real Material touch target, not
+            # the 16px-transparent-container mistake this app made once -
+            # though that turned out to be a slow render eating the tap,
+            # not a hit-testing problem; see _toggle_drawer_section for why
+            # this path stays deliberately cheap.
+            open_ = prefs.drawer_section_open(k, current[0])
+            nav = ft.Container(
+                padding=PAD(14, 9), border_radius=RAD(8), ink=True, expand=True,
+                on_click=lambda e, key=k: _drawer_go(key), content=label_row)
+            chevron = ft.Container(
+                width=40, height=40, alignment=ft.Alignment.CENTER,
+                border_radius=RAD(8), ink=True,
+                on_click=lambda e, key=k: _toggle_drawer_section(key),
+                tooltip="Collapse" if open_ else "Expand",
+                content=ft.Icon(
+                    ft.Icons.EXPAND_MORE if open_ else ft.Icons.CHEVRON_RIGHT,
+                    size=20, color=p["accent"] if on else p["text2"]))
+            return ft.Container(
+                border_radius=RAD(8),
+                content=ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                               controls=[nav, chevron]),
+                **highlight)
 
         def sub_row(label, page_key, tab_path, depth=1):
             return ft.Container(
@@ -378,8 +413,12 @@ async def main(page):
 
         for k in pages:
             rows.append(page_row(k))
-            for label, tab_path, depth in SUBPAGES.get(k, []):
-                rows.append(sub_row(label, k, tab_path, depth))
+            # Sub-items only draw while their section is open - a page with
+            # none of its own (SUBPAGES.get(k) is falsy) never reaches
+            # drawer_section_open at all, matching "no chevron, no rows".
+            if SUBPAGES.get(k) and prefs.drawer_section_open(k, current[0]):
+                for label, tab_path, depth in SUBPAGES.get(k, []):
+                    rows.append(sub_row(label, k, tab_path, depth))
 
         return ft.NavigationDrawer(bgcolor=p["bg2"], controls=rows)
 
@@ -389,6 +428,22 @@ async def main(page):
     async def _drawer_go_async(key):
         await page.close_drawer()
         render(key)
+
+    def _toggle_drawer_section(key):
+        """Flip one page's chevron - the drawer's own affordance, not a
+        navigation. Never goes through render(): that rebuilds the topbar,
+        the body and the bottom bar along with the drawer, and a slow
+        rebuild eating a tap is the exact failure that already bit this
+        app once (see the chevron's own comment in page_row). Swapping
+        just `page.drawer` and updating is the smallest repaint that can
+        possibly show the new chevron state.
+        """
+        prefs.set_drawer_open(key, not prefs.drawer_section_open(key, current[0]))
+        page.drawer = nav_drawer()
+        page.update()
+        run_task = getattr(page, "run_task", None)
+        if callable(run_task) and S.prefs is not None:
+            run_task(prefs.save, S.prefs)
 
     async def open_menu(e):
         await page.show_drawer()

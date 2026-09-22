@@ -525,6 +525,83 @@ class BottomBarEnabled(unittest.TestCase):
         self.assertEqual(set(prefs.drawer_pages()), set(prefs.visible_pages()))
 
 
+class DrawerSectionsCollapse(unittest.TestCase):
+    """Chevrons on the drawer's Lab/Tools/... rows: collapse or expand,
+    remembered, and persisted - "home, lab, tools, trips, garage,
+    wat2do... it would be nice to be able to collapse or prolapse it".
+    """
+
+    def setUp(self):
+        prefs._V = prefs._defaults()
+
+    def test_untouched_defaults_to_open_only_when_current(self):
+        """Sensible default: the page she is standing on shows its own
+        tabs; everywhere else starts collapsed rather than the ten rows
+        Tools alone used to always add."""
+        self.assertTrue(prefs.drawer_section_open("garage", "garage"))
+        self.assertFalse(prefs.drawer_section_open("garage", "home"))
+        self.assertFalse(prefs.drawer_section_open("tools", "lab"))
+
+    def test_an_explicit_choice_overrides_the_current_page_default(self):
+        prefs.set_drawer_open("tools", True)
+        # Stays open even standing somewhere else...
+        self.assertTrue(prefs.drawer_section_open("tools", "home"))
+        prefs.set_drawer_open("garage", False)
+        # ...and stays closed even while standing on it.
+        self.assertFalse(prefs.drawer_section_open("garage", "garage"))
+
+    def test_an_unknown_page_is_refused(self):
+        self.assertFalse(prefs.set_drawer_open("not-a-page", True))
+
+    def test_survives_a_round_trip_through_stringy_storage(self):
+        """The same footgun `bottom_bar_enabled` guards against: storage
+        can hand a value back as text, and `bool("false")` is True. This
+        key never stores a raw bool at all - only the literal "1"/"0"
+        suffix counts as explicit - so prove a stray "true"/"false" (what
+        a *different* key would come back as) does not read as an
+        explicit choice here either, and degrades to the untouched
+        default instead of an arbitrary one.
+        """
+        # current_key="lab" throughout, so the untouched default for
+        # "tools" is always False - anything that is not a real "1"/"0"
+        # entry must fall through to that, not read as an explicit True.
+        cases = {"tools:1": True, "tools:0": False, "tools:true": False,
+                 "tools:false": False, "tools:": False, "tools:garbage": False}
+        for stored, expected in cases.items():
+            with self.subTest(stored=stored):
+                prefs._V[prefs.KEY_DRAWER_OPEN] = [stored]
+                self.assertIs(prefs.drawer_section_open("tools", "lab"), expected)
+
+    def test_persists_through_save_and_load(self):
+        """The save function once listed its keys by hand and silently
+        dropped a whole feature; KEY_DRAWER_OPEN rides `_defaults()` into
+        `save_payload()`'s generic loop instead, which this proves end to
+        end rather than trusting the mechanism by inspection."""
+        prefs.set_drawer_open("tools", True)
+        prefs.set_drawer_open("garage", False)
+        store = FakePrefs()
+        self.assertTrue(asyncio.run(prefs.save(store)))
+
+        prefs._V = prefs._defaults()
+        self.assertFalse(prefs.drawer_section_open("tools", "home"))  # gone
+
+        asyncio.run(prefs.load(store))
+        self.assertTrue(prefs.drawer_section_open("tools", "home"))
+        self.assertFalse(prefs.drawer_section_open("garage", "garage"))
+
+    def test_a_page_with_no_subpages_has_nothing_to_toggle(self):
+        """home and settings never call set_drawer_open in the real UI
+        (no chevron is drawn for them at all - see main.py's page_row),
+        but the store-level function itself stays honest either way: a
+        page with no sub-items is never "current and expanded" in any
+        way that matters, since nothing would ever be drawn under it."""
+        self.assertFalse(prefs.drawer_section_open("home", "lab"))
+        # Still legal to set (prefs doesn't know which pages have tabs -
+        # main.SUBPAGES does), it is simply never read for a chevron that
+        # is never drawn.
+        self.assertTrue(prefs.set_drawer_open("home", True))
+
+
 class DrawerSubpagesMatchTheRealTabs(unittest.TestCase):
     """main.SUBPAGES hardcodes tab indices; this fails if they drift.
 
@@ -1336,6 +1413,77 @@ class BottomBarToggleDoesNotCrash(unittest.TestCase):
                 elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     local.add(n.name)
                     local |= {a.arg for a in n.args.args}
+                elif isinstance(n, (ast.For, ast.comprehension, ast.With, ast.ExceptHandler)):
+                    for t in ast.walk(n):
+                        if isinstance(t, ast.Name):
+                            local.add(t.id)
+            known = local | module_level | set(dir(builtins))
+            return [n.id for n in ast.walk(fn)
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                    and n.id not in known]
+
+        top = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        unknown = {fn.name: u for fn in top if (u := check(fn))}
+        self.assertEqual(unknown, {}, f"names used but never bound: {unknown}")
+
+    def test_no_undefined_names_in_main(self):
+        """The same bug class, in the file where it would matter most.
+
+        main.py is one giant `async def main(page):` with every handler -
+        the drawer, its new chevrons, the render loop - nested inside it
+        as closures, so this walks that single top-level function exactly
+        the way the settings.py version walks each of its top-level ones:
+        a name used but never bound anywhere in reach (not a parameter,
+        not an assignment, not a nested def, not an import, not a
+        builtin) is exactly the class of typo that imports clean and only
+        crashes the first time the line actually runs - which for a
+        chevron nobody had tapped yet could have sat unnoticed for a
+        while.
+        """
+        import ast
+        import builtins
+        import os
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "main.py")
+        tree = ast.parse(open(path).read())
+        module_level = {n.name for n in ast.walk(tree)
+                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for a in node.names:
+                    module_level.add((a.asname or a.name).split(".")[0])
+            elif isinstance(node, ast.Assign):
+                # Not just `if isinstance(t, ast.Name)`: main.py's own
+                # `ORANGE, PINK, CYAN = "...", "...", "..."` is a tuple
+                # target, whose Name nodes only show up one level down.
+                for t in node.targets:
+                    for sub in ast.walk(t):
+                        if isinstance(sub, ast.Name):
+                            module_level.add(sub.id)
+
+        def check(fn):
+            local = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+            if fn.args.vararg:
+                local.add(fn.args.vararg.arg)
+            if fn.args.kwarg:
+                local.add(fn.args.kwarg.arg)
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Assign):
+                    for t in ast.walk(n):
+                        if isinstance(t, ast.Name):
+                            local.add(t.id)
+                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    # main.py nests keyword-only-argument handlers (e.g.
+                    # `def drain(*, force=False):`), which `args.args`
+                    # alone misses - the settings.py version of this test
+                    # never needed kwonlyargs/vararg/kwarg here because
+                    # settings.py happens not to nest one.
+                    local.add(n.name)
+                    local |= {a.arg for a in n.args.args} | {a.arg for a in n.args.kwonlyargs}
+                    if n.args.vararg:
+                        local.add(n.args.vararg.arg)
+                    if n.args.kwarg:
+                        local.add(n.args.kwarg.arg)
                 elif isinstance(n, (ast.For, ast.comprehension, ast.With, ast.ExceptHandler)):
                     for t in ast.walk(n):
                         if isinstance(t, ast.Name):
