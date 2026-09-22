@@ -44,7 +44,7 @@ import flet as ft
 
 from .. import api as M
 from .. import panels
-from ..ui import BRD, PAD, PAL, S, card, chip, sub, title
+from ..ui import BRD, PAD, PAL, RAD, S, card, chip, sub, title
 from ._forms import Writer, rebuilder
 from .lab import _tabs
 
@@ -209,7 +209,7 @@ def _picker(page, bikes):
                   f"{b.get('service_count', 0)} svc · "
                   f"{b.get('expense_count', 0)} exp")
         return ft.Container(
-            padding=PAD(8, 10), border_radius=9, ink=True, on_click=pick(slug),
+            padding=PAD(8, 10), border_radius=RAD(9), ink=True, on_click=pick(slug),
             bgcolor=ft.Colors.with_opacity(0.12, p["accent"]) if on else p["surface"],
             border=BRD(p["accent"] if on else p["border"], 1),
             content=ft.Row(spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -262,7 +262,7 @@ def _stats_strip(slug, stats):
 
     def tile(label, value):
         return ft.Container(
-            col={"xs": 4, "md": 2}, padding=PAD(8, 8), border_radius=9,
+            col={"xs": 4, "md": 2}, padding=PAD(8, 8), border_radius=RAD(9),
             bgcolor=p["bg2"], border=BRD(p["border"], 1),
             content=ft.Column(spacing=2, controls=[
                 ft.Text(label, size=9, color=p["text3"]),
@@ -293,7 +293,7 @@ def _section_bar(page, current):
     def tab(key, label, icon):
         on = key == current
         return ft.Container(
-            padding=PAD(5, 10), border_radius=18, ink=True, on_click=go(key),
+            padding=PAD(5, 10), border_radius=RAD(18), ink=True, on_click=go(key),
             bgcolor=ft.Colors.with_opacity(0.18, p["accent"]) if on else p["bg2"],
             border=BRD(p["accent"] if on else p["border"], 1),
             content=ft.Row(spacing=5, tight=True, controls=[
@@ -332,7 +332,7 @@ def _dashboard(page, stats):
                 tooltip=RECORD_TITLES[adder],
                 on_click=lambda e, t=adder: _record_dialog(page, t)))
         return ft.Container(
-            col={"xs": 12, "md": 4}, padding=PAD(10, 12), border_radius=10,
+            col={"xs": 12, "md": 4}, padding=PAD(10, 12), border_radius=RAD(10),
             ink=True, on_click=go(key), bgcolor=p["bg2"],
             border=BRD(p["border"], 1),
             content=ft.Row(spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -390,7 +390,7 @@ def _record_line(p, rtype, r):
     if r.get("notes"):
         bits.append(str(r["notes"]))
     return ft.Container(
-        padding=PAD(7, 10), border_radius=8, bgcolor=p["bg2"],
+        padding=PAD(7, 10), border_radius=RAD(8), bgcolor=p["bg2"],
         border=BRD(p["border"], 1),
         content=ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.START,
                        controls=[
@@ -625,7 +625,7 @@ def _notes(page, bike):
         files = [(name, _note_path(slug, path))
                  for _folder, name, path in _note_files(folder, [])]
         rows = [ft.Container(
-            padding=PAD(5, 9), border_radius=7, ink=True,
+            padding=PAD(5, 9), border_radius=RAD(7), ink=True,
             on_click=open_note(path),
             bgcolor=(ft.Colors.with_opacity(0.12, p["accent"])
                      if path == _state["note"] else p["bg2"]),
@@ -829,7 +829,7 @@ def _mechanic(page):
 
         on = slug == _state["bike"]
         return ft.Container(
-            padding=PAD(8, 10), border_radius=9, ink=True, on_click=choose,
+            padding=PAD(8, 10), border_radius=RAD(9), ink=True, on_click=choose,
             bgcolor=ft.Colors.with_opacity(0.12, p["accent"]) if on else p["bg2"],
             border=BRD(p["accent"] if on else p["border"], 1),
             content=ft.Row(spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -918,7 +918,7 @@ def _deal_card(p, d):
         # Anything the server could not treat as a bike for sale says so
         # plainly instead of wearing a score and a profit it never earned.
         return ft.Container(
-            padding=PAD(8, 10), border_radius=9, bgcolor=p["bg2"],
+            padding=PAD(8, 10), border_radius=RAD(9), bgcolor=p["bg2"],
             border=BRD(p["border"], 1),
             content=ft.Column(spacing=3, controls=[
                 ft.Row(spacing=8, controls=[
@@ -943,7 +943,7 @@ def _deal_card(p, d):
                                         + _money(abs(net), digits=0))
     net_colour = p["text3"] if net is None else (p["green"] if net >= 0 else p["red"])
 
-    top = [ft.Container(width=34, height=26, border_radius=6, bgcolor=colour,
+    top = [ft.Container(width=34, height=26, border_radius=RAD(6), bgcolor=colour,
                         alignment=ft.Alignment(0, 0),
                         content=ft.Text(str(score), size=12,
                                         weight=ft.FontWeight.W_700,
@@ -999,7 +999,7 @@ def _deal_card(p, d):
                     no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS, expand=True)]))
 
     return ft.Container(
-        padding=PAD(9, 10), border_radius=9, bgcolor=p["surface"],
+        padding=PAD(9, 10), border_radius=RAD(9), bgcolor=p["surface"],
         border=BRD(p["green"] if d.get("pearl") else p["border"], 1),
         content=ft.Column(spacing=4, controls=rows))
 

@@ -657,3 +657,439 @@ class PanelLayoutSurvivesARestart(unittest.TestCase):
             for part in ("order", "hidden", "width"):
                 with self.subTest(surface=surface, part=part):
                     self.assertIn(prefs._pkey(surface, part), store.data)
+
+
+# ===================================================================
+# Appearance: corner radius, accent glow, CRT overlay
+# ===================================================================
+class AppearanceStore(unittest.TestCase):
+    """The three appearance knobs, from storage to the drawn control.
+
+    Everything here is guarding one of two bugs this repo has already
+    shipped: a boolean that came back from storage as the string "false"
+    and read as True, and a feature whose keys `save()` never listed, so
+    it worked all session and was gone at the next launch.
+    """
+
+    class FakeStore:
+        def __init__(self, initial=None):
+            self.data = dict(initial or {})
+
+        async def set(self, k, v):
+            self.data[k] = v
+
+        async def get(self, k):
+            return self.data.get(k)
+
+    def setUp(self):
+        self._saved = dict(prefs._V)
+        prefs._V = prefs._defaults()
+        prefs.apply_runtime()
+
+    def tearDown(self):
+        prefs._V.clear()
+        prefs._V.update(self._saved)
+        prefs.apply_runtime()
+
+    # ---------------------------------------------------------- defaults
+    def test_ships_rounded_with_no_effects(self):
+        from flet_app import ui
+        self.assertEqual(prefs.corner_radius(), ui.DEFAULT_RADIUS)
+        self.assertIs(prefs.accent_glow(), False)
+        self.assertIs(prefs.crt_overlay(), False)
+
+    def test_the_shipped_radius_is_a_no_op(self):
+        """8 has to redraw exactly what the app drew before the setting existed."""
+        from flet_app import ui
+        prefs.set_corner_radius(8)
+        for nominal in (2, 3, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 22):
+            with self.subTest(nominal=nominal):
+                self.assertEqual(ui.RAD(nominal), nominal)
+
+    # ------------------------------------------------------------ coercion
+    def test_a_boolean_stored_as_a_string_is_not_read_as_true(self):
+        """bool("false") is True. That shipped here once; it does not again."""
+        for falsey in ("false", "False", " FALSE ", "0", "no", "off", ""):
+            with self.subTest(stored=falsey):
+                prefs._V[prefs.KEY_GLOW] = falsey
+                prefs._V[prefs.KEY_CRT] = falsey
+                self.assertIs(prefs.accent_glow(), False)
+                self.assertIs(prefs.crt_overlay(), False)
+
+    def test_a_truthy_string_still_reads_as_on(self):
+        for truthy in ("true", "True", "1", "yes", "on"):
+            with self.subTest(stored=truthy):
+                prefs._V[prefs.KEY_GLOW] = truthy
+                self.assertIs(prefs.accent_glow(), True)
+
+    def test_a_radius_stored_as_a_string_still_counts(self):
+        prefs._V[prefs.KEY_RADIUS] = "0"
+        self.assertEqual(prefs.corner_radius(), 0)
+
+    def test_a_radius_that_is_not_on_the_menu_falls_back(self):
+        """A value Settings cannot undo must not be drawn."""
+        from flet_app import ui
+        for junk in (7, 999, -4, "wide", None, [3]):
+            with self.subTest(stored=junk):
+                prefs._V[prefs.KEY_RADIUS] = junk
+                self.assertEqual(prefs.corner_radius(), ui.DEFAULT_RADIUS)
+
+    # --------------------------------------------------------- persistence
+    def test_every_default_key_is_written_by_save(self):
+        """The discipline test.
+
+        KEY_BOTTOM_ENABLED was in `_defaults()` and therefore loaded, but
+        not in save()'s hand-written payload, so the bottom-bar switch
+        reset at every launch. save_payload() is derived from `_defaults()`
+        now; this fails the moment someone goes back to listing keys.
+        """
+        payload = prefs.save_payload()
+        for key in prefs._defaults():
+            with self.subTest(key=key):
+                self.assertIn(key, payload)
+
+    def test_appearance_survives_a_restart(self):
+        store = self.FakeStore()
+        prefs.set_corner_radius(0)
+        prefs.set_accent_glow(True)
+        prefs.set_crt_overlay(True)
+        self.assertTrue(asyncio.run(prefs.save(store)))
+
+        # Restart: a fresh process starts from the shipped defaults.
+        prefs._V = prefs._defaults()
+        prefs.apply_runtime()
+        self.assertEqual(prefs.corner_radius(), 8)
+        self.assertIs(prefs.accent_glow(), False)
+
+        asyncio.run(prefs.load(store))
+        self.assertEqual(prefs.corner_radius(), 0)
+        self.assertIs(prefs.accent_glow(), True)
+        self.assertIs(prefs.crt_overlay(), True)
+
+    def test_a_restart_through_a_string_only_store_still_works(self):
+        """Some backends stringify everything on the way out. This is that."""
+        class Stringly(AppearanceStore.FakeStore):
+            async def get(self, k):
+                v = self.data.get(k)
+                return str(v).lower() if isinstance(v, bool) else v
+
+        store = Stringly()
+        prefs.set_accent_glow(True)
+        prefs.set_crt_overlay(False)
+        asyncio.run(prefs.save(store))
+        prefs._V = prefs._defaults()
+        asyncio.run(prefs.load(store))
+        self.assertIs(prefs.accent_glow(), True)
+        self.assertIs(prefs.crt_overlay(), False)
+
+    def test_the_bottom_bar_switch_also_survives_now(self):
+        """The bug that motivated deriving save() from the defaults."""
+        store = self.FakeStore()
+        prefs.set_bottom_bar_enabled(False)
+        asyncio.run(prefs.save(store))
+        prefs._V = prefs._defaults()
+        asyncio.run(prefs.load(store))
+        self.assertIs(prefs.bottom_bar_enabled(), False)
+
+    # ------------------------------------------------------ runtime push
+    def test_setting_the_radius_reaches_the_drawing_layer(self):
+        from flet_app import ui
+        for value in ui.RADIUS_CHOICES:
+            with self.subTest(radius=value):
+                prefs.set_corner_radius(value)
+                self.assertEqual(ui.S.radius, value)
+
+    def test_load_pushes_the_appearance_it_read(self):
+        from flet_app import ui
+        store = self.FakeStore({prefs.KEY_RADIUS: 0, prefs.KEY_GLOW: True,
+                                prefs.KEY_CRT: True})
+        asyncio.run(prefs.load(store))
+        self.assertEqual(ui.S.radius, 0)
+        self.assertIs(ui.S.glow, True)
+        self.assertIs(ui.S.crt, True)
+
+
+class RadiusReachesTheControls(unittest.TestCase):
+    """Proof the number leaves the store and lands on real built controls.
+
+    A setting that only changes a dict is the failure mode worth testing
+    for here: every corner in the app was a literal until this, and the
+    only way to know they are all routed is to build pages and look.
+    """
+
+    def setUp(self):
+        self._saved = dict(prefs._V)
+        prefs._V = prefs._defaults()
+        prefs.apply_runtime()
+
+    def tearDown(self):
+        prefs._V.clear()
+        prefs._V.update(self._saved)
+        prefs.apply_runtime()
+
+    class StubPage:
+        def __init__(self):
+            self.controls = []
+            self.drawer = None
+            self.theme = None
+            self.theme_mode = None
+            self.title = ""
+
+        def update(self):
+            pass
+
+        def add(self, *controls):
+            self.controls.extend(controls)
+
+        def run_task(self, *a, **k):
+            return None
+
+        def run_thread(self, *a, **k):
+            return None
+
+        @property
+        def services(self):
+            return []
+
+    @staticmethod
+    def _walk(control, seen=None):
+        import dataclasses
+        import flet as ft
+        if seen is None:
+            seen = set()
+        if not isinstance(control, ft.Control) or id(control) in seen:
+            return []
+        seen.add(id(control))
+        found = [control]
+        for field in dataclasses.fields(control):
+            if field.name.startswith("_"):
+                continue
+            try:
+                value = getattr(control, field.name)
+            except Exception:  # noqa: BLE001 - a lazy property is not a control
+                continue
+            for item in (value if isinstance(value, (list, tuple)) else [value]):
+                found += RadiusReachesTheControls._walk(item, seen)
+        return found
+
+    def _radii(self, page_name):
+        from flet_app import ui
+        from flet_app.pages import home, lab, settings, tools, weather
+        module = {"home": home, "lab": lab, "tools": tools,
+                  "weather": weather, "settings": settings}[page_name]
+        page = self.StubPage()
+        ui.apply_theme(page)
+        out = []
+        for control in self._walk(module.build(page)):
+            radius = getattr(control, "border_radius", None)
+            if radius is None:
+                continue
+            try:
+                out.append((control, float(radius)))
+            except (TypeError, ValueError):
+                pass
+        return out
+
+    @staticmethod
+    def _is_circle(control, radius):
+        """A dot, not a corner: square and rounded by at least half its side."""
+        w, h = getattr(control, "width", None), getattr(control, "height", None)
+        return (w is not None and w == h and radius >= w / 2 - 0.01)
+
+    def test_zero_is_genuinely_square_everywhere(self):
+        prefs.set_corner_radius(0)
+        for name in ("home", "lab", "tools", "weather", "settings"):
+            for control, radius in self._radii(name):
+                if self._is_circle(control, radius):
+                    continue           # a status dot is a circle, not a corner
+                with self.subTest(page=name, control=type(control).__name__):
+                    self.assertEqual(radius, 0)
+
+    def test_the_setting_moves_every_corner_together(self):
+        """Not one card, all of them - and each by the documented ratio.
+
+        Which sites are circles is decided once, from the shipped
+        geometry, and then held fixed. Re-deciding it per setting would
+        misread a 10px swatch whose 3px corner scales past 5 at the
+        softest setting as a circle, and quietly stop checking it.
+        """
+        from flet_app import ui
+        prefs.set_corner_radius(8)
+        shipped = {}
+        for name in ("home", "settings"):
+            shipped[name] = [(self._is_circle(c, r), r) for c, r in self._radii(name)]
+            self.assertTrue(any(not circle for circle, _ in shipped[name]),
+                            "no corners found on " + name)
+
+        for value in (0, 3, 12, 16):
+            prefs.set_corner_radius(value)
+            for name in ("home", "settings"):
+                now = [r for _, r in self._radii(name)]
+                self.assertEqual(len(now), len(shipped[name]))
+                for (was_circle, was), is_now in zip(shipped[name], now):
+                    with self.subTest(radius=value, page=name, nominal=was):
+                        self.assertEqual(is_now, was if was_circle
+                                         else float(ui.RAD(int(was))))
+
+    def test_a_round_dot_stays_round_at_zero(self):
+        """Squaring the machine dots would be a bug, not the feature."""
+        prefs.set_corner_radius(0)
+        circles = [(c, r) for c, r in self._radii("home") if self._is_circle(c, r)]
+        self.assertTrue(circles, "home draws status dots; none were found")
+        for control, radius in circles:
+            self.assertGreater(radius, 0)
+
+    def test_turning_everything_on_does_not_add_controls_to_a_page(self):
+        """The pages were cut from 1915 controls to a few hundred.
+
+        A glow that wrapped each card, or an overlay per page, would undo
+        that. Both are properties of controls that already exist; the only
+        control the CRT adds is one, over the whole shell, in main.py.
+        """
+        prefs.set_corner_radius(8)
+        before = {n: len(self._walk_page(n)) for n in ("home", "lab", "tools", "weather")}
+        prefs.set_corner_radius(0)
+        prefs.set_accent_glow(True)
+        prefs.set_crt_overlay(True)
+        after = {n: len(self._walk_page(n)) for n in ("home", "lab", "tools", "weather")}
+        self.assertEqual(before, after)
+
+    def _walk_page(self, name):
+        from flet_app import ui
+        from flet_app.pages import home, lab, tools, weather
+        module = {"home": home, "lab": lab, "tools": tools, "weather": weather}[name]
+        page = self.StubPage()
+        ui.apply_theme(page)
+        return self._walk(module.build(page))
+
+
+class AccentGlow(unittest.TestCase):
+    """The glow is off by default, themed when on, and touches the right things."""
+
+    def setUp(self):
+        self._saved = dict(prefs._V)
+        prefs._V = prefs._defaults()
+        prefs.apply_runtime()
+
+    def tearDown(self):
+        prefs._V.clear()
+        prefs._V.update(self._saved)
+        prefs.apply_runtime()
+
+    def test_off_means_no_shadow_at_all(self):
+        from flet_app import ui
+        prefs.set_accent_glow(False)
+        self.assertIsNone(ui.GLOW())
+        self.assertIsNone(ui.GLOW_STYLE())
+        self.assertIsNone(ui.title("Machines").style)
+        self.assertEqual(ui.FOCUS_WIDTH(), 1)
+
+    def test_on_puts_alolas_shadow_on_a_heading(self):
+        from flet_app import ui
+        prefs.set_accent_glow(True)
+        style = ui.title("Machines").style
+        self.assertIsNotNone(style)
+        self.assertIsNotNone(style.shadow)
+        self.assertEqual(ui.FOCUS_WIDTH(), 2)
+
+    def test_the_glow_is_the_current_themes_accent_not_a_fixed_colour(self):
+        """24 themes; a hard-coded yellow would be wrong on 23 of them."""
+        from flet_app import theme_data, ui
+        prefs.set_accent_glow(True)
+        seen = {}
+        for key in theme_data.THEMES:
+            ui.S.theme = key
+            seen[key] = ui.GLOW().color
+            self.assertIn(theme_data.THEMES[key]["accent"].lstrip("#").lower(),
+                          str(seen[key]).lower())
+        ui.S.theme = theme_data.DEFAULT
+        self.assertGreater(len(set(seen.values())), 1,
+                           "every theme glowed the same colour")
+
+    def test_the_active_nav_indicator_brightens_with_the_glow(self):
+        from flet_app import ui
+
+        class P:
+            theme = None
+            theme_mode = None
+
+            def update(self):
+                pass
+
+        page = P()
+        prefs.set_accent_glow(False)
+        ui.apply_theme(page)
+        off = page.theme.navigation_bar_theme.indicator_color
+        self.assertIsNone(page.theme.focus_color)
+        prefs.set_accent_glow(True)
+        ui.apply_theme(page)
+        self.assertNotEqual(page.theme.navigation_bar_theme.indicator_color, off)
+        self.assertIsNotNone(page.theme.focus_color)
+
+
+class CrtOverlayDoesNotEatTaps(unittest.TestCase):
+    """The failure this guards is the one that makes the whole app look dead.
+
+    A full-screen container over the content takes every tap unless it is
+    explicitly removed from hit testing. That has shipped here before, in
+    another form, and cost a day of looking at the handlers instead of at
+    what was on top of them.
+    """
+
+    def setUp(self):
+        self._saved = dict(prefs._V)
+        prefs._V = prefs._defaults()
+        prefs.apply_runtime()
+
+    def tearDown(self):
+        prefs._V.clear()
+        prefs._V.update(self._saved)
+        prefs.apply_runtime()
+
+    def test_it_is_off_by_default(self):
+        self.assertIs(prefs.crt_overlay(), False)
+
+    def test_the_overlay_is_removed_from_hit_testing(self):
+        from flet_app import ui
+        overlay = ui.crt_overlay()
+        self.assertIs(overlay.ignore_interactions, True)
+
+    def test_the_overlay_carries_no_handler_of_its_own(self):
+        """Belt and braces: nothing to fire even if the flag were dropped."""
+        from flet_app import ui
+        overlay = ui.crt_overlay()
+        for attr in ("on_click", "on_tap_down", "on_long_press", "on_hover", "url"):
+            with self.subTest(attr=attr):
+                self.assertIsNone(getattr(overlay, attr, None))
+
+    def test_every_control_in_the_overlay_ignores_interactions(self):
+        from flet_app import ui
+        controls = RadiusReachesTheControls._walk(ui.crt_overlay())
+        self.assertEqual(len(controls), 1, "the overlay must stay one control")
+        for control in controls:
+            self.assertIs(getattr(control, "ignore_interactions", None), True)
+
+    def test_a_button_under_the_overlay_still_fires(self):
+        """Stack the overlay over a real handler and call it, as Flutter would.
+
+        `ignore_interactions` is what stops the hit test ever reaching the
+        overlay, so the control beneath keeps the handler it was built with
+        and the tap runs it. This asserts the shape Flutter resolves a tap
+        through: the overlay is last (on top), and the thing underneath is
+        untouched by being covered.
+        """
+        import flet as ft
+        from flet_app import ui
+
+        fired = []
+        button = ft.Container(on_click=lambda e: fired.append(True),
+                              content=ft.Text("tap me"))
+        shell = ft.Column(controls=[button])
+        stack = ft.Stack(expand=True, controls=[shell, ui.crt_overlay()])
+
+        self.assertIs(stack.controls[-1].ignore_interactions, True)
+        self.assertIs(stack.controls[0], shell)
+        under = stack.controls[0].controls[0]
+        self.assertIsNotNone(under.on_click)
+        under.on_click(None)
+        self.assertEqual(fired, [True])

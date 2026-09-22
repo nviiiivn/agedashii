@@ -50,7 +50,7 @@ import flet as ft
 
 from .. import api as M
 from .. import config
-from ..ui import PAL, PAD, BRD, card, chip, title, sub
+from ..ui import PAL, PAD, BRD, RAD, card, chip, title, sub
 from ._wat2do_parts import HOME, haversine_m, miles
 
 GEMS_PATH = "/api/future/gems"
@@ -484,7 +484,7 @@ def build(page):
             rerender()
 
         return ft.Container(
-            padding=PAD(3, 8), border_radius=9, ink=True, on_click=toggle,
+            padding=PAD(3, 8), border_radius=RAD(9), ink=True, on_click=toggle,
             bgcolor=ft.Colors.with_opacity(0.18, meta["color"]) if on else p["bg2"],
             border=BRD(meta["color"] if on else p["border"], 1),
             content=ft.Row(spacing=5, tight=True, controls=[
@@ -502,7 +502,7 @@ def build(page):
             rerender()
 
         return ft.Container(
-            padding=PAD(3, 8), border_radius=9, ink=True, on_click=toggle,
+            padding=PAD(3, 8), border_radius=RAD(9), ink=True, on_click=toggle,
             bgcolor=ft.Colors.with_opacity(0.18, meta["color"]) if on else p["bg2"],
             border=BRD(meta["color"] if on else p["border"], 1),
             content=ft.Row(spacing=5, tight=True, controls=[
@@ -522,7 +522,7 @@ def build(page):
             rerender()
 
         return ft.Container(
-            padding=PAD(3, 10), border_radius=9, ink=True, on_click=pick,
+            padding=PAD(3, 10), border_radius=RAD(9), ink=True, on_click=pick,
             bgcolor=p["accent"] if on else p["bg2"],
             border=BRD(p["accent"] if on else p["border"], 1),
             content=ft.Text(f"{mi} mi", size=10,
@@ -641,7 +641,7 @@ def build(page):
                 action(ft.Icons.BOOKMARK_ADD_OUTLINED, "Save to the someday list",
                        lambda e, s=spot: _run(page, do_save, s)))
         return ft.Container(
-            padding=PAD(3, 2), border_radius=6,
+            padding=PAD(3, 2), border_radius=RAD(6),
             content=ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                            controls=[
                                ft.Icon(meta["icon"], size=15, color=meta["color"]),

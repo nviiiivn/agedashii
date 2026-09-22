@@ -32,7 +32,7 @@ import flet as ft
 
 from .. import api as M
 from .. import panels
-from ..ui import PAL, PAD, BRD, card, chip, sub, title
+from ..ui import PAL, PAD, BRD, RAD, card, chip, sub, title
 from ._forms import offline_banner
 from .lab import _tabs
 from . import _wat2do_parts as W
@@ -165,7 +165,7 @@ def _present(page):
     # ------------------------------------------------------------ checklist
     items_box = ft.Column(spacing=2)
     prog = ft.ProgressBar(value=0, color=p["orange"], bgcolor=p["bg2"],
-                          bar_height=5, border_radius=2)
+                          bar_height=5, border_radius=RAD(2))
     count = ft.Text("", size=11, color=p["text2"])
 
     def flat_rows():
@@ -211,7 +211,7 @@ def _present(page):
             row.append(sub(f"{it['sub_done']}/{it['sub_total']}", 10))
         return ft.Container(
             padding=ft.Padding(left=22 if it["depth"] else 0, top=3, right=2, bottom=3),
-            border_radius=6, ink=live,
+            border_radius=RAD(6), ink=live,
             on_click=(lambda e, i=index: _run(page, toggle, i)) if live else None,
             content=ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                            controls=row))
@@ -323,7 +323,7 @@ def _present(page):
             lo = (daily.get("temperature_2m_min") or [None] * 3)[i]
             dc = (daily.get("weather_code") or [None] * 3)[i]
             tiles.append(ft.Container(
-                expand=True, padding=PAD(6, 4), border_radius=8, bgcolor=p["bg2"],
+                expand=True, padding=PAD(6, 4), border_radius=RAD(8), bgcolor=p["bg2"],
                 content=ft.Column(spacing=2,
                                   horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                   controls=[
@@ -338,7 +338,7 @@ def _present(page):
         return card(ft.Column(spacing=8, controls=[
             sub("WEATHER", 10), head,
             ft.Row(spacing=6, controls=tiles) if tiles else ft.Container(),
-            ft.Container(padding=PAD(6, 10), border_radius=8,
+            ft.Container(padding=PAD(6, 10), border_radius=RAD(8),
                          bgcolor=ft.Colors.with_opacity(0.12, tone_colour),
                          border=BRD(ft.Colors.with_opacity(0.35, tone_colour), 1),
                          content=ft.Text(text, size=12, color=tone_colour)),
@@ -490,7 +490,7 @@ def _present(page):
         for s in _S["spots"]:
             c = W.CAT_BY_ID[s["cat"]]
             rows.append(ft.Container(
-                padding=PAD(4, 2), border_radius=6, ink=True,
+                padding=PAD(4, 2), border_radius=RAD(6), ink=True,
                 on_click=(lambda e, s=s: _run(page, draw_route, s["lat"], s["lon"],
                                               "pedestrian", "#3fb950")),
                 content=ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -507,7 +507,7 @@ def _present(page):
         def mode_chip(label, icon, active, on_click, suggested=False):
             colour = p["accent"] if active else (p["yellow"] if suggested else p["text2"])
             return ft.Container(
-                padding=PAD(4, 10), border_radius=20, ink=True, on_click=on_click,
+                padding=PAD(4, 10), border_radius=RAD(20), ink=True, on_click=on_click,
                 bgcolor=ft.Colors.with_opacity(0.18 if active else 0.06, colour),
                 border=BRD(ft.Colors.with_opacity(0.5 if active or suggested else 0.25,
                                                   colour), 1),
@@ -563,7 +563,7 @@ def _present(page):
         for c in W.POI_CATS:
             on = c["id"] in _S["sel_cats"]
             chips.append(ft.Container(
-                padding=PAD(3, 8), border_radius=20, ink=True, on_click=toggle_cat(c["id"]),
+                padding=PAD(3, 8), border_radius=RAD(20), ink=True, on_click=toggle_cat(c["id"]),
                 bgcolor=ft.Colors.with_opacity(0.22 if on else 0.05, c["color"]),
                 border=BRD(ft.Colors.with_opacity(0.6 if on else 0.2, c["color"]), 1),
                 content=ft.Row(spacing=4, tight=True, controls=[
@@ -587,14 +587,14 @@ def _present(page):
         for key, (label, _url) in W.BASEMAPS.items():
             on = _S["basemap"] == key
             out.append(ft.Container(
-                padding=PAD(3, 9), border_radius=7, ink=True, on_click=pick(key),
+                padding=PAD(3, 9), border_radius=RAD(7), ink=True, on_click=pick(key),
                 bgcolor=ft.Colors.with_opacity(0.2 if on else 0.05, p["accent"]),
                 border=BRD(ft.Colors.with_opacity(0.5 if on else 0.2, p["accent"]), 1),
                 content=ft.Text(label, size=10,
                                 color=p["accent"] if on else p["text2"])))
         out.append(ft.Container(expand=True))
         out.append(ft.Container(
-            padding=PAD(3, 9), border_radius=7, ink=True,
+            padding=PAD(3, 9), border_radius=RAD(7), ink=True,
             on_click=lambda e: _run(page, toggle_notes),
             bgcolor=ft.Colors.with_opacity(0.2 if _S["notes_on"] else 0.05, p["yellow"]),
             border=BRD(ft.Colors.with_opacity(
@@ -845,7 +845,7 @@ def _present(page):
         ]
         if MAPS_AVAILABLE:
             controls.append(ft.Container(
-                border_radius=10, clip_behavior=ft.ClipBehavior.HARD_EDGE,
+                border_radius=RAD(10), clip_behavior=ft.ClipBehavior.HARD_EDGE,
                 content=the_map))
         else:
             controls.append(card(sub("Map unavailable - this build has no flet-map.", 11),

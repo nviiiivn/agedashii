@@ -37,7 +37,7 @@ import urllib.request
 
 import flet as ft
 
-from ..ui import PAL, PAD, BRD, S, card, chip, title, sub, dot
+from ..ui import PAL, PAD, BRD, RAD, S, card, chip, title, sub, dot
 from .. import api as M
 from .. import config
 from .. import panels
@@ -662,7 +662,7 @@ def _machines(page):
             repaint()
 
         head = ft.Container(
-            ink=True, border_radius=8, on_click=toggle,
+            ink=True, border_radius=RAD(8), on_click=toggle,
             tooltip=("hide this machine's detail" if is_open
                      else f"show everything about {display}"),
             content=ft.Row([
@@ -1459,7 +1459,7 @@ def _qbit(page):
                             expand=True, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS),
                     chip(state, color, small=True)]),
             ft.ProgressBar(value=prog, color=color, bgcolor=p["bg2"], bar_height=4,
-                           border_radius=2),
+                           border_radius=RAD(2)),
             ft.Row([sub(" · ".join(bits), 11)]),
         ]
         if thash:

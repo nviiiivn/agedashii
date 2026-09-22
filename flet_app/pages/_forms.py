@@ -12,7 +12,7 @@ server is worse than a visible failure - it looks like it worked.
 """
 import flet as ft
 
-from ..ui import PAL, PAD
+from ..ui import PAL, PAD, FOCUS_WIDTH
 
 
 class Writer:
@@ -61,6 +61,9 @@ class Writer:
             expand=width is None, width=width, multiline=multiline,
             min_lines=4 if multiline else 1, max_lines=12 if multiline else 1,
             border_color=p["border"], focused_border_color=p["accent"],
+            # Every add-form in the app comes through here, so this is where
+            # the accent glow reaches a focused field. See ui.FOCUS_WIDTH().
+            focused_border_width=FOCUS_WIDTH(),
             color=p["text"])
 
         async def submit(e):

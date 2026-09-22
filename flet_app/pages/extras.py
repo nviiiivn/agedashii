@@ -24,7 +24,7 @@ save a gem somewhere else is not a chat.
 """
 import flet as ft
 
-from ..ui import PAL, PAD, BRD, card, chip, title, sub, dot
+from ..ui import PAL, PAD, BRD, RAD, card, chip, title, sub, dot
 from .. import api as M
 from .. import panels
 from .lab import _tabs, _show, _dismiss, _error_card
@@ -175,7 +175,7 @@ def _projects(page):
             meta.append(chip("empty", p["text2"], small=True))
 
         return ft.Container(
-            ink=True, border_radius=12, on_click=open_repo(owner, name),
+            ink=True, border_radius=RAD(12), on_click=open_repo(owner, name),
             content=card(ft.Column(spacing=6, controls=[
                 ft.Row(spacing=8, controls=[
                     ft.Icon(ft.Icons.FOLDER_COPY, color=p["orange"], size=18),
@@ -298,7 +298,7 @@ def _repo_detail(page):
                 viewer.controls.append(sub("the file is empty", 11))
             else:
                 viewer.controls.append(ft.Container(
-                    padding=PAD(8, 10), border_radius=8, bgcolor=p["bg2"],
+                    padding=PAD(8, 10), border_radius=RAD(8), bgcolor=p["bg2"],
                     border=BRD(p["border"], 1),
                     content=ft.Text(text[:200000], size=10, color=p["text"],
                                     selectable=True, font_family="monospace")))
@@ -438,7 +438,7 @@ def _ai(page):
         return ft.Row(
             alignment=ft.MainAxisAlignment.END if mine else ft.MainAxisAlignment.START,
             controls=[ft.Container(
-                width=300, padding=PAD(10, 12), border_radius=14, bgcolor=colour,
+                width=300, padding=PAD(10, 12), border_radius=RAD(14), bgcolor=colour,
                 border=BRD(p["red"] if failed else p["border"], 0 if mine else 1),
                 content=ft.Text(m["text"], size=13, selectable=True,
                                 color="#ffffff" if mine else
@@ -456,7 +456,7 @@ def _ai(page):
         if extra is not None:
             stream.controls.append(extra)
 
-    entry = ft.TextField(hint_text="Message…", border_radius=12, bgcolor=p["bg2"],
+    entry = ft.TextField(hint_text="Message…", border_radius=RAD(12), bgcolor=p["bg2"],
                          border_color=p["border"], focused_border_color=p["accent"],
                          color=p["text"], dense=True, expand=True, multiline=True,
                          min_lines=1, max_lines=4)

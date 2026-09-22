@@ -31,7 +31,7 @@ from .. import panels
 from .. import prefs
 from .. import routing as R
 from .. import tileserver
-from ..ui import PAL, PAD, BRD, card, chip, title, sub
+from ..ui import PAL, PAD, BRD, RAD, card, chip, title, sub
 from ._forms import rebuilder
 from . import _trips_parts as T
 from . import xnav
@@ -237,7 +237,7 @@ def _empty(p, text, icon=ft.Icons.INFO_OUTLINE):
 
 def _stat(p, label, value, unit=""):
     return ft.Container(
-        padding=PAD(6, 10), border_radius=8, bgcolor=p["bg2"],
+        padding=PAD(6, 10), border_radius=RAD(8), bgcolor=p["bg2"],
         border=BRD(p["border"], 1),
         content=ft.Column(spacing=1, tight=True, controls=[
             ft.Text(label, size=9, color=p["text2"]),
@@ -266,7 +266,7 @@ def _elev_profile(p, profile, width_hint=44):
     for v in values[::step]:
         frac = (v - lo) / span
         bars.append(ft.Container(
-            width=4, height=6 + frac * 46, border_radius=2,
+            width=4, height=6 + frac * 46, border_radius=RAD(2),
             bgcolor=ft.Colors.with_opacity(0.35 + 0.6 * frac, p["accent"])))
     up, down = T.profile_climb(profile)
     return ft.Column(spacing=4, controls=[
@@ -434,7 +434,7 @@ def _planner(page, p):
             _update(page)
 
         the_map.on_tap = on_map_tap
-        map_box = ft.Container(height=300, border_radius=12,
+        map_box = ft.Container(height=300, border_radius=RAD(12),
                                clip_behavior=ft.ClipBehavior.HARD_EDGE,
                                content=the_map)
     else:                                  # pragma: no cover - build-dependent
@@ -706,7 +706,7 @@ def _builder_card(page, p, say):
                 url_template=url_template,
                 user_agent_package_name="online.iamprettyfamous.agedashii"),
                 line_layer, marker_layer])
-        map_box = ft.Container(height=260, border_radius=10,
+        map_box = ft.Container(height=260, border_radius=RAD(10),
                                clip_behavior=ft.ClipBehavior.HARD_EDGE,
                                content=the_map)
     else:                                  # pragma: no cover - build-dependent
@@ -1117,7 +1117,7 @@ def _trip_detail(page, p, t):
                 user_agent_package_name="online.iamprettyfamous.agedashii"),
                 fmap.PolylineLayer(polylines=[line]),
                 fmap.MarkerLayer(markers=markers)])
-        parts.append(ft.Container(height=200, border_radius=10,
+        parts.append(ft.Container(height=200, border_radius=RAD(10),
                                   clip_behavior=ft.ClipBehavior.HARD_EDGE,
                                   content=the_map))
 
@@ -1300,7 +1300,7 @@ def _produce(page):
 
         edit_map.on_tap = on_tap
         map_holder.content = ft.Column(spacing=6, controls=[
-            ft.Container(height=300, border_radius=10,
+            ft.Container(height=300, border_radius=RAD(10),
                          clip_behavior=ft.ClipBehavior.HARD_EDGE,
                          content=edit_map),
             ft.Row(spacing=6, controls=[
@@ -1614,7 +1614,7 @@ def _report_card(page, p, st, say):
         for tag in items:
             colour = T.severity_colour(tag["severity"], p)
             chips.append(ft.Container(
-                padding=PAD(0, 4), border_radius=16,
+                padding=PAD(0, 4), border_radius=RAD(16),
                 bgcolor=ft.Colors.with_opacity(0.12, colour),
                 border=BRD(ft.Colors.with_opacity(0.4, colour), 1),
                 content=ft.Row(spacing=2, tight=True, controls=[
@@ -1692,7 +1692,7 @@ def _report_card(page, p, st, say):
 def _scope_button(p, label, active, on_click, tooltip=None):
     colour = p["accent"] if active else p["text2"]
     return ft.Container(
-        padding=PAD(4, 9), border_radius=8, tooltip=tooltip,
+        padding=PAD(4, 9), border_radius=RAD(8), tooltip=tooltip,
         bgcolor=ft.Colors.with_opacity(0.18 if active else 0.05, colour),
         border=BRD(ft.Colors.with_opacity(0.5 if active else 0.25, colour), 1),
         on_click=on_click,
@@ -1954,7 +1954,7 @@ def _ride_viewer(page, p, say):
                 fmap.PolylineLayer(polylines=lines), limit_line_layer,
                 fmap.MarkerLayer(markers=[start_pin, end_pin, head_marker])])
         limit_layer = limit_line_layer
-        map_box = ft.Container(height=300, border_radius=10,
+        map_box = ft.Container(height=300, border_radius=RAD(10),
                                clip_behavior=ft.ClipBehavior.HARD_EDGE,
                                content=the_map)
     else:                                  # pragma: no cover - build-dependent
@@ -2051,7 +2051,7 @@ def _ride_viewer(page, p, say):
     legend = ft.Row(spacing=8, wrap=True, controls=[
         sub("replay speed", 10),
         *[ft.Row(spacing=3, tight=True, controls=[
-            ft.Container(width=18, height=7, border_radius=3,
+            ft.Container(width=18, height=7, border_radius=RAD(3),
                          bgcolor=T.speed_colour(v)),
             ft.Text(f"{v}", size=9, color=p["text2"])])
           for v in (0, 20, 40, 60, 80)],

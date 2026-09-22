@@ -34,7 +34,7 @@ import flet as ft
 
 from .. import api as M
 from .. import panels
-from ..ui import PAD, PAL, BRD, card, chip, sub, title
+from ..ui import PAD, PAL, BRD, RAD, card, chip, sub, title
 from . import _trips_parts as T
 
 try:                      # optional: the app still runs without the extensions
@@ -287,7 +287,7 @@ def build(page):
         ]))
 
     def map_card():
-        return ft.Container(height=380, border_radius=12,
+        return ft.Container(height=380, border_radius=RAD(12),
                             clip_behavior=ft.ClipBehavior.HARD_EDGE,
                             content=the_map)
 
@@ -699,7 +699,7 @@ def _navigator(page, p, the_map, route_layer, nav_markers, poi_layer):
             on = cat["id"] in _NAV["active"]
             colour = p["accent"] if on else p["text2"]
             chips.append(ft.Container(
-                padding=PAD(4, 9), border_radius=16,
+                padding=PAD(4, 9), border_radius=RAD(16),
                 bgcolor=ft.Colors.with_opacity(0.16 if on else 0.05, colour),
                 border=BRD(ft.Colors.with_opacity(0.45 if on else 0.22, colour), 1),
                 on_click=lambda e, c=cat["id"]: _run(page, toggle_poi, c),
@@ -783,7 +783,7 @@ async def _fit(the_map, points):
 
 def _tile(p, label, value, unit=""):
     return ft.Container(
-        padding=PAD(6, 10), border_radius=8, bgcolor=p["bg2"],
+        padding=PAD(6, 10), border_radius=RAD(8), bgcolor=p["bg2"],
         border=BRD(p["border"], 1),
         content=ft.Column(spacing=1, tight=True, controls=[
             ft.Text(label, size=9, color=p["text2"]),
@@ -809,7 +809,7 @@ def _profile_bars(p, profile, width_hint=44):
     lo, hi = min(values), max(values)
     span = max(1.0, hi - lo)
     step = max(1, len(values) // width_hint)
-    bars = [ft.Container(width=4, height=6 + (v - lo) / span * 46, border_radius=2,
+    bars = [ft.Container(width=4, height=6 + (v - lo) / span * 46, border_radius=RAD(2),
                          bgcolor=ft.Colors.with_opacity(
                              0.35 + 0.6 * (v - lo) / span, p["accent"]))
             for v in values[::step]]

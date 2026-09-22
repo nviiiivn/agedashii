@@ -64,7 +64,7 @@ import flet as ft
 from .. import api as M
 from .. import panels
 from .. import config, tileserver
-from ..ui import BRD, PAD, PAL, S, card, chip, sub, title
+from ..ui import BRD, PAD, PAL, RAD, S, card, chip, sub, title
 from ._forms import rebuilder
 from .lab import _tabs
 
@@ -388,7 +388,7 @@ def _forecast(spot):
     def day(i):
         label, icon, ckey = _wmo(_at(codes, i))
         return ft.Container(
-            expand=True, padding=8, border_radius=10,
+            expand=True, padding=8, border_radius=RAD(10),
             bgcolor=p["surface"], border=BRD(p["border"], 1),
             content=ft.Column(spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                               controls=[
@@ -497,7 +497,7 @@ def _rain_controls(page, restack):
     label = ft.Text("Rain", size=11, weight=ft.FontWeight.W_600,
                     color=p["text"] if _rain["on"] else p["text2"])
     button = ft.Container(
-        padding=PAD(4, 10), border_radius=18, ink=True,
+        padding=PAD(4, 10), border_radius=RAD(18), ink=True,
         bgcolor=ft.Colors.with_opacity(0.20 if _rain["on"] else 0.06, p["cyan"]),
         border=BRD(p["cyan"] if _rain["on"] else p["border"], 1),
         tooltip="live rain radar from RainViewer",
@@ -601,7 +601,7 @@ def _rain_controls(page, restack):
         ])
     legend = ft.Row(spacing=8, wrap=True, visible=_rain["on"], controls=[
         ft.Row(spacing=4, tight=True, controls=[
-            ft.Container(width=10, height=10, border_radius=3, bgcolor=colour),
+            ft.Container(width=10, height=10, border_radius=RAD(3), bgcolor=colour),
             ft.Text(name, size=9, color=p["text3"])])
         for name, colour in RAIN_LEGEND])
 
@@ -631,7 +631,7 @@ def _station_pin(p, spot, on_pick, *, big=False):
            f"{_n(cur.get('wind_speed_10m'))} mph"
            + (f" (g {_n(gust)})" if gust is not None else ""))
     box = ft.Container(
-        padding=PAD(1, 5), border_radius=8, bgcolor=temp_color(temp),
+        padding=PAD(1, 5), border_radius=RAD(8), bgcolor=temp_color(temp),
         border=ft.Border.all(1, ft.Colors.WHITE), tooltip=tip,
         alignment=ft.Alignment(0, 0),
         on_click=(lambda e, n=spot.get("name"): on_pick(n)) if on_pick else None,
@@ -645,7 +645,7 @@ def _station_pin(p, spot, on_pick, *, big=False):
 def _temp_legend(p):
     return ft.Row(spacing=8, wrap=True, controls=[
         ft.Row(spacing=3, tight=True, controls=[
-            ft.Container(width=10, height=10, border_radius=3, bgcolor=colour),
+            ft.Container(width=10, height=10, border_radius=RAD(3), bgcolor=colour),
             ft.Text(("≤" if t == TEMP_STOPS[0][0] else
                      "≥" if t == TEMP_STOPS[-1][0] else "") + f"{t}°",
                     size=9, color=p["text3"])])
@@ -727,7 +727,7 @@ def _bay_map(page, spots, on_pick, restack_holder):
                           icon=ft.Icons.FULLSCREEN,
                           on_click=lambda e: _open_full_map(page, spots)),
         ]),
-        ft.Container(height=MINI_MAP_HEIGHT, border_radius=10,
+        ft.Container(height=MINI_MAP_HEIGHT, border_radius=RAD(10),
                      clip_behavior=ft.ClipBehavior.HARD_EDGE, content=the_map),
         _temp_legend(p),
         sub(f"{len(stations)} mapped stations · tap a pin to read it below", 10),
@@ -774,7 +774,7 @@ def _open_full_map(page, spots):
         content=ft.Container(
             width=760, height=FULL_MAP_HEIGHT,
             content=ft.Column(spacing=8, expand=True, controls=[
-                ft.Container(expand=True, border_radius=10,
+                ft.Container(expand=True, border_radius=RAD(10),
                              clip_behavior=ft.ClipBehavior.HARD_EDGE,
                              content=the_map),
                 _temp_legend(p),
@@ -859,7 +859,7 @@ def _spot_tile(p, spot, selected, on_pick, on_toggle=None):
         rows.append(forecast)
 
     return ft.Container(
-        col={"xs": 12, "md": 6}, padding=PAD(8, 10), border_radius=10, ink=True,
+        col={"xs": 12, "md": 6}, padding=PAD(8, 10), border_radius=RAD(10), ink=True,
         on_click=lambda e, n=spot.get("name"): on_pick(n),
         bgcolor=ft.Colors.with_opacity(0.10, p["accent"]) if on else p["bg2"],
         border=BRD(p["accent"] if on else
@@ -890,7 +890,7 @@ def _spot_row(p, spot, selected, on_pick, on_toggle):
     on = name == selected
     is_open = name in _OPEN_SPOTS
     return ft.Container(
-        col={"xs": 12, "md": 6}, padding=PAD(5, 9), border_radius=9, ink=True,
+        col={"xs": 12, "md": 6}, padding=PAD(5, 9), border_radius=RAD(9), ink=True,
         on_click=lambda e, n=name: on_pick(n),
         tooltip=f"read {name} in the card above",
         bgcolor=ft.Colors.with_opacity(0.10, p["accent"]) if on else p["bg2"],
@@ -1382,7 +1382,7 @@ def _explore_tab(page):
     def rebuild_chips():
         chip_row.controls = [
             ft.Container(
-                padding=PAD(4, 9), border_radius=20,
+                padding=PAD(4, 9), border_radius=RAD(20),
                 on_click=toggle(c["id"]),
                 bgcolor=ft.Colors.with_opacity(
                     0.22 if c["id"] in _explore["cats"] else 0.06, p[c["color"]]),
@@ -1452,7 +1452,7 @@ def _explore_tab(page):
         for r in (_search["results"] or []):
             where = ", ".join(x for x in (r["admin1"], r["country"]) if x)
             found.controls.append(ft.Container(
-                padding=PAD(5, 9), border_radius=8, ink=True, bgcolor=p["bg2"],
+                padding=PAD(5, 9), border_radius=RAD(8), ink=True, bgcolor=p["bg2"],
                 border=BRD(p["border"], 1),
                 on_click=lambda e, r=r: page.run_task(_goto_place, r),
                 content=ft.Column(spacing=0, controls=[
@@ -1540,7 +1540,7 @@ def _explore_tab(page):
             _rain_controls(page, restack_and_update),
         ])),
         "map": lambda: ft.Container(
-            height=EXPLORE_MAP_HEIGHT, border_radius=12,
+            height=EXPLORE_MAP_HEIGHT, border_radius=RAD(12),
             clip_behavior=ft.ClipBehavior.HARD_EDGE, content=the_map),
         "point": lambda: detail,
         "results": lambda: card(ft.Column(spacing=6, controls=[
@@ -1595,7 +1595,7 @@ def _poi_row(p, poi, miles):
     tags = poi["tags"]
     detail = tags.get("brand") or tags.get("cuisine") or tags.get("operator") or cat["label"]
     return ft.Container(
-        padding=PAD(6, 9), border_radius=8, bgcolor=p["surface"],
+        padding=PAD(6, 9), border_radius=RAD(8), bgcolor=p["surface"],
         border=BRD(p["border"], 1),
         content=ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
             ft.Icon(cat["icon"], size=15, color=p[cat["color"]]),

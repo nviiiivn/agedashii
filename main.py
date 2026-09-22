@@ -1,7 +1,8 @@
 import asyncio
 
 import flet as ft
-from flet_app.ui import PAL, PAD, BRD, S, apply_theme, dot
+from flet_app.ui import (PAL, PAD, BRD, RAD, S, apply_theme, dot,
+                         GLOW, crt_overlay)
 from flet_app.pages.lab import _TAB_INDEX
 from flet_app.pages.eatzen import _show, _dismiss
 from flet_app.theme_data import THEMES, THEME_NAMES
@@ -104,9 +105,13 @@ async def main(page):
         here because the app had no name of its own.
         """
         return ft.Container(
-            padding=PAD(4, 12), border_radius=10,
+            padding=PAD(4, 12), border_radius=RAD(10),
             gradient=ft.LinearGradient(colors=[ORANGE, PINK, CYAN],
                                        begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0)),
+            # alola's hero title carries `0 0 30px color-mix(accent 40%)`.
+            # The pill is this app's equivalent of that title, so it gets the
+            # wide version of the glow rather than the 10px heading one.
+            shadow=GLOW(blur=24, opacity=0.40),
             content=ft.Text("Agedashii", size=13, weight=ft.FontWeight.W_800,
                             color="#0d1117"),
         )
@@ -203,7 +208,7 @@ async def main(page):
     sync_icon = ft.Icon(ft.Icons.CLOUD_UPLOAD, size=13)
     sync_text = ft.Text("", size=10, weight=ft.FontWeight.W_600)
     sync_chip = ft.Container(
-        padding=PAD(3, 8), border_radius=9, visible=False, ink=True,
+        padding=PAD(3, 8), border_radius=RAD(9), visible=False, ink=True,
         content=ft.Row(spacing=5, tight=True,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                        controls=[sync_icon, sync_text]))
@@ -349,7 +354,11 @@ async def main(page):
         def page_row(k):
             on = k == current[0]
             return ft.Container(
-                padding=PAD(14, 9), border_radius=8, ink=True,
+                padding=PAD(14, 9), border_radius=RAD(8), ink=True,
+                # The drawer row you are standing on is the app's "active nav
+                # item"; glow on, it gets alola's accent shadow. Only the
+                # active one, so the drawer does not become a wall of light.
+                shadow=GLOW(blur=14, opacity=0.35) if on else None,
                 bgcolor=ft.Colors.with_opacity(0.12, p["accent"]) if on else None,
                 on_click=lambda e, key=k: _drawer_go(key),
                 content=ft.Row(spacing=12, controls=[
@@ -362,7 +371,7 @@ async def main(page):
 
         def sub_row(label, page_key, tab_path, depth=1):
             return ft.Container(
-                padding=ft.Padding(14 + 20 * depth, 6, 14, 6), border_radius=8,
+                padding=ft.Padding(14 + 20 * depth, 6, 14, 6), border_radius=RAD(8),
                 ink=True, on_click=go_sub(page_key, tab_path),
                 content=ft.Text(label, size=12.5, color=p["text2"]))
 
@@ -405,11 +414,11 @@ async def main(page):
             t = THEMES[key]
             on = key == S.theme
             return ft.Container(
-                padding=PAD(10, 8), border_radius=8, ink=True, on_click=pick(key),
+                padding=PAD(10, 8), border_radius=RAD(8), ink=True, on_click=pick(key),
                 bgcolor=ft.Colors.with_opacity(0.14, p["accent"]) if on else None,
                 content=ft.Row(spacing=10, controls=[
                     # The theme's own colours, so the row previews itself.
-                    ft.Container(width=34, height=18, border_radius=5,
+                    ft.Container(width=34, height=18, border_radius=RAD(5),
                                  bgcolor=t["bg2"], border=BRD(t["border"], 1),
                                  content=ft.Row(spacing=2, controls=[
                                      ft.Container(width=6, height=6, border_radius=3,
@@ -527,7 +536,15 @@ async def main(page):
         # height back and the drawer still reaches every page.
         if prefs.bottom_bar_enabled():
             chrome.append(bottom_bar())
-        page.add(ft.Column(spacing=0, expand=True, controls=chrome))
+        shell = ft.Column(spacing=0, expand=True, controls=chrome)
+        # The CRT vignette goes on here, once, over the whole shell - not
+        # per page and not per card. Two controls for the entire app when it
+        # is on, none at all when it is off, which is the default. The
+        # overlay itself is ignore_interactions, so everything underneath is
+        # still hit-tested exactly as it was; see ui.crt_overlay().
+        if prefs.crt_overlay():
+            shell = ft.Stack(expand=True, controls=[shell, crt_overlay()])
+        page.add(shell)
         page.update()
 
     # A page that writes to the server needs to re-read and repaint after the

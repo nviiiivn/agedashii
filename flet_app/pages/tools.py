@@ -27,7 +27,7 @@ import flet as ft
 
 from .. import api as M
 from .. import config
-from ..ui import PAL, PAD, BRD, S, card, chip, sub, title
+from ..ui import PAL, PAD, BRD, RAD, S, card, chip, sub, title
 from ._forms import Writer, offline_banner, rebuilder
 from .lab import _tabs
 from . import foodzen as fzpage
@@ -127,7 +127,7 @@ def _field(p, hint, **kw):
 def _pill(p, label, on, on_click, colour=None):
     c = colour or p["accent"]
     return ft.Container(
-        padding=PAD(4, 11), border_radius=20, ink=True, on_click=on_click,
+        padding=PAD(4, 11), border_radius=RAD(20), ink=True, on_click=on_click,
         bgcolor=ft.Colors.with_opacity(0.2 if on else 0.05, c),
         border=BRD(ft.Colors.with_opacity(0.55 if on else 0.22, c), 1),
         content=ft.Text(label, size=11, color=c if on else p["text2"],
@@ -251,7 +251,7 @@ def _feeds(page):
         # website falls back to. error_content matters - these are other
         # people's servers, and a hotlink that 404s must not leave a hole.
         thumb = ft.Container(
-            width=54, height=54, border_radius=8, bgcolor=p["bg2"],
+            width=54, height=54, border_radius=RAD(8), bgcolor=p["bg2"],
             alignment=ft.Alignment(0, 0),
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
             content=(ft.Image(src=it["img"], width=54, height=54,
@@ -271,7 +271,7 @@ def _feeds(page):
         # Container.url is the whole mechanism in Flet 0.86 - there is no
         # url_target on it, so the platform decides where it opens.
         return ft.Container(
-            border_radius=12, bgcolor=p["surface"], border=BRD(p["border"], 1),
+            border_radius=RAD(12), bgcolor=p["surface"], border=BRD(p["border"], 1),
             padding=10, ink=True, url=url, content=inner)
 
     def more_row(shown, total):
@@ -437,7 +437,7 @@ def _vault(page):
                 is_open = r["path"] in _V["open"]
                 out.append(ft.Container(
                     padding=ft.Padding(4 + 14 * r["depth"], 3, 4, 3),
-                    border_radius=6, ink=True,
+                    border_radius=RAD(6), ink=True,
                     on_click=lambda e, path=r["path"]: toggle_dir(path),
                     content=ft.Row(spacing=5, controls=[
                         ft.Icon(ft.Icons.KEYBOARD_ARROW_DOWN if is_open
@@ -450,7 +450,7 @@ def _vault(page):
                 on = _V["file"] == r["path"]
                 out.append(ft.Container(
                     padding=ft.Padding(4 + 14 * r["depth"] + 14, 3, 4, 3),
-                    border_radius=6, ink=True,
+                    border_radius=RAD(6), ink=True,
                     bgcolor=(ft.Colors.with_opacity(0.14, p["accent"]) if on
                              else None),
                     on_click=lambda e, path=r["path"]: _run(page, open_file, path),
@@ -695,7 +695,7 @@ def _journal(page):
 
     def stat(value, label, colour=None, icon=None):
         return ft.Container(
-            expand=True, padding=PAD(8, 6), border_radius=10, bgcolor=p["bg2"],
+            expand=True, padding=PAD(8, 6), border_radius=RAD(10), bgcolor=p["bg2"],
             border=BRD(p["border"], 1),
             content=ft.Column(spacing=1,
                               horizontal_alignment=ft.CrossAxisAlignment.CENTER,

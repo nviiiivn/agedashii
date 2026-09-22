@@ -57,6 +57,12 @@ KEY_BOTTOM_ENABLED = NS + "bottom_enabled"
 # per-device by design; what crosses over is the *label* written into a
 # trip's report, which both ends already understand.
 KEY_TRIP_TAGS = NS + "trip_tags"
+# ------------------------------------------------------------ appearance
+# Three knobs that used to be constants scattered through the drawing code.
+# ui.py owns what they *mean*; this module only stores them.
+KEY_RADIUS = NS + "radius"
+KEY_GLOW = NS + "glow"
+KEY_CRT = NS + "crt"
 
 
 def legacy_key(key):
@@ -98,6 +104,15 @@ HOME_PANEL_LABELS = {"greeting": "Greeting & date", "weather": "Weather",
 UNIT_SYSTEMS = ("imperial", "metric")
 SODIUM_TARGETS = (1500, 2300)
 
+# The corner-radius choices and their default. Named here rather than
+# duplicated because Settings offers them and load() validates against them,
+# but the *meaning* of the number - how it reaches a control - is ui.RAD()'s
+# alone. Imported lazily in `_radius_choices()` so this module stays free of
+# a hard dependency on the drawing layer.
+def _radius_choices():
+    from . import ui as _ui
+    return _ui.RADIUS_CHOICES, _ui.DEFAULT_RADIUS
+
 # Seconds of cached-response reuse. 30 is what api.TTL ships with; 0 means
 # "only when I pull to refresh".
 REFRESH_CHOICES = (0, 15, 30, 60, 300, 900)
@@ -116,6 +131,10 @@ def _defaults():
         KEY_REFRESH_SECS: DEFAULT_REFRESH,
         KEY_BOTTOM_ENABLED: True,
         KEY_TRIP_TAGS: [],
+        # Appearance ships as it always looked: rounded, no glow, no CRT.
+        KEY_RADIUS: 8,
+        KEY_GLOW: False,
+        KEY_CRT: False,
     }
 
 
@@ -179,6 +198,24 @@ def _as_int(value, choices, fallback):
     return n if n in choices else fallback
 
 
+# Anything a storage backend might hand back in place of False. The reason
+# this exists at all: SharedPreferences is not consistent about booleans and
+# can round-trip one as the string "false", and `bool("false")` is True - so
+# every switch in this app came back *on* after a restart. That shipped. It
+# is now one function with one test rather than a paragraph of comment
+# repeated beside each reader.
+_FALSEY = ("false", "0", "no", "off", "")
+
+
+def _as_bool(value, fallback):
+    """Coerce a stored flag to a real bool. Absent means `fallback`."""
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSEY
+    return bool(value)
+
+
 # ---------------------------------------------------------------- read API
 def page_order():
     """All nine page keys in the owner's order, hidden ones included."""
@@ -218,15 +255,7 @@ def bottom_bar_enabled():
     It repeats what the drawer already lists, so it is worth being able to
     turn off outright rather than only choosing what rides on it.
     """
-    v = _V.get(KEY_BOTTOM_ENABLED)
-    if v is None:
-        return True                       # never set: ship it on
-    if isinstance(v, str):
-        # SharedPreferences is not consistent about booleans and can hand
-        # back "true"/"false". bool("false") is True, so a round trip
-        # through storage would have made "off" read as "on".
-        return v.strip().lower() not in ("false", "0", "no", "off", "")
-    return bool(v)
+    return _as_bool(_V.get(KEY_BOTTOM_ENABLED), True)   # never set: ship it on
 
 
 def set_bottom_bar_enabled(on):
@@ -427,6 +456,48 @@ def refresh_seconds():
     return _as_int(_V.get(KEY_REFRESH_SECS), REFRESH_CHOICES, DEFAULT_REFRESH)
 
 
+# ---------------------------------------------------------- appearance
+def corner_radius():
+    """How round every corner in the app is, in px. 0 is square.
+
+    An unrecognised stored value falls back to the shipped 8 rather than
+    being used: a corrupt preference should cost the setting, not draw the
+    whole app at a radius nothing in Settings can undo.
+    """
+    choices, default = _radius_choices()
+    return _as_int(_V.get(KEY_RADIUS), choices, default)
+
+
+def accent_glow():
+    """Whether headings, the brand pill and active nav items carry alola's
+    accent shadow. Off by default - it is an effect, not a default look."""
+    return _as_bool(_V.get(KEY_GLOW), False)
+
+
+def crt_overlay():
+    """Whether the CRT vignette is drawn over the app. Off by default."""
+    return _as_bool(_V.get(KEY_CRT), False)
+
+
+def set_corner_radius(value):
+    choices, _ = _radius_choices()
+    _V[KEY_RADIUS] = _as_int(value, choices, corner_radius())
+    apply_runtime()
+    return True
+
+
+def set_accent_glow(on):
+    _V[KEY_GLOW] = bool(on)
+    apply_runtime()
+    return True
+
+
+def set_crt_overlay(on):
+    _V[KEY_CRT] = bool(on)
+    apply_runtime()
+    return True
+
+
 def app_version():
     """This client's version, read off the User-Agent it sends.
 
@@ -530,14 +601,22 @@ def reset_all():
 def apply_runtime():
     """Push the settings that other modules read as plain module state.
 
-    Only api.TTL today. Guarded because api imports are heavier than this
-    module's and a future refactor may rename it - a missing attribute should
-    cost the refresh setting, not the app.
+    api.TTL and ui.S's three appearance knobs. Guarded one import at a time,
+    because a missing attribute should cost one setting rather than all of
+    them - and because pushing the appearance values is what makes them
+    *apply*, so it has to survive an api that failed to import.
     """
     try:
         from . import api
         api.TTL = refresh_seconds()
     except Exception:  # noqa: BLE001 - a settings knob is never worth a crash
+        pass
+    try:
+        from . import ui
+        ui.S.radius = corner_radius()
+        ui.S.glow = accent_glow()
+        ui.S.crt = crt_overlay()
+    except Exception:  # noqa: BLE001 - ditto, and the defaults on S still draw
         pass
 
 
@@ -594,14 +673,31 @@ async def load(prefs):
     _V[KEY_UNITS] = unit_system()
     _V[KEY_SODIUM_TARGET] = sodium_target()
     _V[KEY_REFRESH_SECS] = refresh_seconds()
+    # Booleans especially: storage can hand one back as the string "false",
+    # and normalising here means nothing downstream ever sees that shape.
+    _V[KEY_BOTTOM_ENABLED] = bottom_bar_enabled()
+    _V[KEY_RADIUS] = corner_radius()
+    _V[KEY_GLOW] = accent_glow()
+    _V[KEY_CRT] = crt_overlay()
     apply_runtime()
     return read_any
 
 
-async def save(prefs):
-    """Persist every preference. Returns False rather than raising."""
-    if prefs is None:
-        return False
+def save_payload():
+    """Every key that goes to storage, with the value to write for it.
+
+    Split out of `save()` and, crucially, *derived* from `_defaults()`
+    rather than listed by hand. The hand-written list is how
+    KEY_BOTTOM_ENABLED came to be loaded but never saved: the bottom bar
+    switch worked all session and was back on at every restart, and nothing
+    failed loudly enough to notice. Anything added to `_defaults()` is now
+    persisted whether or not whoever added it remembered this function, and
+    a test asserts exactly that.
+
+    The explicit entries below are the keys whose stored form is not simply
+    what is in the cache - orders that want sanitising on the way out, tags
+    that want re-encoding. Everything else falls through to `setdefault`.
+    """
     payload = {
         KEY_PAGE_ORDER: page_order(),
         KEY_PAGES_HIDDEN: hidden_pages(),
@@ -612,14 +708,31 @@ async def save(prefs):
         KEY_SODIUM_TARGET: sodium_target(),
         KEY_REFRESH_SECS: refresh_seconds(),
         KEY_TRIP_TAGS: [f"{a}|{b}|{c}" for a, b, c in trip_tags()],
+        # Written as real bools, not as whatever came back from storage
+        # last time, so a value that arrived as the string "false" is not
+        # handed straight back to be misread again on the next restart.
+        KEY_BOTTOM_ENABLED: bottom_bar_enabled(),
+        KEY_RADIUS: corner_radius(),
+        KEY_GLOW: accent_glow(),
+        KEY_CRT: crt_overlay(),
     }
+    defaults = _defaults()
+    for key in defaults:
+        payload.setdefault(key, _V.get(key, defaults[key]))
     # Per-surface panel layout. Written for every surface, including the
     # ones left at their defaults, so switching a card back to full width
     # or un-hiding it persists as the absence it is.
     for key in _panel_keys_for_storage():
         payload[key] = _V.get(key) or []
+    return payload
+
+
+async def save(prefs):
+    """Persist every preference. Returns False rather than raising."""
+    if prefs is None:
+        return False
     try:
-        for key, value in payload.items():
+        for key, value in save_payload().items():
             await prefs.set(key, value)
         return True
     except Exception:  # noqa: BLE001 - report it in the UI, do not crash

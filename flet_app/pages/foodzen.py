@@ -16,7 +16,7 @@ import flet as ft
 
 from .. import api as M
 from .. import panels
-from ..ui import PAD, PAL, S, card, chip, sub, title
+from ..ui import PAD, PAL, RAD, S, card, chip, sub, title
 from . import eatzen
 from .lab import _tabs
 
@@ -236,7 +236,7 @@ def _browse(page, run):
         _repaint(page)
 
     head = ft.Container(
-        ink=True, border_radius=8, on_click=toggle,
+        ink=True, border_radius=RAD(8), on_click=toggle,
         tooltip=("hide the catalogue" if _OPEN["browse"]
                  else "the whole catalogue, tap an item to add it"),
         content=ft.Row([

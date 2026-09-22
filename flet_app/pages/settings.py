@@ -17,7 +17,9 @@ rest of the app consumes. This page only edits; it never decides what a
 preference means.
 """
 import flet as ft
-from ..ui import PAL, PAD, BRD, card, chip, title, sub, S, apply_theme
+from ..ui import (PAL, PAD, BRD, RAD, card, chip, title, sub, S,
+                  apply_theme, FOCUS_WIDTH, GLOW,
+                  RADIUS_CHOICES, RADIUS_LABELS)
 from ..theme_data import THEMES, THEME_NAMES
 from .. import api, config, panels, prefs
 
@@ -35,6 +37,7 @@ def server_card(page):
         value=config.SERVER_URL, dense=True, filled=True, text_size=13,
         label="Server address", hint_text="192.0.2.21:6900",
         border_color=p["border"], focused_border_color=p["accent"],
+        focused_border_width=FOCUS_WIDTH(),
         color=p["text"], label_style=ft.TextStyle(color=p["text2"], size=11),
     )
     light = ft.Container(width=9, height=9, border_radius=5)
@@ -301,7 +304,7 @@ def panels_card(page, saver, on_layout=None):
 
         width_buttons = [
             ft.Container(
-                padding=PAD(7, 3), border_radius=6, ink=True,
+                padding=PAD(7, 3), border_radius=RAD(6), ink=True,
                 bgcolor=ft.Colors.with_opacity(0.16, p["accent"]) if w == width else None,
                 on_click=set_width(w), tooltip=f"{panels.WIDTH_LABELS[w]} width",
                 content=ft.Text(panels.WIDTH_LABELS[w], size=11,
@@ -371,6 +374,76 @@ def _picked(e, valid, fallback):
         if isinstance(candidate, str) and candidate in valid:
             return candidate
     return fallback
+
+
+def _switch_row(p, label, why, value, on_change):
+    """One labelled switch, shaped like the bottom-bar row in layout_card."""
+    return ft.Row(vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+        ft.Column(spacing=1, expand=True, controls=[
+            ft.Text(label, size=13, color=p["text"]),
+            ft.Text(why, size=10, color=p["text3"]),
+        ]),
+        ft.Switch(value=value, on_change=on_change, active_color=p["accent"]),
+    ])
+
+
+def appearance_card(page, saver, on_theme=None):
+    """Corner radius, accent glow and the CRT overlay.
+
+    All three are drawing settings the app previously had no opinion you
+    could change: 87 hard-coded corner radii, no glow at all, and no
+    overlay. They live together because they are one question - what does
+    this thing look like - and apart from the theme swatches because those
+    are a palette and these are a shape and two effects.
+
+    `on_theme` is main.py's whole-shell repaint. Every one of these three
+    reaches the chrome - the brand pill, the nav bar, the overlay above
+    everything - so repainting only this page would leave the app half
+    changed until you navigated away and back.
+    """
+    p = PAL()
+
+    def repaint():
+        if on_theme:
+            try:
+                on_theme()
+            except Exception:  # noqa: BLE001 - a repaint must not lose the edit
+                pass
+
+    async def pick_radius(e):
+        valid = {str(n) for n in RADIUS_CHOICES}
+        prefs.set_corner_radius(_picked(e, valid, str(prefs.corner_radius())))
+        await saver.commit(f"corners set to {prefs.corner_radius()}px")
+        repaint()
+
+    async def toggle_glow(e):
+        prefs.set_accent_glow(e.control.value)
+        await saver.commit("accent glow " + ("on" if e.control.value else "off"))
+        repaint()
+
+    async def toggle_crt(e):
+        prefs.set_crt_overlay(e.control.value)
+        await saver.commit("CRT overlay " + ("on" if e.control.value else "off"))
+        repaint()
+
+    return card(ft.Column(spacing=10, controls=[
+        title("Appearance", 15),
+        sub(f"Theme: {THEME_NAMES[S.theme]}", 11),
+        _dropdown(p, str(prefs.corner_radius()),
+                  [(str(n), RADIUS_LABELS.get(n, f"{n}px")) for n in RADIUS_CHOICES],
+                  pick_radius, width=260, label="Corner rounding"),
+        sub("Applies to every rounded surface - cards, chips, buttons, fields, "
+            "dialogs, the brand pill and the nav bar. Round dots stay round; "
+            "they are circles, not corners.", 10),
+        _switch_row(p, "Accent glow",
+                    "An accent-coloured halo on headings, the brand pill, the "
+                    "page you are on and focused fields. Follows the theme.",
+                    prefs.accent_glow(), toggle_glow),
+        _switch_row(p, "CRT overlay",
+                    "A darkened vignette over the whole app, the way the "
+                    "website does it. It does not take taps.",
+                    prefs.crt_overlay(), toggle_crt),
+    ]))
 
 
 def units_card(page, saver):
@@ -527,7 +600,7 @@ def build(page, on_theme=None, on_layout=None):
             if on_theme:
                 on_theme()
         return ft.Container(
-            width=72, border_radius=10, padding=PAD(6, 4),
+            width=72, border_radius=RAD(10), padding=PAD(6, 4),
             bgcolor=t["surface"], border=BRD(t["accent"], 2 if active else 1),
             on_click=pick,
             content=ft.Column(spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[
@@ -552,10 +625,7 @@ def build(page, on_theme=None, on_layout=None):
     keys = list(THEME_NAMES)
     return ft.Column(spacing=14, expand=True, scroll=ft.ScrollMode.AUTO, controls=[
         server_card(page),
-        card(ft.Column(spacing=4, controls=[
-            title("Appearance", 15),
-            sub(f"Theme: {THEME_NAMES[S.theme]}", 11),
-        ])),
+        appearance_card(page, saver, on_theme=on_theme),
         group("Themes", keys),
         saver.control,
         layout_card(page, saver, on_layout=on_layout),

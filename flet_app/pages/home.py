@@ -32,7 +32,7 @@ import flet as ft
 
 from .. import api as M
 from .. import panels
-from ..ui import PAL, PAD, BRD, S, card, chip, dot, sub, title
+from ..ui import PAL, PAD, BRD, RAD, S, card, chip, dot, sub, title
 
 # The eight links the website's Quick Links card carries, verbatim. They are
 # hardcoded there too - there is no endpoint that lists them - but they are
@@ -174,7 +174,7 @@ def build(page):
 
     def stat_tile(value, label, note, colour=None):
         return ft.Container(
-            col={"xs": 6, "md": 3}, padding=PAD(10, 10), border_radius=12,
+            col={"xs": 6, "md": 3}, padding=PAD(10, 10), border_radius=RAD(12),
             bgcolor=p["surface"], border=BRD(p["border"], 1),
             content=ft.Column(spacing=1, controls=[
                 ft.Text(label, size=9, color=p["text2"]),
@@ -213,7 +213,7 @@ def build(page):
                       f"of {ov['total']} total",
                       p["green"] if ov["online"] == ov["total"] else p["yellow"]),
             ft.Container(col={"xs": 6, "md": 3}, padding=PAD(10, 10),
-                         border_radius=12, bgcolor=p["surface"],
+                         border_radius=RAD(12), bgcolor=p["surface"],
                          border=BRD(p["border"], 1), content=docker_tile),
             stat_tile(str(ov["services"]), "Services up", "active units"),
             stat_tile(f"{round(cur['temperature_2m'])}°F" if cur else "—",
@@ -235,7 +235,7 @@ def build(page):
         tiles = []
         for d in (days or []):
             tiles.append(ft.Container(
-                expand=True, padding=PAD(6, 4), border_radius=8, bgcolor=p["bg2"],
+                expand=True, padding=PAD(6, 4), border_radius=RAD(8), bgcolor=p["bg2"],
                 content=ft.Column(
                     spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
@@ -266,7 +266,7 @@ def build(page):
             ]),
             ft.Row(spacing=6, controls=tiles) if tiles else sub(
                 "No forecast in the last reply.", 10),
-            ft.Container(padding=PAD(6, 10), border_radius=8,
+            ft.Container(padding=PAD(6, 10), border_radius=RAD(8),
                          bgcolor=ft.Colors.with_opacity(0.12, tone_colour),
                          border=BRD(ft.Colors.with_opacity(0.35, tone_colour), 1),
                          content=ft.Row(spacing=6, controls=[
@@ -282,7 +282,7 @@ def build(page):
         # show the same hardcoded song permanently, play icon and all.
         playing = bool(n.get("playing"))
         return card(ft.Row(spacing=12, controls=[
-            ft.Container(width=44, height=44, border_radius=8, bgcolor=p["bg2"],
+            ft.Container(width=44, height=44, border_radius=RAD(8), bgcolor=p["bg2"],
                          border=BRD(p["border"], 1), alignment=ft.Alignment(0, 0),
                          content=ft.Icon(ft.Icons.MUSIC_NOTE if playing
                                          else ft.Icons.MUSIC_OFF,
@@ -317,11 +317,11 @@ def build(page):
                 # unreachable, and those look identical on a bar chart.
                 metrics = ft.Text(m["error"] or "Offline", size=10, color=p["red"])
             rows.append(ft.Container(
-                padding=PAD(7, 8), border_radius=10, bgcolor=p["bg2"],
+                padding=PAD(7, 8), border_radius=RAD(10), bgcolor=p["bg2"],
                 border=BRD(p["border"], 1), ink=bool(_goto("lab", [("lab", 0)])),
                 on_click=_goto("lab", [("lab", 0)]),
                 content=ft.Row(spacing=10, controls=[
-                    ft.Container(width=28, height=28, border_radius=8,
+                    ft.Container(width=28, height=28, border_radius=RAD(8),
                                  alignment=ft.Alignment(0, 0),
                                  bgcolor=ft.Colors.with_opacity(0.18, m["color"]),
                                  content=ft.Text(letter, size=13,
@@ -345,7 +345,7 @@ def build(page):
         rows = []
         for label, note, url, icon in QUICK_LINKS:
             rows.append(ft.Container(
-                col={"xs": 12, "md": 6}, padding=PAD(7, 9), border_radius=10,
+                col={"xs": 12, "md": 6}, padding=PAD(7, 9), border_radius=RAD(10),
                 bgcolor=p["bg2"], border=BRD(p["border"], 1), ink=True, url=url,
                 content=ft.Row(spacing=8, controls=[
                     ft.Icon(icon, size=15, color=p["accent"]),
@@ -428,7 +428,7 @@ def build(page):
             if handler is None:
                 continue
             tiles.append(ft.Container(
-                col={"xs": 6, "md": 3}, padding=PAD(9, 0), border_radius=10,
+                col={"xs": 6, "md": 3}, padding=PAD(9, 0), border_radius=RAD(10),
                 bgcolor=p["bg2"], border=BRD(p["border"], 1), ink=True,
                 alignment=ft.Alignment(0, 0), on_click=handler,
                 content=ft.Column(
@@ -436,7 +436,7 @@ def build(page):
                     controls=[ft.Icon(icon, size=18, color=p["accent"]),
                               ft.Text(label, size=10.5, color=p["text2"])])))
         tiles.append(ft.Container(
-            col={"xs": 6, "md": 3}, padding=PAD(9, 0), border_radius=10,
+            col={"xs": 6, "md": 3}, padding=PAD(9, 0), border_radius=RAD(10),
             bgcolor=p["bg2"], border=BRD(p["border"], 1), ink=True,
             alignment=ft.Alignment(0, 0),
             on_click=lambda e: _run(refresh_all),
@@ -493,12 +493,12 @@ def build(page):
         inner = ft.Column(spacing=6, controls=[
             ft.Row(head),
             ft.ProgressBar(value=(done / total) if total else 0, color=p["orange"],
-                           bgcolor=p["bg2"], bar_height=4, border_radius=2),
+                           bgcolor=p["bg2"], bar_height=4, border_radius=RAD(2)),
             *rows,
         ])
         if jump is None:
             return card(inner)
-        return ft.Container(border_radius=12, bgcolor=p["surface"],
+        return ft.Container(border_radius=RAD(12), bgcolor=p["surface"],
                             border=BRD(p["border"], 1), padding=14, ink=True,
                             on_click=jump, content=inner)
 

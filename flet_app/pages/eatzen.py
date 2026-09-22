@@ -18,7 +18,7 @@ import flet as ft
 
 from .. import api as M
 from .. import prefs
-from ..ui import PAL, card, chip, sub, title
+from ..ui import PAL, RAD, card, chip, sub, title
 from ._forms import Writer, offline_banner, rebuilder
 
 
@@ -114,7 +114,7 @@ def build_eatzen(page):
     total_text = ft.Text("", size=22, weight=ft.FontWeight.W_700, color=p["text"])
     detail_text = ft.Text("", size=11, color=p["text2"])
     meter = ft.ProgressBar(value=0, color=p["accent"], bgcolor=p["bg2"],
-                           bar_height=6, border_radius=3)
+                           bar_height=6, border_radius=RAD(3))
     rows_col = ft.Column(spacing=10)
 
     def recalc():
