@@ -75,6 +75,9 @@ KEY_TRIP_TAGS = NS + "trip_tags"
 KEY_RADIUS = NS + "radius"
 KEY_GLOW = NS + "glow"
 KEY_CRT = NS + "crt"
+# 0-100, meaningless while KEY_CRT is off but always coerced to something
+# valid regardless - a slider next to the switch in Settings > Appearance.
+KEY_CRT_INTENSITY = NS + "crt_intensity"
 
 
 def legacy_key(key):
@@ -139,6 +142,13 @@ def _radius_choices():
 REFRESH_CHOICES = (0, 15, 30, 60, 300, 900)
 DEFAULT_REFRESH = 30
 
+# The CRT overlay's intensity range and shipped default. Kept here rather
+# than read off ui.DEFAULT_CRT_INTENSITY for the same reason KEY_RADIUS's
+# default is a literal 8 below rather than a lazy ui import - _defaults()
+# runs at module load, before it is safe to assume ui.py is fully imported.
+CRT_INTENSITY_MIN, CRT_INTENSITY_MAX = 0, 100
+DEFAULT_CRT_INTENSITY = 40
+
 
 def _defaults():
     return {
@@ -157,6 +167,7 @@ def _defaults():
         KEY_RADIUS: 8,
         KEY_GLOW: False,
         KEY_CRT: False,
+        KEY_CRT_INTENSITY: DEFAULT_CRT_INTENSITY,
     }
 
 
@@ -218,6 +229,22 @@ def _as_int(value, choices, fallback):
     except (TypeError, ValueError):
         return fallback
     return n if n in choices else fallback
+
+
+def _as_range_int(value, lo, hi, fallback):
+    """Coerce a stored number to an int within [lo, hi].
+
+    Like `_as_int`, but for a genuinely continuous range - the CRT
+    intensity slider - rather than a small enumerated set of choices.
+    Out-of-range or unparseable reads as the default rather than being
+    clamped into range: a wildly corrupt stored value should cost the
+    setting, not silently become "0" or "100".
+    """
+    try:
+        n = int(round(float(value)))
+    except (TypeError, ValueError):
+        return fallback
+    return n if lo <= n <= hi else fallback
 
 
 # Anything a storage backend might hand back in place of False. The reason
@@ -576,6 +603,14 @@ def crt_overlay():
     return _as_bool(_V.get(KEY_CRT), False)
 
 
+def crt_intensity():
+    """How strong the CRT overlay draws, 0-100. Read regardless of whether
+    the overlay itself is on - it is meaningless while off, but a value
+    Settings can show and edit either way."""
+    return _as_range_int(_V.get(KEY_CRT_INTENSITY), CRT_INTENSITY_MIN,
+                         CRT_INTENSITY_MAX, DEFAULT_CRT_INTENSITY)
+
+
 def set_corner_radius(value):
     choices, _ = _radius_choices()
     _V[KEY_RADIUS] = _as_int(value, choices, corner_radius())
@@ -591,6 +626,13 @@ def set_accent_glow(on):
 
 def set_crt_overlay(on):
     _V[KEY_CRT] = bool(on)
+    apply_runtime()
+    return True
+
+
+def set_crt_intensity(value):
+    _V[KEY_CRT_INTENSITY] = _as_range_int(value, CRT_INTENSITY_MIN,
+                                          CRT_INTENSITY_MAX, crt_intensity())
     apply_runtime()
     return True
 
@@ -739,6 +781,7 @@ def apply_runtime():
         ui.S.radius = corner_radius()
         ui.S.glow = accent_glow()
         ui.S.crt = crt_overlay()
+        ui.S.crt_intensity = crt_intensity()
     except Exception:  # noqa: BLE001 - ditto, and the defaults on S still draw
         pass
 
@@ -818,6 +861,7 @@ async def load(prefs):
     _V[KEY_RADIUS] = corner_radius()
     _V[KEY_GLOW] = accent_glow()
     _V[KEY_CRT] = crt_overlay()
+    _V[KEY_CRT_INTENSITY] = crt_intensity()
     apply_runtime()
     return read_any
 
@@ -858,6 +902,7 @@ def save_payload():
         KEY_RADIUS: corner_radius(),
         KEY_GLOW: accent_glow(),
         KEY_CRT: crt_overlay(),
+        KEY_CRT_INTENSITY: crt_intensity(),
     }
     defaults = _defaults()
     for key in defaults:

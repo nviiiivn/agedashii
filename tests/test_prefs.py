@@ -811,6 +811,13 @@ class AppearanceStore(unittest.TestCase):
         self.assertEqual(prefs.corner_radius(), ui.DEFAULT_RADIUS)
         self.assertIs(prefs.accent_glow(), False)
         self.assertIs(prefs.crt_overlay(), False)
+        self.assertEqual(prefs.crt_intensity(), prefs.DEFAULT_CRT_INTENSITY)
+
+    def test_crt_intensity_defaults_to_tasteful_not_maximum(self):
+        """The slider ships partway up, not pinned to 100 - turning the
+        overlay on for the first time should not be the harshest it gets."""
+        self.assertGreater(prefs.crt_intensity(), 0)
+        self.assertLess(prefs.crt_intensity(), 100)
 
     def test_the_shipped_radius_is_a_no_op(self):
         """8 has to redraw exactly what the app drew before the setting existed."""
@@ -848,6 +855,24 @@ class AppearanceStore(unittest.TestCase):
                 prefs._V[prefs.KEY_RADIUS] = junk
                 self.assertEqual(prefs.corner_radius(), ui.DEFAULT_RADIUS)
 
+    def test_an_intensity_stored_as_a_string_still_counts(self):
+        prefs._V[prefs.KEY_CRT_INTENSITY] = "70"
+        self.assertEqual(prefs.crt_intensity(), 70)
+
+    def test_an_out_of_range_or_junk_intensity_falls_back_to_the_default(self):
+        """A slider value Settings cannot show back must not draw at all."""
+        for junk in (-1, 101, 5000, "loud", None, [3], "3.5.2"):
+            with self.subTest(stored=junk):
+                prefs._V[prefs.KEY_CRT_INTENSITY] = junk
+                self.assertEqual(prefs.crt_intensity(), prefs.DEFAULT_CRT_INTENSITY)
+
+    def test_boundary_intensities_are_valid(self):
+        """0 and 100 are the ends of the slider, not out-of-range junk."""
+        for edge in (0, 100):
+            with self.subTest(stored=edge):
+                prefs._V[prefs.KEY_CRT_INTENSITY] = edge
+                self.assertEqual(prefs.crt_intensity(), edge)
+
     # --------------------------------------------------------- persistence
     def test_every_default_key_is_written_by_save(self):
         """The discipline test.
@@ -867,6 +892,7 @@ class AppearanceStore(unittest.TestCase):
         prefs.set_corner_radius(0)
         prefs.set_accent_glow(True)
         prefs.set_crt_overlay(True)
+        prefs.set_crt_intensity(80)
         self.assertTrue(asyncio.run(prefs.save(store)))
 
         # Restart: a fresh process starts from the shipped defaults.
@@ -874,11 +900,24 @@ class AppearanceStore(unittest.TestCase):
         prefs.apply_runtime()
         self.assertEqual(prefs.corner_radius(), 8)
         self.assertIs(prefs.accent_glow(), False)
+        self.assertEqual(prefs.crt_intensity(), prefs.DEFAULT_CRT_INTENSITY)
 
         asyncio.run(prefs.load(store))
         self.assertEqual(prefs.corner_radius(), 0)
         self.assertIs(prefs.accent_glow(), True)
         self.assertIs(prefs.crt_overlay(), True)
+        self.assertEqual(prefs.crt_intensity(), 80)
+
+    def test_crt_intensity_round_trips_through_save_and_load(self):
+        """The save/load round trip the task called out by name."""
+        store = self.FakeStore()
+        for value in (0, 1, 40, 99, 100):
+            with self.subTest(intensity=value):
+                prefs.set_crt_intensity(value)
+                asyncio.run(prefs.save(store))
+                prefs._V = prefs._defaults()
+                asyncio.run(prefs.load(store))
+                self.assertEqual(prefs.crt_intensity(), value)
 
     def test_a_restart_through_a_string_only_store_still_works(self):
         """Some backends stringify everything on the way out. This is that."""
@@ -913,14 +952,22 @@ class AppearanceStore(unittest.TestCase):
                 prefs.set_corner_radius(value)
                 self.assertEqual(ui.S.radius, value)
 
+    def test_setting_the_intensity_reaches_the_drawing_layer(self):
+        from flet_app import ui
+        for value in (0, 25, 60, 100):
+            with self.subTest(intensity=value):
+                prefs.set_crt_intensity(value)
+                self.assertEqual(ui.S.crt_intensity, value)
+
     def test_load_pushes_the_appearance_it_read(self):
         from flet_app import ui
         store = self.FakeStore({prefs.KEY_RADIUS: 0, prefs.KEY_GLOW: True,
-                                prefs.KEY_CRT: True})
+                                prefs.KEY_CRT: True, prefs.KEY_CRT_INTENSITY: 90})
         asyncio.run(prefs.load(store))
         self.assertEqual(ui.S.radius, 0)
         self.assertIs(ui.S.glow, True)
         self.assertIs(ui.S.crt, True)
+        self.assertEqual(ui.S.crt_intensity, 90)
 
 
 class RadiusReachesTheControls(unittest.TestCase):
@@ -1177,11 +1224,54 @@ class CrtOverlayDoesNotEatTaps(unittest.TestCase):
                 self.assertIsNone(getattr(overlay, attr, None))
 
     def test_every_control_in_the_overlay_ignores_interactions(self):
+        """The overlay is layered now - vignette+glow, scanlines, halftone -
+        so this is three nested containers, not the one it used to be. What
+        must still hold is that the count is small and *fixed*: it may not
+        grow with page content, and every layer independently carries the
+        flag rather than relying on the outermost one alone.
+        """
         from flet_app import ui
         controls = RadiusReachesTheControls._walk(ui.crt_overlay())
-        self.assertEqual(len(controls), 1, "the overlay must stay one control")
+        self.assertEqual(len(controls), 3,
+                         "the overlay must stay a small, fixed number of "
+                         "controls - one per visual layer, not one per page")
         for control in controls:
             self.assertIs(getattr(control, "ignore_interactions", None), True)
+
+    def test_intensity_scales_every_layer_through_one_lever(self):
+        """One number, S.crt_intensity, has to move all three layers
+        together - not three settings a future edit could desync."""
+        from flet_app import ui
+        self._saved_intensity = ui.S.crt_intensity
+        try:
+            ui.S.crt_intensity = 0
+            self.assertEqual(ui.crt_overlay().opacity, 0.0)
+            ui.S.crt_intensity = 100
+            self.assertEqual(ui.crt_overlay().opacity, 1.0)
+            ui.S.crt_intensity = 25
+            self.assertEqual(ui.crt_overlay().opacity, 0.25)
+            # Only the outermost container carries the lever; the two
+            # nested layers stay at full internal opacity and are scaled
+            # by inheriting the outer Flutter Opacity, not by a value of
+            # their own that could drift out of sync with it.
+            overlay = ui.crt_overlay()
+            self.assertEqual(overlay.content.opacity, 1.0)
+            self.assertEqual(overlay.content.content.opacity, 1.0)
+        finally:
+            ui.S.crt_intensity = self._saved_intensity
+
+    def test_an_out_of_range_intensity_does_not_raise(self):
+        from flet_app import ui
+        self._saved_intensity = ui.S.crt_intensity
+        try:
+            for junk in (-50, 999, 100.9):
+                with self.subTest(intensity=junk):
+                    ui.S.crt_intensity = junk
+                    overlay = ui.crt_overlay()
+                    self.assertGreaterEqual(overlay.opacity, 0.0)
+                    self.assertLessEqual(overlay.opacity, 1.0)
+        finally:
+            ui.S.crt_intensity = self._saved_intensity
 
     def test_a_button_under_the_overlay_still_fires(self):
         """Stack the overlay over a real handler and call it, as Flutter would.

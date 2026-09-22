@@ -481,10 +481,33 @@ def appearance_card(page, saver, on_theme=None):
         await saver.commit("accent glow " + ("on" if e.control.value else "off"))
         repaint()
 
+    # Live while dragging, saved once the thumb is released - the same split
+    # trips.py's scrub bar and wat2do's pain/spoons sliders use, so dragging
+    # through 0-100 does not write to storage on every intermediate tick.
+    intensity_text = ft.Text(f"{prefs.crt_intensity()}%", size=11, color=p["text2"])
+    intensity_slider = ft.Slider(
+        min=0, max=100, divisions=20, value=prefs.crt_intensity(),
+        active_color=p["accent"], disabled=not prefs.crt_overlay(),
+        label="{value}%")
+
+    def preview_intensity(e):
+        intensity_text.value = f"{round(e.control.value)}%"
+        page.update()
+
+    async def commit_intensity(e):
+        prefs.set_crt_intensity(round(e.control.value))
+        await saver.commit(f"CRT intensity set to {prefs.crt_intensity()}%")
+        repaint()
+
+    intensity_slider.on_change = preview_intensity
+    intensity_slider.on_change_end = commit_intensity
+
     async def toggle_crt(e):
         prefs.set_crt_overlay(e.control.value)
+        intensity_slider.disabled = not e.control.value
         await saver.commit("CRT overlay " + ("on" if e.control.value else "off"))
         repaint()
+        page.update()
 
     return card(ft.Column(spacing=10, controls=[
         title("Appearance", 15),
@@ -500,9 +523,17 @@ def appearance_card(page, saver, on_theme=None):
                     "page you are on and focused fields. Follows the theme.",
                     prefs.accent_glow(), toggle_glow),
         _switch_row(p, "CRT overlay",
-                    "A darkened vignette over the whole app, the way the "
-                    "website does it. It does not take taps.",
+                    "Scanlines, a halftone dot mask and a soft vignette over "
+                    "the whole app, the way the website does it. It does not "
+                    "take taps.",
                     prefs.crt_overlay(), toggle_crt),
+        ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.Text("Intensity", size=13, color=p["text"], width=64),
+            ft.Container(expand=True, content=intensity_slider),
+            intensity_text,
+        ]),
+        sub("How strong the scanlines, dot mask and vignette draw when the "
+            "overlay is on.", 10),
     ]))
 
 

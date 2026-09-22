@@ -7,16 +7,17 @@ class State:
     # Flet SharedPreferences instance, set once in main(). Held here because a
     # service is unregistered as soon as it stops being strongly referenced.
     prefs = None
-    # The three appearance knobs, mirrored here from prefs by
+    # The four appearance knobs, mirrored here from prefs by
     # prefs.apply_runtime(). They live on S rather than being read out of
     # prefs on demand for the same reason `theme` does: this module is what
     # every page imports, and a `ui` that imported `prefs` back would tie the
-    # drawing layer to the storage layer for the sake of three values.
+    # drawing layer to the storage layer for the sake of four values.
     # RAD()/GLOW() are called once per control, so the read has to be an
     # attribute lookup and nothing more.
     radius = 8
     glow = False
     crt = False
+    crt_intensity = 40  # matches DEFAULT_CRT_INTENSITY below
 
 S = State()
 
@@ -109,30 +110,124 @@ def FOCUS_WIDTH():
 
 
 # ---------------------------------------------------------------- CRT
-def crt_overlay():
-    """alola's `.crt-overlay` vignette, as a control to stack over the app.
+# alola's `.crt-overlay` was one line - a radial gradient running clear to
+# 60% and then to 40%-opacity black at the edge. That is a vignette and
+# nothing else, and it read like one: "the crt looks a bit off and too dark
+# and not really crt as much as just a harsh vignette... the crt actually
+# had some good ditherish halftone effect". A convincing CRT is layered -
+# this stacks three things a real tube actually did, instead of the one
+# thing it happened to share with every darkened-corners effect ever:
+#   - scanlines, the signature element and the one most obviously missing
+#   - a halftone dot suggesting a shadow mask / aperture grille
+#   - a much gentler vignette than before, plus a faint centre glow so the
+#     whole thing reads as glowing rather than simply darker
+#
+# Flet's gradients are positioned in the box's own -1..1 space, not device
+# pixels - fine for the vignette, which is meant to scale with the screen,
+# wrong for a scanline, which should not. The two textures are instead tiny
+# repeating PNGs, built once below by hand (struct + zlib only, so this
+# carries no Pillow dependency at runtime) and tiled with
+# ft.ImageRepeat.REPEAT, which gives them a period in fixed logical pixels
+# regardless of screen size: a 1x4 tile for the scanlines, a 4x4 tile for
+# the halftone dot. Both use a 4px period rather than 1-2px on purpose - a
+# tight period is exactly what moires once a compositor scales it, and 4px
+# held up clean at phone and desktop width on the website, which draws the
+# same period in CSS (see dashbored-web/app.css).
+#
+# The three layers are nested containers, each the next one's `content`,
+# rather than siblings in a Stack: a parent's decoration paints before its
+# child's, which paints over it, giving the same back-to-front order a
+# Stack would without the Stack itself adding a fourth control to the walk
+# in CrtOverlayDoesNotEatTaps.test_every_control_in_the_overlay_ignores_interactions.
+# `ignore_interactions=True` is the entire safety story, and every one of
+# the three carries it independently rather than only the outermost - "a
+# single missed flag kills input for the whole app" is why this is a
+# property on each container and not a wrapper applied once at the top. A
+# full-screen container without it sits on top of every button and the
+# whole app looks dead while working perfectly; that bug has shipped here
+# once already.
+#
+# Intensity is one number, S.crt_intensity, 0-100, and it scales all three
+# layers together through exactly one lever: the outermost container's
+# `opacity`. Flet's opacity wraps a control's whole subtree in a single
+# Flutter Opacity, so every nested decoration dims by the same fraction
+# without needing its own multiplier - "must scale every layer together" is
+# free this way rather than three numbers kept in sync by hand. Every
+# colour below is tuned to look right at 100%; 0% is fully invisible, which
+# is correct for the bottom of a slider, not a bug to work around.
+import base64 as _b64
+import struct as _struct
+import zlib as _zlib
 
-    CSS gets this for free - `position: fixed; pointer-events: none` - and
-    Flet has no CSS, so it is a Stack child instead: one full-bleed container
-    painted with a radial gradient that runs clear to 60% and then to black
-    at 40% opacity by the edge, which is exactly alola's stops.
 
-    `ignore_interactions=True` is the entire safety story. It compiles to
-    Flutter's IgnorePointer, which takes the widget out of hit testing
-    altogether rather than merely leaving it without a handler. Without it a
-    full-screen container sits on top of every button in the app and the
-    whole thing looks dead while working perfectly - a bug that has shipped
-    here once already, which is why the tests assert this flag, assert the
-    overlay carries no handler of its own, and assert it is one control
-    rather than a wrapper per page.
+def _tile_png_data_uri(width, height, pixels):
+    """A minimal RGBA PNG as a base64 data URI, built without Pillow.
+
+    `pixels` is `width * height` (r, g, b, a) tuples, row-major. This only
+    ever runs against the two tiny textures below, both built once at
+    import time, so the unoptimised per-pixel loop costs nothing anyone
+    will notice.
     """
-    return ft.Container(
+    def chunk(tag, data):
+        return (_struct.pack(">I", len(data)) + tag + data +
+                _struct.pack(">I", _zlib.crc32(tag + data) & 0xffffffff))
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)  # filter type 0: None
+        for x in range(width):
+            raw += bytes(pixels[y * width + x])
+    png = (b"\x89PNG\r\n\x1a\n" +
+           chunk(b"IHDR", _struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) +
+           chunk(b"IDAT", _zlib.compress(bytes(raw), 9)) +
+           chunk(b"IEND", b""))
+    return "data:image/png;base64," + _b64.b64encode(png).decode("ascii")
+
+
+# One dark row, three transparent - a 4-logical-pixel vertical period.
+_SCANLINE_TILE = _tile_png_data_uri(1, 4, [
+    (0, 0, 0, 140), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)])
+
+# One dot in sixteen - the same 4px period on both axes, at low enough
+# density that it reads as texture rather than a visible grid.
+_HALFTONE_TILE = _tile_png_data_uri(4, 4, [
+    (0, 0, 0, 100), (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0),
+    (0, 0, 0, 0),   (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0),
+    (0, 0, 0, 0),   (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0),
+    (0, 0, 0, 0),   (0, 0, 0, 0), (0, 0, 0, 0), (0, 0, 0, 0)])
+
+CRT_INTENSITY_MIN = 0
+CRT_INTENSITY_MAX = 100
+# Tasteful, not maximum - she asked to be able to control it, not for it to
+# default to more of what she was already complaining was too much.
+DEFAULT_CRT_INTENSITY = 40
+
+
+def crt_overlay():
+    """The layered CRT effect as a control to stack over the app.
+
+    Scaled by S.crt_intensity (0-100); see the module comment above for the
+    layering and the intensity lever. `ignore_interactions=True` on every
+    nested container is the entire safety story.
+    """
+    t = max(CRT_INTENSITY_MIN,
+            min(CRT_INTENSITY_MAX, S.crt_intensity)) / 100
+
+    halftone = ft.Container(
         expand=True, ignore_interactions=True,
+        image=ft.DecorationImage(src=_HALFTONE_TILE, repeat=ft.ImageRepeat.REPEAT))
+
+    scanlines = ft.Container(
+        expand=True, ignore_interactions=True, content=halftone,
+        image=ft.DecorationImage(src=_SCANLINE_TILE, repeat=ft.ImageRepeat.REPEAT))
+
+    return ft.Container(
+        expand=True, ignore_interactions=True, content=scanlines, opacity=t,
         gradient=ft.RadialGradient(
             center=ft.Alignment(0, 0), radius=0.9,
-            colors=[ft.Colors.TRANSPARENT, ft.Colors.TRANSPARENT,
-                    ft.Colors.with_opacity(0.4, ft.Colors.BLACK)],
-            stops=[0.0, 0.6, 1.0]))
+            colors=[ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
+                    ft.Colors.TRANSPARENT,
+                    ft.Colors.with_opacity(0.16, ft.Colors.BLACK)],
+            stops=[0.0, 0.55, 1.0]))
 
 
 def PAD(v=0, h=0):
