@@ -1,16 +1,24 @@
 """Settings: the app's answer to the website's GridStack layout editor.
 
 The website lets you drag panels around; the app could only pick a theme.
-What is here now is the phone-shaped equivalent - reorder and hide the pages,
-choose which five ride in the bottom bar, reorder and hide the panels on
-Home - plus the settings that were only ever hard-coded constants (units, the
-DASH sodium ceiling, how long cached data stays good), and a Diagnostics card
-that answers "why is it showing sample data" without a log file.
+What is here now is the phone-shaped equivalent - reorder the pages and
+choose, separately, which appear in the menu and which ride the bottom bar,
+reorder/hide/resize the cards on every surface - plus the settings that were
+only ever hard-coded constants (units, the DASH sodium ceiling, how long
+cached data stays good), and a Diagnostics card that answers "why is it
+showing sample data" without a log file.
 
-Reordering is done with arrows rather than drag-and-drop on purpose: these
-lists live inside a scrolling column, and a long-press drag inside a scroll
-view is ambiguous on a touch screen - the gesture that reorders a row is the
-same one that scrolls past it.
+The menu and the bar are two controls per row, not one. They were one, and
+one eye drove both surfaces: "seemingly theres no way to customize the
+bottom bar without the menu becoming affected.. it's not different /
+optional like i asked for user preferences."
+
+Reordering *here* is done with arrows rather than drag-and-drop on purpose:
+these lists live inside a scrolling column, and a long-press drag inside a
+scroll view is ambiguous on a touch screen - the gesture that reorders a row
+is the same one that scrolls past it. The cards on a page can be dragged,
+because there the handle is a distinct icon rather than the whole row; see
+panels._editable for why that distinction is what makes it safe.
 
 Everything is stored by flet_app/prefs.py, which also owns the read API the
 rest of the app consumes. This page only edits; it never decides what a
@@ -134,19 +142,56 @@ def _arrows(first, last, up, down):
     ]
 
 
+def _surface_toggle(p, text, on, tooltip, on_click, disabled=False):
+    """One labelled on/off pill - "Menu" or "Bar" - for one page.
+
+    A word, not an icon. The eye this replaces was one control for two
+    surfaces, so it could not say which it meant and in fact drove both:
+    "seemingly theres no way to customize the bottom bar without the menu
+    becoming affected". Two pills that name themselves cannot have that
+    problem, and they read on a phone where a tooltip never appears.
+    """
+    colour = p["text3"] if (disabled or not on) else p["accent"]
+    return ft.Container(
+        padding=PAD(8, 4), border_radius=RAD(6), ink=not disabled,
+        bgcolor=ft.Colors.with_opacity(0.16, p["accent"]) if on and not disabled else None,
+        border=BRD(p["border"], 1) if not on else None,
+        tooltip=tooltip, on_click=None if disabled else on_click,
+        content=ft.Text(text, size=11, color=colour,
+                        weight=ft.FontWeight.W_600 if on else ft.FontWeight.W_400))
+
+
+def _where(in_menu, in_bar):
+    """The one-line answer to "where does this page appear?"."""
+    if in_menu and in_bar:
+        return "menu + bar"
+    if in_menu:
+        return "menu only"
+    if in_bar:
+        return "bar only"
+    return "nowhere - off both"
+
+
 def layout_card(page, saver, on_layout=None):
-    """Reorder the nine pages, hide the unused ones, pick the bottom five."""
+    """Reorder the nine pages and choose, per page, menu and/or bottom bar.
+
+    The menu and the bar are two independent sets, which is the whole
+    point of this card. Before, `bottom_bar_pages()` filtered through
+    `visible_pages()`, so one eye per row drove both surfaces: hiding
+    "garage" took it out of the drawer *and* off the bar, and there was no
+    way to have a page in one but not the other.
+    """
     p = PAL()
     rows = ft.Column(spacing=0)
 
     def paint():
         order = prefs.page_order()
-        hidden = set(prefs.hidden_pages())
+        in_menu = set(prefs.visible_pages())
         in_bar = set(prefs.bottom_bar_pages())
         rows.controls = [row(k, i, order) for i, k in enumerate(order)]
         count = ft.Text(
             f"{len(in_bar)} of {prefs.MAX_BOTTOM} bottom-bar slots used - "
-            f"{len(order) - len(hidden)} pages visible",
+            f"{len(in_menu)} pages in the menu",
             size=10, color=p["text3"])
         rows.controls.append(ft.Container(padding=PAD(6, 8), content=count))
 
@@ -174,9 +219,12 @@ def layout_card(page, saver, on_layout=None):
             ])))
 
     def row(key, i, order):
-        hidden = key in set(prefs.hidden_pages())
+        menu = key in set(prefs.visible_pages())
         bar = key in set(prefs.bottom_bar_pages())
         protected = key in prefs.PROTECTED_PAGES
+        # A protected page may leave one surface but not the last one, so
+        # the pill that is holding it up is the one that goes dead.
+        last_hold = protected and menu != bar
 
         async def up(e):
             prefs.move_page(key, -1)
@@ -192,39 +240,50 @@ def layout_card(page, saver, on_layout=None):
 
         async def toggle_bar(e):
             if not prefs.set_in_bottom_bar(key, not bar):
-                saver.note(f"the bottom bar holds {prefs.MAX_BOTTOM} - "
-                           f"take one out first", bad=True)
+                if bar:
+                    saver.note("Settings has to stay reachable - put it in "
+                               "the menu first", bad=True)
+                else:
+                    saver.note(f"the bottom bar holds {prefs.MAX_BOTTOM} - "
+                               f"take one out first", bad=True)
                 page.update()
                 return
             paint()
             await saver.commit("bottom bar saved")
             _bump(on_layout)
 
-        async def toggle_hide(e):
-            prefs.set_page_hidden(key, not hidden)
+        async def toggle_menu(e):
+            if not prefs.set_page_in_menu(key, not menu):
+                saver.note("Settings has to stay reachable - put it on the "
+                           "bottom bar first", bad=True)
+                page.update()
+                return
             paint()
-            await saver.commit("saved")
+            await saver.commit("menu saved")
             _bump(on_layout)
 
-        where = "bottom bar" if bar else "drawer only"
         return ft.Container(
             padding=PAD(2, 0),
             border=ft.Border(bottom=ft.BorderSide(1, p["border"])) if i < len(order) - 1 else None,
-            content=ft.Row(spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            content=ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
                 *_arrows(i == 0, i == len(order) - 1, up, down),
                 ft.Column(spacing=0, expand=True, controls=[
                     ft.Text(prefs.PAGE_LABELS.get(key, key), size=13,
-                            color=p["text3"] if hidden else p["text"]),
-                    ft.Text("hidden" if hidden else where, size=10, color=p["text3"]),
+                            color=p["text"] if (menu or bar) else p["text3"]),
+                    ft.Text(_where(menu, bar), size=10, color=p["text3"]),
                 ]),
-                _icon_toggle(ft.Icons.VERTICAL_ALIGN_BOTTOM, bar,
-                             "Remove from the bottom bar" if bar else "Put in the bottom bar",
-                             toggle_bar, disabled=hidden),
-                _icon_toggle(ft.Icons.VISIBILITY_OFF if hidden else ft.Icons.VISIBILITY,
-                             not hidden,
-                             "Settings cannot be hidden" if protected else
-                             ("Show this page" if hidden else "Hide this page"),
-                             toggle_hide, disabled=protected),
+                _surface_toggle(
+                    p, "Menu", menu,
+                    "Settings has to stay reachable from somewhere" if (last_hold and menu)
+                    else ("Take this page out of the menu" if menu
+                          else "List this page in the menu"),
+                    toggle_menu, disabled=last_hold and menu),
+                _surface_toggle(
+                    p, "Bar", bar,
+                    "Settings has to stay reachable from somewhere" if (last_hold and bar)
+                    else ("Take this page off the bottom bar" if bar
+                          else "Put this page on the bottom bar"),
+                    toggle_bar, disabled=last_hold and bar),
             ]))
 
     async def reset(e):
@@ -237,8 +296,9 @@ def layout_card(page, saver, on_layout=None):
     return card(ft.Column(spacing=8, controls=[
         ft.Row(controls=[title("Pages & navigation", 15), ft.Container(expand=True),
                          ft.TextButton("Reset", on_click=reset)]),
-        sub("Arrows reorder. The tray icon puts a page in the bottom bar; the eye "
-            "hides it everywhere. Hidden pages leave the bar automatically.", 10),
+        sub("Arrows reorder. Menu and Bar are separate: a page can be in the "
+            "menu, on the bottom bar, in both, or in neither. Turning one off "
+            "leaves the other exactly as it is.", 10),
         rows,
     ]))
 
