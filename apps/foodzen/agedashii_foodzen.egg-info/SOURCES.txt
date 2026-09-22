@@ -1,0 +1,10 @@
+pyproject.toml
+agedashii_foodzen/__init__.py
+agedashii_foodzen.egg-info/PKG-INFO
+agedashii_foodzen.egg-info/SOURCES.txt
+agedashii_foodzen.egg-info/dependency_links.txt
+agedashii_foodzen.egg-info/requires.txt
+agedashii_foodzen.egg-info/top_level.txt
+agedashii_foodzen/pages/__init__.py
+agedashii_foodzen/pages/eatzen.py
+agedashii_foodzen/pages/foodzen.py

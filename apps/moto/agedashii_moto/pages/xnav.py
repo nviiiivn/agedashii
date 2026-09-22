@@ -32,9 +32,9 @@ import time
 
 import flet as ft
 
-from .. import api as M
-from .. import panels
-from ..ui import PAD, PAL, BRD, RAD, card, chip, sub, title
+from agedashii_washi import api as M
+from agedashii_washi import panels
+from agedashii_washi.ui_compat import PAD, PAL, BRD, RAD, card, chip, sub, title
 from . import _trips_parts as T
 
 try:                      # optional: the app still runs without the extensions
@@ -45,7 +45,7 @@ except ImportError:       # pragma: no cover - depends on the build
     fmap = fgeo = None
     MAPS_AVAILABLE = False
 
-from .. import tileserver
+from agedashii_washi import tileserver
 
 # Oakland. Only used until the first fix arrives.
 HOME = (37.8044, -122.2712)
@@ -746,7 +746,7 @@ def _navigator(page, p, the_map, route_layer, nav_markers, poi_layer):
 
 def _toggle_poi_panel(page):
     _NAV["poi_open"] = not _NAV["poi_open"]
-    from ._forms import rebuilder
+    from agedashii_washi.forms import rebuilder
     from . import trips as _trips
     rebuilder(page, _trips.build)()
 

@@ -14,11 +14,11 @@ through the outbox, so it all works offline and syncs later.
 """
 import flet as ft
 
-from .. import api as M
-from .. import panels
-from ..ui import PAD, PAL, RAD, S, card, chip, sub, title
+from agedashii_washi import api as M
+from agedashii_washi import panels
+from agedashii_washi.ui_compat import PAD, PAL, RAD, S, card, chip, sub, title
 from . import eatzen
-from .lab import _tabs
+from agedashii_washi.surface import _tabs
 
 # Which folded-away sections are open. Module level so a tick, a delete or an
 # added item - every one of which repaints the tab - does not shut the
@@ -229,7 +229,7 @@ def _browse(page, run):
     tick, a delete or an added item does not shut it again mid-shop.
     """
     p = PAL()
-    from ..foodzen_catalog import CATALOG
+    from agedashii_washi.foodzen_catalog import CATALOG
 
     def toggle(e):
         _OPEN["browse"] = not _OPEN["browse"]

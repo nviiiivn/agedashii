@@ -48,9 +48,9 @@ import urllib.parse
 
 import flet as ft
 
-from .. import api as M
-from .. import config
-from ..ui import PAL, PAD, BRD, RAD, card, chip, title, sub
+from agedashii_washi import api as M
+from agedashii_washi import config
+from agedashii_washi.ui_compat import PAL, PAD, BRD, RAD, card, chip, title, sub
 from ._wat2do_parts import HOME, haversine_m, miles
 
 GEMS_PATH = "/api/future/gems"
@@ -531,7 +531,7 @@ def build(page):
 
     def rerender():
         """Repaint this tab in place, keeping the chrome. As _forms.rebuilder."""
-        from ..ui import S
+        from agedashii_washi.ui_compat import S
         rerun = getattr(S, "rerender", None)
         if callable(rerun):
             rerun()

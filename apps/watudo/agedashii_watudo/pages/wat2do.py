@@ -30,11 +30,11 @@ import time as _time
 
 import flet as ft
 
-from .. import api as M
-from .. import panels
-from ..ui import PAL, PAD, BRD, RAD, card, chip, sub, title
-from ._forms import offline_banner
-from .lab import _tabs
+from agedashii_washi import api as M
+from agedashii_washi import panels
+from agedashii_washi.ui_compat import PAL, PAD, BRD, RAD, card, chip, sub, title
+from agedashii_washi.forms import offline_banner
+from agedashii_washi.surface import _tabs
 from . import _wat2do_parts as W
 from . import future
 

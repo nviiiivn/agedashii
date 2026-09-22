@@ -42,11 +42,11 @@ import time
 
 import flet as ft
 
-from .. import api as M
-from .. import panels
-from ..ui import BRD, PAD, PAL, RAD, S, card, chip, sub, title
-from ._forms import Writer, rebuilder
-from .lab import _tabs
+from agedashii_washi import api as M
+from agedashii_washi import panels
+from agedashii_washi.ui_compat import BRD, PAD, PAL, RAD, S, card, chip, sub, title
+from agedashii_washi.forms import Writer, rebuilder
+from agedashii_washi.surface import _tabs
 
 
 # Which bike and which of its sections you were last looking at. Module level

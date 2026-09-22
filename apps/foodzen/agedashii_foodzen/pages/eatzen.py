@@ -19,10 +19,10 @@ import time
 
 import flet as ft
 
-from .. import api as M
-from .. import prefs
-from ..ui import PAL, RAD, card, chip, sub, title
-from ._forms import Writer, offline_banner, rebuilder
+from agedashii_washi import api as M
+from agedashii_washi import prefs
+from agedashii_washi.ui_compat import PAL, RAD, card, chip, sub, title
+from agedashii_washi.forms import Writer, offline_banner, rebuilder
 
 # Longest side kept once a photo leaves the device. A phone photo off the
 # sensor is 3-8 MB; neither the vision model nor the upload needs more than

@@ -29,8 +29,8 @@ import urllib.request
 
 import flet as ft
 
-from .. import api as M
-from .. import config
+from agedashii_washi import api as M
+from agedashii_washi import config
 
 #: Vulcan Lofts. Byte-for-byte the website's `TRIPS_HOME`, because it is
 #: written into every saved trip and a second spelling would fork the data.
@@ -394,7 +394,7 @@ def default_tags():
 
 def all_tags():
     """Presets plus whatever custom tags she has added. Presets are immutable."""
-    from .. import prefs
+    from agedashii_washi import prefs
     tags = default_tags()
     known = {t["label"] for t in tags}
     for label, severity, cat in prefs.trip_tags():
@@ -597,7 +597,7 @@ def _unique(items):
 def valhalla_route(waypoints, costing="motorcycle"):
     """{ok, distance_mi, duration_min, ascent_ft, descent_ft, points,
     segments, maneuvers, error}. Never raises."""
-    from .. import routing as R
+    from agedashii_washi import routing as R
     pts = [(w["lat"], w["lon"]) for w in waypoints
            if isinstance(w, dict) and isinstance(w.get("lat"), (int, float))
            and isinstance(w.get("lon"), (int, float))]
@@ -621,7 +621,7 @@ def valhalla_route(waypoints, costing="motorcycle"):
 def parse_route(data, R=None):
     """Valhalla's /route JSON -> the dict the page draws. Pure."""
     if R is None:
-        from .. import routing as R          # pragma: no cover - import shim
+        from agedashii_washi import routing as R          # pragma: no cover - import shim
     trip = (data or {}).get("trip") if isinstance(data, dict) else None
     if not isinstance(trip, dict) or not trip.get("legs"):
         return {"ok": False, "error": "the router found no route"}

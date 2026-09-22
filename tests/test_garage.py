@@ -363,7 +363,7 @@ class DrawerReachesTheGarageAndWeatherTabs(unittest.TestCase):
                              f"{real[index]}")
 
     def test_garage(self):
-        self._check("garage", "flet_app/pages/garage.py")
+        self._check("garage", "apps/moto/agedashii_moto/pages/garage.py")
 
     def test_weather(self):
         self._check("weather", "flet_app/pages/weather.py")

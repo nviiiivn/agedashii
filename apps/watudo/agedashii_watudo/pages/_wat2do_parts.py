@@ -31,8 +31,8 @@ import urllib.request
 
 import flet as ft
 
-from .. import api as M
-from .. import config
+from agedashii_washi import api as M
+from agedashii_washi import config
 
 # Vulcan Lofts, Oakland - the same origin the website measures everything from.
 HOME = (37.769972, -122.216445)

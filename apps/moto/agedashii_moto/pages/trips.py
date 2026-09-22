@@ -26,17 +26,17 @@ import asyncio
 
 import flet as ft
 
-from .. import api as M
-from .. import panels
-from .. import prefs
-from .. import routing as R
-from .. import tileserver
-from ..ui import PAL, PAD, BRD, RAD, card, chip, title, sub
-from ._forms import rebuilder
+from agedashii_washi import api as M
+from agedashii_washi import panels
+from agedashii_washi import prefs
+from agedashii_washi import routing as R
+from agedashii_washi import tileserver
+from agedashii_washi.ui_compat import PAL, PAD, BRD, RAD, card, chip, title, sub
+from agedashii_washi.forms import rebuilder
 from . import _trips_parts as T
 from . import xnav
-from .eatzen import _dismiss, _show
-from .lab import _TAB_INDEX, _tabs
+from agedashii_washi.surface import _dismiss, _show
+from agedashii_washi.surface import _TAB_INDEX, _tabs
 
 try:                      # optional: the app still runs without the extensions
     import flet_map as fmap
