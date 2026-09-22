@@ -140,35 +140,42 @@ class TheBuildManifestIsHonest(unittest.TestCase):
         self.assertEqual(self.flet.get("bundle_id"),
                          "online.iamprettyfamous.agedashii.watudo")
 
-    def test_foreground_location_is_declared(self):
+    def test_no_permission_is_declared_at_all(self):
+        """It declared foreground location for a year without one line of
+        code that asked the device anything: every distance came from a
+        fixed origin and `future.scan()`'s `centre` had no caller. A
+        permission declared ahead of a feature is what teaches an owner to
+        stop reading permission lists, so it is gone - and the origin is a
+        setting she types instead, which works offline and prompts for
+        nothing.
+
+        Stated as "none", not "not these three", so a permission added for a
+        feature that does not exist cannot slip back in under another name.
+        """
         perms = self.flet.get("android", {}).get("permission", {})
-        self.assertIs(perms.get("android.permission.ACCESS_FINE_LOCATION"), True)
-        self.assertIs(perms.get("android.permission.ACCESS_COARSE_LOCATION"), True)
+        self.assertEqual(perms, {}, "declare it in the commit that uses it")
 
-    def test_background_location_is_not(self):
-        """Watudo searches around where she is and routes to a place. It
-        records no tracks, so it has no business following her with the
-        screen off - and asking for that permission is what makes a Play
-        listing require a written justification."""
-        perms = self.flet.get("android", {}).get("permission", {})
-        self.assertNotIn("android.permission.ACCESS_BACKGROUND_LOCATION", perms)
-        self.assertNotIn("android.permission.FOREGROUND_SERVICE_LOCATION", perms)
+    def test_no_location_plugin_ships_either(self):
+        """The dependency list is what `flet build` installs. A permission
+        and a plugin have to arrive together or the app fails at the point
+        of use with a message about the manifest."""
+        deps = " ".join(self.toml["project"]["dependencies"])
+        self.assertNotIn("geolocator", deps)
+
+    def test_the_ios_usage_strings_make_no_claim_either(self):
         ios = self.flet.get("ios", {}).get("info", {})
-        self.assertNotIn("NSLocationAlwaysAndWhenInUseUsageDescription", ios)
+        for key in ("NSLocationWhenInUseUsageDescription",
+                    "NSLocationAlwaysAndWhenInUseUsageDescription"):
+            self.assertNotIn(key, ios)
 
-    def test_gps_hardware_is_not_required(self):
-        """Declared required, the Play listing and a sideload refuse a
-        device without GPS. The app degrades to network location instead."""
-        features = self.flet.get("android", {}).get("feature", {})
-        self.assertIs(features.get("android.hardware.location.gps"), False)
-        self.assertIs(features.get("android.hardware.location.network"), False)
-
-    def test_ios_has_a_sentence_for_the_permission_it_asks_for(self):
-        """The App Store rejects a build that uses the API without one."""
-        ios = self.flet.get("ios", {}).get("info", {})
-        sentence = ios.get("NSLocationWhenInUseUsageDescription") or ""
-        self.assertTrue(sentence.strip().endswith("."), sentence)
-        self.assertIn("Watudo", sentence)
+    def test_the_app_says_in_words_that_it_does_not_ask(self):
+        """The README and the help surface both have to agree with the
+        manifest, because a manifest is the one thing nobody reads."""
+        readme = (APP_DIR / "README.md").read_text(encoding="utf-8")
+        self.assertIn("no location permission", readme.lower())
+        from agedashii_watudo.pages import help as help_page
+        said = " ".join(" ".join(body) for _i, _h, body in help_page.TOPICS)
+        self.assertIn("does not ask the device where it is", said)
 
     def test_no_secret_is_written_down_anywhere_in_the_app(self):
         needles = ("api_key", "apikey", "secret", "password", "token=",

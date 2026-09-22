@@ -45,6 +45,7 @@ dependencies = [
     # that means for the manifest.
 ]
 
+
 [tool.setuptools.packages.find]
 include = ["agedashii_watudo*"]
 
@@ -78,61 +79,32 @@ copyright = "Copyright (c) 2026 nvii"
 agedashii-qi = "../../packages/agedashii-qi"
 agedashii-washi = "../../packages/agedashii-washi"
 
-# Permissions. Without these the plugin is present, the code runs, and the
-# feature fails at the point of use with a message about the manifest -
-# which is exactly what XNAV did: "Record" produced "location permissions
-# are not declared in the platform manifest". Declaring a plugin in
-# requirements.txt does NOT declare its permissions; flet writes the
-# manifest from these tables and nothing else.
+# Permissions: this app asks for none, and that is the whole story.
 #
-# LOCATION, foreground only, is for what this app does with a place: Future
-# Finds scans for gems around where she is, and Wat2Do routes to the one the
-# mission picked. Both happen with the app open and on screen, in response
-# to a tap; neither has any use for a position once she has put the phone
-# away.
+# It used to declare ACCESS_FINE_LOCATION and ACCESS_COARSE_LOCATION, ahead
+# of a feature, with a long comment admitting that **no code in this app
+# asks the device where it is**: every distance was measured from a fixed
+# origin (`_wat2do_parts.HOME`, Vulcan Lofts) and `future.scan()` took a
+# `centre` that nothing passed. A permission declared for a feature that
+# does not exist is the thing that teaches an owner to stop reading
+# permission lists, and "we will use it later" is how every one of those
+# starts. So it is gone.
 #
-# Stated plainly, because a manifest that overstates is the thing that
-# teaches an owner to ignore prompts: **no code in this app asks the device
-# where it is today.** Every distance is measured from a fixed origin -
-# `_wat2do_parts.HOME`, Vulcan Lofts - and `future.scan()` takes a `centre`
-# that nothing currently passes. This is declared ahead of the feature
-# rather than after it, which costs one line in the app's permission listing
-# and nothing at runtime: Android only prompts when a permission is actually
-# requested, and nothing here requests it yet. When the Scan button starts
-# asking, the plugin goes in the dependency list above and this comment
-# comes out.
-[tool.flet.android.permission]
-"android.permission.ACCESS_FINE_LOCATION" = true
-"android.permission.ACCESS_COARSE_LOCATION" = true
-
-# ACCESS_BACKGROUND_LOCATION and FOREGROUND_SERVICE_LOCATION are
-# deliberately absent, and this is the note saying so rather than an
-# oversight for someone to "fix" later.
+# What replaced it is a setting, not a sensor: Settings > Measure distances
+# from takes a latitude and longitude and moves the map's home marker, the
+# Overpass scan, the mission radius, the thrift list and every distance
+# column together - and it is what `scan()`'s `centre` parameter now
+# carries. That works offline, needs no plugin, prompts for nothing, and is
+# honest about what the app actually knows: what she told it.
 #
-# The dashboard declares both because XNAV records a ride: a track has to
-# keep being written while the screen is off, and a foreground service is
-# the only honest way to do that. Watudo records nothing. It asks "where am
-# I" when she taps Scan, and it is done. Asking for background location
-# anyway would mean the OS prompting her for all-the-time access, a Play
-# listing that needs a written justification and a video, and a permission
-# in the system settings that no code in this app would ever use - which is
-# the kind of thing that makes a whole permission list untrustworthy.
+# If Watudo ever does ask the device for a fix, the permission comes back in
+# the same commit as the code that requests it - with `flet-geolocator` in
+# the dependency list above, an `[tool.flet.android.feature]` table saying
+# GPS hardware is not required, and an
+# NSLocationWhenInUseUsageDescription for the App Store. Not before.
 #
-# If a future Watudo ever wants to notice her arriving somewhere, that is
-# the moment to add it, with the feature, in the same commit.
-
-# Declared as NOT required so the Play listing and a sideload do not refuse
-# a device that lacks GPS hardware. Without a fix the app degrades to
-# network location, which for "what is within 25 miles of here" is plenty;
-# refusing to install would be a much worse answer than a coarser one.
-[tool.flet.android.feature]
-"android.hardware.location.gps" = false
-"android.hardware.location.network" = false
-
-# iOS wants a sentence per permission, shown verbatim in the system prompt,
-# and the App Store rejects a build that uses the API without one. It says
-# what the location is for and stops there - there is no
-# NSLocationAlwaysAndWhenInUseUsageDescription because there is no
-# always-on use to describe.
-[tool.flet.ios.info]
-NSLocationWhenInUseUsageDescription = "Watudo uses your location to find places near you and to route to the one you pick."
+# ACCESS_BACKGROUND_LOCATION and FOREGROUND_SERVICE_LOCATION would be wrong
+# even then. The dashboard declares both because XNAV records a ride while
+# the screen is off; Watudo records nothing, so all-the-time access would
+# mean a Play listing that needs a written justification and a video for a
+# permission no code here would ever use.

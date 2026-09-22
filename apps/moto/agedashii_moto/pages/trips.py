@@ -1705,6 +1705,12 @@ def _scope_button(p, label, active, on_click, tooltip=None):
         bgcolor=ft.Colors.with_opacity(0.18 if active else 0.05, colour),
         border=BRD(ft.Colors.with_opacity(0.5 if active else 0.25, colour), 1),
         on_click=on_click,
+        # It had none: a tap on this chip was completely silent until the
+        # rebuild came back with the other one lit, which on a slow rebuild
+        # is long enough to tap it again. `ink` is the ripple under the
+        # finger; `animate` carries the colour across instead of jumping.
+        ink=True, ink_color=ft.Colors.with_opacity(0.18, p["accent"]),
+        animate=ft.Animation(120, ft.AnimationCurve.EASE_OUT),
         content=ft.Text(label, size=10, color=colour,
                         weight=ft.FontWeight.W_600 if active else None))
 

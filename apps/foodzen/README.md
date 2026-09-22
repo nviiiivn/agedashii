@@ -5,19 +5,56 @@ split out of the Agedashii dashboard; it shares the look (`agedashii-qi`) and
 the system (`agedashii-washi`) with the other two and shares no code with
 them.
 
-Three surfaces:
+Five surfaces, four of them on the navigation:
 
 | Surface | What is on it |
 |---|---|
 | **FoodZen** | Grocery lists, Meals (pantry, recipe vault, meal plan), Scrape (a recipe URL in, ingredients out), Expenses (receipt import, spending, frequency radar) — plus EatZen and BPM as its last two tabs, matching the website page it was ported from |
 | **EatZen** | Food logging against the nutrition table. Sodium is the headline, added sugar comes along |
 | **BPM** | Blood pressure readings: systolic, diastolic, heart rate, note, and the category the pair falls into |
+| **Settings** | Server address and a Check that probes off the event loop; all 24 themes, and this app *remembers* which; corner rounding, accent glow, CRT overlay and its intensity; the bottom bar and the menu trigger; the DASH sodium target; units; how long server answers are reused; card layout per FoodZen tab; diagnostics |
+| **Guide** | "How this works", reached from Settings — what each screen does, what works offline, where the sodium numbers come from, what the `*` means |
 
 FoodZen is the website's page unchanged, so its tab strip still carries six
 tabs. EatZen and BPM are also top-level pages here, because in this app they
 are the point rather than something buried two levels down in Tools. The
 drawer lists each surface once: FoodZen's sub-rows are Grocery, Meals, Scrape
 and Expenses only.
+
+## Navigation: the bar first, the hamburger optional
+
+> "Each of these smaller apps (not tofu) work better with the bottom
+> navigation bar and less with the hamburger menu... i want the ability to
+> show / hide the hamburger menu trigger as wel please."
+
+So the bottom bar carries all four navigable surfaces and is the way this app
+is meant to be driven. The menu trigger ships **off** and is switched back on
+in Settings → Navigation; hidden, its slot disappears entirely and the brand
+pill moves to the edge rather than sitting behind a dead 48px gap.
+
+One rail, in `prefs_local.hamburger_shown()`: with the bottom bar switched
+off the trigger returns whatever the setting says, because an app with
+neither has no navigation at all — including no way back to the screen where
+you would undo it. The switch goes dead and says why.
+
+## Glyphs: emoji for food, themed icons for chrome
+
+Two kinds of picture with two different jobs, and `agedashii_foodzen/glyphs.py`
+is the only place either is decided.
+
+- **Emoji are content.** A banana on a grocery row, an egg on an EatZen row.
+  The table is deliberately incomplete and matching is by whole word, longest
+  phrase first: a food it does not know gets a neutral 🍽️, never a near-miss.
+  "grapefruit" is not grapes, "sweet potato" is not a potato, and "peanut
+  butter" is not butter. A wrong glyph reads as a claim about what the row
+  *is*, which is the same class of quiet lie as an unlooked-up nutrient.
+- **Icons are chrome.** Card headings, buttons, meters, status marks — every
+  one drawn through `mark()`/`head()` in a palette colour, so all 24 themes
+  reach them. Sodium is a grain, blood pressure is the heart trace, and those
+  two marks are the same picture everywhere they appear.
+
+Emoji never stand in for chrome and icons never stand in for food;
+`test_glyphs.TheChromeIcons.test_the_two_kinds_never_mix` is that rule.
 
 ---
 
@@ -149,8 +186,10 @@ swaps it for real data.
 /home/nvii/venvs/flet/bin/python -m unittest discover -s apps/foodzen/tests -t .
 ```
 
-42 tests, no network, well under a second. They test the shell, not the pages
-— FoodZen, EatZen and BPM came over from the dashboard with their own history.
+111 tests, no network, well under two seconds. They test the shell, Settings,
+the guide and the glyph table, not the three data pages — FoodZen, EatZen and
+BPM came over from the dashboard with their own history.
+
 Covered: it builds headlessly; every surface renders both offline and with the
 server answering; the drawer and the bottom bar reach each surface; a drawer
 sub-row lands on the tab it names (checked against the page's real tab order,
@@ -159,6 +198,15 @@ menu); themes apply to the body and the drawer; the CRT stacks over the
 SafeArea and not under it; and no file in this app imports `agedashii_tofu`,
 `agedashii_moto` or `agedashii_watudo`, by AST, by name at runtime, and by
 string literal.
+
+On Settings specifically, every control is found **by its own label** and
+driven, and then the *store* is asked what changed — a switch that flips
+visually and writes nothing is the bug the tests exist to catch. The theme is
+picked, the cache is thrown away, `load()` is run against the same storage,
+and the theme has to come back. The server Check is asserted to probe on a
+worker thread rather than merely to probe. With the menu trigger hidden every
+surface still has to be reachable, and nothing may expand inside a wrapping
+Row on Settings or the guide either.
 
 One of them exists for a specific reason: `test_rendering_never_reaches_the_
 network` fails if painting a screen issues *any* HTTP request. Her FoodZen data
@@ -192,20 +240,31 @@ fourth: `ft.Icon` has `.icon`, not `.name`, and the control is not slotted, so
 assigning `.name` binds a stray attribute, raises nothing, and never changes
 the glyph.
 
+## Where preferences live
+
+Everything the dashboard already stores — units, sodium target, corner radius,
+glow, CRT, the bottom bar, the per-surface card layout — is read from and
+written to `agedashii_washi.prefs` under its `agedashii.*` keys, so the two
+apps agree about them on the same device.
+
+Two are this app's own, in `agedashii_foodzen/prefs_local.py`, namespaced
+`agedashii.foodzen.*`:
+
+| Key | Why it is here and not in the shared store |
+|---|---|
+| `agedashii.foodzen.theme` | The shared store has no theme key at all, which is exactly why the dashboard's picker resets at every launch. Adding one to a package two other apps are being worked on at the same time is not this app's call to make. |
+| `agedashii.foodzen.hamburger` | Only this app hides its menu trigger. |
+
+Both are read back in `main()` before the first frame. Booleans are written as
+`"true"`/`"false"` and compared against the literal, because storage hands a
+False back as the string `"false"` and `bool("false")` is `True` — that footgun
+has shipped in this codebase once already.
+
 ## Known gaps
 
-- **No settings page.** Server address, units, sodium target, corner radius,
-  glow and the CRT are read from shared storage but can only be *changed* from
-  the dashboard app, which writes the same `agedashii.*` keys. The theme
-  picker in the topbar is the one appearance control Foodzen has of its own.
-- **The theme is not remembered across launches.** `agedashii_washi.prefs` has
-  no key for it — this is true of the dashboard too, not something introduced
-  here.
-- **EatZen and BPM refuse to draw offline**, as above.
-- **`agedashii_foodzen/pages/_compat.py` is a patch with an expiry date.**
-  `agedashii_washi.forms.rebuilder` opens with `from .. import api as M`,
-  which was correct at `agedashii_tofu/pages/_forms.py` and is an ImportError at
-  `agedashii_washi/forms.py`. Every editable page calls it on its first line.
-  `_compat` delegates to the shared helper and only substitutes its own copy
-  while that import raises; fix the `..` in `packages/` and this module can be
-  deleted and the import in `eatzen.py` pointed back at Washi.
+- **EatZen and BPM refuse to draw offline**, as above — the gate is in the
+  pages, not the shell.
+- **FoodZen's six tab labels are plain text.** The tab bar is built by
+  `agedashii_washi.surface._tabs` from strings, so an icon per tab would mean
+  changing a shared package; the card headings inside each tab carry themed
+  icons instead.

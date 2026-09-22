@@ -29,7 +29,7 @@ import re
 import flet as ft
 
 from agedashii_qi import PAL
-from agedashii_washi.widgets import sub, title
+from agedashii_washi.widgets import title
 
 # ---------------------------------------------------------------- the food table
 # Keys are lower case and are normalised the same way a looked-up name is (see
@@ -246,10 +246,5 @@ def head(icon, text, size=13, *, tone="accent", trailing=None):
     """
     return ft.Row(spacing=7, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                   controls=[mark(icon, size=size + 3, tone=tone), title(text, size),
-                            ft.Container(expand=True), *( [trailing] if trailing else [] )])
-
-
-def note(text, size=10):
-    """The small grey line under a control. Re-exported so a page building a
-    glyph row does not need a second import for the sentence beside it."""
-    return sub(text, size)
+                            ft.Container(expand=True),
+                            *([trailing] if trailing else [])])

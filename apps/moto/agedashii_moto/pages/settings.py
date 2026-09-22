@@ -95,6 +95,19 @@ def _update(page):
         pass
 
 
+#: The status line itself, made once and reused by every build of this
+#: page - the same trick `main.py` uses for the body container and the
+#: outbox chip, and for the same reason.
+#:
+#: Every edit here repaints the whole shell, which rebuilds this page,
+#: which would otherwise build a *new* status Text - and the message the
+#: edit then writes would land in the old one, detached from the screen.
+#: "changed for now - no storage on this device" is exactly the message
+#: that would be lost that way, and it is the one that matters most.
+#: One control that outlives the rebuild is the smallest fix there is.
+_STATUS = ft.Text("", size=11, selectable=True)
+
+
 class _Saver:
     """One shared status line for every preference edit on this page.
 
@@ -107,7 +120,10 @@ class _Saver:
 
     def __init__(self, page):
         self.page = page
-        self.text = ft.Text("", size=11, color=PAL()["text2"], selectable=True)
+        self.text = _STATUS
+        # Re-themed on every build rather than only when it was made, so
+        # the line does not keep the old palette after a theme change.
+        self.text.color = PAL()["text2"]
 
     @property
     def control(self):

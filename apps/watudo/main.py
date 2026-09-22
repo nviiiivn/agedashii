@@ -199,7 +199,17 @@ async def main(page):
     # correctly with no signal.
     await prefs.load(S.prefs)
     prefs.apply_runtime()
+    # This app's own preferences - the theme, the menu button and the five
+    # that only Wat2Do has an opinion about. A second store rather than more
+    # keys in washi's, because every other Agedashii app would then carry a
+    # setting about a checklist it does not have.
+    await wprefs.load(S.prefs)
     await _restore_theme(page)
+    # A launch always starts on Wat2Do, whatever surface the last one was
+    # left on. Module state outlives a hot reload in development and the
+    # honest answer to "what did I open this for" is the day, not the
+    # Settings page she was last reading.
+    _HERE["key"] = "wat2do"
 
     body = ft.Container(expand=True, padding=PAD(12, 12))
 
@@ -449,8 +459,11 @@ async def main(page):
         def swatch(key):
             t = THEMES[key]
             on = key == S.theme
-            return ft.Container(
-                padding=PAD(10, 8), border_radius=RAD(8), ink=True,
+            # U.tap rather than a bare `ink=True`: the ripple is tinted with
+            # the theme the row is offering, so the feedback previews the
+            # choice as well as acknowledging the tap.
+            return U.tap(ft.Container(
+                padding=PAD(10, 8), border_radius=RAD(8),
                 on_click=pick(key),
                 bgcolor=ft.Colors.with_opacity(0.14, p["accent"]) if on else None,
                 content=ft.Row(spacing=10, controls=[
@@ -465,7 +478,7 @@ async def main(page):
                             color=p["text"], expand=True),
                     ft.Icon(ft.Icons.CHECK, size=16, color=p["accent"])
                     if on else ft.Container(width=16),
-                ]))
+                ])), tint=t["accent"])
 
         dlg = ft.AlertDialog(
             bgcolor=p["bg2"],
@@ -480,6 +493,9 @@ async def main(page):
         _show(page, dlg)
 
     def _remember_theme(key):
+        # Into the cache first, so Settings' own picker and Diagnostics show
+        # the new theme immediately, and to storage second.
+        wprefs.set_theme(key)
         run_task = getattr(page, "run_task", None)
         if callable(run_task) and S.prefs is not None:
             run_task(_write_theme, key)
@@ -506,18 +522,33 @@ async def main(page):
         render()
 
     def topbar():
+        """The pill, what is queued, and the two things that are not a place.
+
+        No gear any more. Settings is a surface on the bottom bar, and a gear
+        up here would be a third way to the same screen - the thing that made
+        the old drawer a copy of the old bar. The palette stays because it is
+        not navigation: it changes the app you are looking at without leaving
+        the page you are on.
+
+        When the hamburger is hidden its slot is *gone*, not blank: an
+        IconButton with nothing in it still takes its 48px, and a gap where a
+        control used to be reads as a control that failed to draw.
+        """
         p = PAL()
         editing = panels.editing()
-        # Only on a surface that has a card stack to arrange. Future Finds
-        # does not; a button that does nothing is worse than no button.
+        # Only on a surface that has a card stack to arrange. Future Finds,
+        # Settings and Help do not; a button that does nothing is worse than
+        # no button.
         arrange = [ft.IconButton(
             ft.Icons.CHECK if editing else ft.Icons.DASHBOARD_CUSTOMIZE,
             icon_color=p["accent"] if editing else p["text2"],
             tooltip="Done arranging" if editing else "Arrange the cards on this page",
             on_click=toggle_customize)] if (panels.has_surface() or editing) else []
+        menu = [ft.IconButton(ft.Icons.MENU, icon_color=p["text2"],
+                              tooltip="Everything this app can show",
+                              on_click=open_menu)] if menu_visible() else []
         return ft.Row(spacing=10, controls=[
-            ft.IconButton(ft.Icons.MENU, icon_color=p["text2"],
-                          on_click=open_menu),
+            *menu,
             brand_chip(),
             ft.Container(expand=True),
             sync_chip,
@@ -525,10 +556,25 @@ async def main(page):
             ft.IconButton(ft.Icons.PALETTE, icon_color=p["text2"],
                           tooltip=f"Theme: {THEME_NAMES.get(S.theme, S.theme)}",
                           on_click=open_theme_picker),
-            ft.IconButton(ft.Icons.SETTINGS, icon_color=p["text2"],
-                          tooltip="Server and appearance",
-                          on_click=open_settings),
         ])
+
+    # -------------------------------------------------------------- surfaces
+    def build_surface(key):
+        """The body for one destination.
+
+        Wat2Do and Future Finds are one call, not two: `wat2do.build()` is
+        already a two-tab page and this shell does not build a second copy of
+        either. Which tab it opens on is `_TAB_INDEX`, which `render` has
+        just written - so the drawer, the bottom bar and the page's own tab
+        bar are three handles on one control rather than three states that
+        can disagree.
+        """
+        if key == "settings":
+            return settings_page.build(page, on_change=render, go=go,
+                                       reach=reach_lines())
+        if key == "help":
+            return help_page.build(page, go=go)
+        return wat2do.build(page)
 
     # --------------------------------------------------------------- render
     def render(key=None):
@@ -542,28 +588,33 @@ async def main(page):
         p = PAL()
         if key not in PAGES:
             key = surface_of()
-        _TAB_INDEX[TAB_KEY] = TAB_OF[key]
+        _HERE["key"] = key
+        if key in TAB_PAGES:
+            _TAB_INDEX[TAB_KEY] = TAB_OF[key]
         # Cleared before the body builds and set again by panels.layout(),
         # so the topbar - built after the body, below - knows whether this
         # surface has a card stack worth offering Customize for.
         panels.begin_render()
         paint_sync()
         try:
-            content = wat2do.build(page)
+            content = build_surface(key)
         except Exception as e:         # noqa: BLE001 - a broken page is not a dead app
             # `_tabs` guards each tab body it *calls*, but wat2do passes its
             # two bodies already built, so a failure inside them lands here.
             # Saying so beats a blank window with nothing to read.
-            content = _error_card("Watudo could not be built.", e)
+            content = _error_card(f"{LABELS[key]} could not be built.", e)
         body.content = content
         body.bgcolor = p["bg"]
-        page.drawer = nav_drawer()
+        # Built only when there is a trigger for it. A drawer nobody can open
+        # is four rows of work per render for nothing.
+        page.drawer = nav_drawer() if menu_visible() else None
         page.controls.clear()
         chrome = [ft.Container(padding=PAD(8, 12), bgcolor=p["bg"],
                                content=topbar()),
                   body]
-        # The bar repeats what the drawer lists; off, the content gets the
-        # height back and the drawer still reaches both surfaces.
+        # The bar is the primary navigation, so it is on unless she has said
+        # otherwise; off, the content gets the height back and `menu_visible`
+        # has already put the drawer trigger back to reach everything.
         if prefs.bottom_bar_enabled():
             chrome.append(bottom_bar())
         shell = ft.Column(spacing=0, expand=True, controls=chrome)
@@ -610,6 +661,10 @@ async def _restore_theme(page):
     (some web contexts), or hold the name of a theme that has since been
     removed. Any of those falls through to the shipped default rather than
     taking the launch down.
+
+    Read straight from storage rather than from `wprefs.theme()` on purpose:
+    this runs before the first paint and must work even if that load was the
+    one key the platform refused.
     """
     try:
         key = await S.prefs.get(KEY_THEME)
@@ -617,6 +672,7 @@ async def _restore_theme(page):
         return
     if isinstance(key, str) and key in THEMES:
         apply_theme(page, key)
+        wprefs.set_theme(key)
 
 
 # ft.app() is deprecated since 0.80 and removed in 0.90; ft.run() is the same

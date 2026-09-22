@@ -4,13 +4,15 @@ Trips + Garage. The motorcycle half of [Agedashii](../../README.md), split out
 into an app of its own so it can be installed, opened and built without the
 other eight dashboard pages coming with it.
 
-Three surfaces:
+Four surfaces and a guide:
 
 | Surface | What it is |
 |---|---|
 | **Trips** | The trip library, a two-point route planner that works with no signal, the route editor (`Produce`), recorded rides with a replay scrubber, and xNav as its fourth tab. |
 | **Garage** | Six bikes, their mileage / service / expense records, spec sheets, markdown notes, and `Flipper` — the server's Craigslist and Reddit scanner. |
 | **XNAV** | The live map on its own, full height: GPS, track recording, and turn-by-turn guidance with speed limits, curves, elevation and POIs. |
+| **Settings** | This app's own: server address with a Check button, the theme across all 24 palettes *and kept for next launch*, corner rounding, accent glow, the CRT overlay and its intensity, the navigation itself, and units. |
+| **Help** | "How this works", off Settings. What each surface does, what works with no signal, what queues and what refuses. |
 
 XNAV appears twice on purpose — as a tab inside Trips, where you land after
 planning a route, and as a top-level surface, where the whole screen is map.
@@ -24,7 +26,15 @@ planning a route, and as a top-level surface, where the whole screen is map.
 
 - the 24 themes, the corner radius, the accent glow and the CRT overlay
 - the per-surface card layouts (`Arrange` in the topbar)
-- units, and every other preference
+- units — miles or kilometres, reaching every distance, speed and climb
+  figure on every surface. Records are stored exactly as the server sent them
+  (`distance_mi`, `max_speed_mph`, `ascent_ft`, `odo`); `agedashii_moto/units.py`
+  converts on the way to the screen, so nothing already logged changes meaning
+- the theme, which is Moto's own key (`agedashii.theme`) because nothing stored
+  it anywhere before — the dashboard's picker applied a theme and never wrote it
+  down, so every launch opened on the shipped default again
+- whether the hamburger is shown, and whether the bottom bar is
+- every other preference
 - the **offline router** — A\* over a packed OSM graph, pure CPython, no C
   extension. The Bay Area graph is 86 MB / 725,626 nodes and routes 40 km in
   about 180 ms on a Pi. Install one at `AGEDASHII_ROUTE_GRAPH=/path/to.rg`;
@@ -69,16 +79,36 @@ never as `0 mi`.
 | | Path |
 |---|---|
 | cache + outbox | `$FLET_APP_STORAGE_DATA/store.sqlite3`, or `~/.agedashii/store.sqlite3` outside a packaged build |
-| preferences | Flet `SharedPreferences`, shared with the other Agedashii apps — the theme picked in one is the theme the others open on |
+| preferences | Flet `SharedPreferences`, shared with the other Agedashii apps under the `agedashii.*` namespace. Moto's own two keys — the theme and the hamburger — are in `agedashii_moto/motoprefs.py`; everything else is in `agedashii_washi/prefs.py` |
 | route graph | `$AGEDASHII_ROUTE_GRAPH`, else bundled, else none |
 | map tiles | `$AGEDASHII_MBTILES`, else bundled, else none |
 
+## Navigation
+
+The bottom bar is the navigation. It carries all four surfaces and is on by
+default; Help hangs off Settings rather than taking a fifth slot.
+
+The hamburger is an option, not the way in — `Settings → Navigation → Menu
+button`. Hidden, its slot in the topbar is not drawn at all rather than left
+as a dead gap, and the drawer is not even built. Nothing becomes unreachable:
+the bar reaches every surface, Help is a row on Settings, and the tabs inside
+Trips and Garage are on those surfaces' own tab bars as well as in the drawer.
+
+One rail, enforced on both the write side and the read side: the last of the
+two cannot be switched off. An app with neither a bar nor a menu has no
+navigation and no way back to the setting that did it.
+
 ## Pointing it at a server
 
-Moto has no Settings page — the dashboard app owns that, and the address is
-stored under the same key, so setting it there sets it here. Absent a stored
-address, the app probes the shipped candidates in `agedashii_washi/config.py`
-in order and adopts the first that answers.
+`Settings → Server`. Type an address, press **Check** — it asks for
+`/api/config` and reports exactly what came back — then **Save**. The probe
+runs on a worker thread, because a three-second blocking call on Flet's event
+loop keeps the old frame on screen and drops every tap that lands during it.
+
+The address is stored under the same key the dashboard app uses, so setting it
+in either sets it in both. Absent a stored address, the app probes the shipped
+candidates in `agedashii_washi/config.py` in order and adopts the first that
+answers.
 
 Off the LAN this means the VPN. `iamprettyfamous.online` will not work as the
 address: Cloudflare 403s at the edge and VoidAuth 302s every path, including
@@ -154,25 +184,27 @@ It does not ask for the camera. That belongs to FoodZen.
 python3 -m unittest discover -s apps/moto/tests -t .
 ```
 
-61 tests in about a second, no network and no real store — `config._opener` is
-swapped for something that always refuses and the database is a tempfile, so
+114 tests in about three seconds, no network and no real store — `config._opener`
+is swapped for something that always refuses and the database is a tempfile, so
 "the server is down" is a boolean rather than a firewall rule. They run `main()`
-for real against a stub page and check that it comes up offline, that all three
-surfaces render and say what they cannot know instead of inventing it, that the
-drawer and the bottom bar each reach all three, that a theme change actually
+for real against a stub page and check that it comes up offline, that every
+surface renders and says what it cannot know instead of inventing it, that the
+drawer and the bottom bar each reach all of them, that a theme change actually
 repaints, that the CRT overlay sits over the SafeArea and takes no taps, that
 the headless/window guard picks the right mode and port, that `pyproject.toml`
 carries every block `flet build` reads, and that nothing in the app imports
 `agedashii_tofu`, `agedashii_watudo` or `agedashii_foodzen`.
 
-## Known: writes that repaint
-
-`agedashii_washi/forms.py` has `from .. import api as M` where it means
-`from . import api as M`. That is a relative import past the top of the package,
-so `forms.rebuilder(...)` raises `ImportError` the moment it is called. It is
-reached from Trips' tab-to-tab jumps and from Garage's Add-record and New-note
-dialogs, so those repaints fail. It is a one-word fix in the shared package,
-which is outside this app — nothing in `apps/moto/` can work around it.
+`test_settings.py` covers the things that look right in the source and are
+wrong at runtime: a theme picked in one shell and read back by a *second*
+shell built against the same storage (a restart, as literally as a test can
+stage one); a stored `"false"` really reading as false, since
+`bool("false")` is `True` and that is how every switch in this app's ancestor
+came back on after a restart; the units dropdown actually changing the
+numbers Trips, Garage and XNAV draw; every surface and every sub-tab still
+reachable with the hamburger hidden; the last way around refusing to be
+switched off; and no control with `expand=True` inside a wrapping `Row`,
+which is what paints grey over a whole screen.
 
 ## Flet 0.86.5
 

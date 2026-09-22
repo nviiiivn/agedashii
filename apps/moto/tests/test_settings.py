@@ -163,14 +163,7 @@ class TheThemeSurvivesARestart(ShellCase):
         expand=True paints grey over the whole screen. That exact bug has
         made a page unusable twice in this codebase."""
         page = self.build_shell()
-        for row in walk(_settings(page)):
-            if not (isinstance(row, ft.Row) and getattr(row, "wrap", False)):
-                continue
-            for child in (row.controls or []):
-                for node in walk(child):
-                    self.assertNotEqual(
-                        getattr(node, "expand", None), True,
-                        f"{type(node).__name__} expands inside a wrapping Row")
+        _no_expand_inside_a_wrap(self, _settings(page), "settings")
 
 
 # ---------------------------------------------------------- the appearance
@@ -245,6 +238,11 @@ class TheHamburgerCanBeHidden(SettingsCase):
         self.assertFalse(motoprefs.hamburger_shown())
         self.assertIsNone(_menu_button(second))
 
+    def test_the_drawer_is_not_even_built_when_nothing_can_open_it(self):
+        _fire(_switch(self.tree, "Menu button"), False)
+        self.assertIsNone(self.page.drawer,
+                          "a drawer nothing can open was still built")
+
     def test_a_stored_false_really_reads_as_false(self):
         """SharedPreferences hands a bool back as the string "false", and
         `bool("false")` is True - which is how every switch in this app's
@@ -301,11 +299,21 @@ class TheHamburgerCanBeHidden(SettingsCase):
         """An app with neither a bar nor a menu has no navigation and no
         way back to the page that did it."""
         _fire(_switch(self.tree, "Menu button"), False)
+        # The tree the refusal is written into is the one that is on screen
+        # when the switch is flipped, not a freshly built one - a refusal
+        # deliberately does not repaint, so that the reason stays up.
         tree = _settings(self.page)
         _fire(_switch(tree, "Bottom bar"), False)
         self.assertTrue(prefs.bottom_bar_enabled(), "the bar went off anyway")
-        self.assertIn("show the hamburger first",
-                      " ".join(texts(_settings(self.page))))
+        self.assertIn("show the hamburger first", " ".join(texts(tree)))
+
+    def test_a_confirmation_survives_the_repaint_the_edit_causes(self):
+        """Every edit here repaints the whole shell, which rebuilds this
+        page. A status line built fresh each time would be handed the
+        message *after* the one on screen had already been replaced, so
+        nothing would ever appear in it."""
+        _fire(_switch(self.tree, "Accent glow"), True)
+        self.assertIn("accent glow on", " ".join(texts(self.page.controls[0])))
 
     def test_and_neither_can_the_other_one(self):
         _fire(_switch(self.tree, "Bottom bar"), False)
@@ -552,6 +560,73 @@ class TheChromeIsThemedAndAnswersATap(ShellCase):
         for node in walk(page.drawer):
             if isinstance(node, ft.Container) and callable(getattr(node, "on_click", None)):
                 self.assertTrue(getattr(node, "ink", False))
+
+    def test_no_shipped_container_takes_a_tap_without_answering_it(self):
+        """Read off the source rather than off a built tree, because most
+        of these live in a tab that is only built when it is selected - a
+        walk of the default surfaces would miss them and pass."""
+        import ast
+
+        from .support import APP_DIR
+
+        offenders = []
+        for path in sorted((APP_DIR / "agedashii_moto").rglob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text())):
+                if not (isinstance(node, ast.Call)
+                        and getattr(getattr(node.func, "value", None), "id", None) == "ft"
+                        and getattr(node.func, "attr", None) == "Container"):
+                    continue
+                names = {k.arg for k in node.keywords if k.arg}
+                if "on_click" in names and "ink" not in names:
+                    rel = path.relative_to(APP_DIR)
+                    offenders.append(f"{rel}:{node.lineno}")
+        self.assertEqual(offenders, [], "tappable containers with no ripple")
+
+
+class NothingIsUnboundedInsideAWrap(ShellCase):
+    """A Wrap gives its children unbounded constraints.
+
+    A filled TextField in there paints grey over the whole screen, and a
+    Container with `expand=True` takes the width of infinity. It is not an
+    exception and not a warning - the page simply comes out wrong, and it
+    has made a page in this codebase unusable twice.
+    """
+
+    def test_no_surface_puts_an_expanding_control_inside_a_wrapping_row(self):
+        """Every tab, not only the one a surface opens on.
+
+        `_tabs()` builds the selected tab and leaves the rest to a
+        background pass a stub page never runs, so a sweep of the default
+        surfaces would walk one tab in four and pass on the strength of it.
+        """
+        from agedashii_washi.surface import _TAB_INDEX
+
+        module = load_main()
+        for key in module.PAGES + module.EXTRA_PAGES:
+            for tab in range(len(module.SUBPAGES.get(key, [])) or 1):
+                with self.subTest(surface=key, tab=tab):
+                    _TAB_INDEX[key] = tab
+                    _no_expand_inside_a_wrap(
+                        self, module.build_surface(StubPage(), key),
+                        f"{key} tab {tab}")
+
+    def test_it_would_notice_one(self):
+        """The sweep above passes trivially if it never finds a wrap at
+        all, so here is a tree that should fail it."""
+        bad = ft.Row(wrap=True, controls=[ft.Container(expand=True)])
+        with self.assertRaises(AssertionError):
+            _no_expand_inside_a_wrap(self, bad, "a deliberately bad tree")
+
+
+def _no_expand_inside_a_wrap(case, tree, where):
+    for row in walk(tree):
+        if not (isinstance(row, ft.Row) and getattr(row, "wrap", False)):
+            continue
+        for child in (row.controls or []):
+            for node in walk(child):
+                case.assertNotEqual(
+                    getattr(node, "expand", None), True,
+                    f"{where}: {type(node).__name__} expands inside a wrap")
 
 
 # ----------------------------------------------------------------- helpers

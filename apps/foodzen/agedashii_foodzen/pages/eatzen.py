@@ -21,7 +21,7 @@ import flet as ft
 
 from agedashii_washi import api as M
 from agedashii_washi import prefs
-from agedashii_washi.ui_compat import PAL, RAD, card, chip, sub, title
+from agedashii_washi.ui_compat import PAL, RAD, card, chip, sub
 from agedashii_washi.forms import Writer, offline_banner, rebuilder
 
 from .. import glyphs

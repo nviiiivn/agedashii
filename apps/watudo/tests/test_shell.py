@@ -63,16 +63,21 @@ class TheShellBuilds(WatudoCase):
         self.assertIn("Watudo", said)
         self.assertNotIn("Agedashii", said)
 
-    def test_the_bottom_bar_can_be_turned_off_and_the_drawer_still_reaches_both(self):
+    def test_the_bottom_bar_can_be_turned_off_and_the_drawer_takes_over(self):
+        """Nothing may leave her with no way off the page she is on. With
+        the bar off, the hamburger comes back whether or not it is switched
+        on, and the drawer lists every surface."""
         page = self.build()
         prefs.set_bottom_bar_enabled(False)
         self.rerender()
         root = self.shell(page)
         self.assertIsNone(first(root, ft.NavigationBar))
         self.assertEqual(len(page.controls), 1)
+        self.assertTrue(self.main.menu_visible(),
+                        "with no bar, the menu trigger is not optional")
         drawer_labels = texts(page.drawer)
-        self.assertIn("Wat2Do", drawer_labels)
-        self.assertIn("Future Finds", drawer_labels)
+        for key in self.main.PAGES:
+            self.assertIn(self.main.LABELS[key], drawer_labels)
 
 
 class EverySurfaceRenders(WatudoCase):
@@ -123,39 +128,91 @@ class EverySurfaceRenders(WatudoCase):
 
 
 class TheNavReachesEachOne(WatudoCase):
-    def bar(self, page):
-        return first(self.shell(page), ft.NavigationBar)
+    """Bottom-bar-first. Her words: "Each of these smaller apps (not tofu)
+    work better with the bottom navigation bar and less with the hamburger
+    menu". So the bar carries the app and the drawer is opt-in - and the
+    thing that must stay true either way is that every surface is reachable.
+    """
 
-    def test_the_bar_carries_both_surfaces_and_nothing_else(self):
+    def test_the_bar_carries_the_surfaces_that_are_used_daily(self):
         bar = self.bar(self.build())
         self.assertEqual([d.label for d in bar.destinations],
-                         ["Wat2Do", "Future Finds"])
+                         ["Wat2Do", "Future Finds", "Settings"])
 
-    def test_the_bar_moves_between_them(self):
-        page = self.build()
-        for index, expected in ((1, "future"), (0, "wat2do")):
-            bar = self.bar(page)
-            bar.selected_index = index
-            bar.on_change(Event(bar))
-            self.assertEqual(self.main.surface_of(), expected)
-            self.assertEqual(self.bar(page).selected_index, index)
+    def test_each_destination_has_a_mark_of_its_own_and_a_lit_one(self):
+        """Four grey glyphs that differ only in outline are not navigation."""
+        bar = self.bar(self.build())
+        icons = [d.icon for d in bar.destinations]
+        lit = [d.selected_icon for d in bar.destinations]
+        self.assertEqual(len(set(icons)), len(icons), icons)
+        self.assertEqual(len(set(lit)), len(lit), lit)
+        for a, b in zip(icons, lit):
+            self.assertNotEqual(a, b, "the lit mark must differ from the resting one")
 
-    def test_the_drawer_moves_between_them(self):
+    def test_the_bar_moves_between_every_surface_it_carries(self):
         page = self.build()
+        for key in ("future", "settings", "wat2do"):
+            self.nav_to(page, key)
+            self.assertEqual(self.bar(page).selected_index,
+                             self.main.BAR_PAGES.index(key))
+
+    def test_standing_on_help_lights_settings_because_that_is_where_it_lives(self):
+        page = self.build()
+        self.nav_to(page, "settings")
+        self.go_to_help(page)
+        self.assertEqual(self.main.surface_of(), "help")
+        self.assertEqual(self.bar(page).selected_index,
+                         self.main.BAR_PAGES.index("settings"))
+
+    def go_to_help(self, page):
+        """Tap the "How this works" row on the Settings surface."""
+        rows = [c for c in walk(self.body(page))
+                if isinstance(c, ft.Container) and c.on_click is not None
+                and any("Read the short version" in t for t in texts(c))]
+        self.assertEqual(len(rows), 1, "Settings must lead to the help surface")
+        rows[0].on_click(Event(rows[0]))
+
+    def test_every_surface_is_reachable_with_the_hamburger_hidden(self):
+        """The default. Three stops on the bar and the fourth under Settings,
+        so hiding the trigger costs nothing but the trigger."""
+        page = self.build()
+        self.assertFalse(self.wprefs.menu_button())
+        self.assertIsNone(page.drawer, "no drawer is built while none can be opened")
+        menu = [c for c in walk(self.topbar(page))
+                if isinstance(c, ft.IconButton) and c.icon == ft.Icons.MENU]
+        self.assertEqual(menu, [], "the slot goes away rather than sitting empty")
+        reached = []
+        for key in ("wat2do", "future", "settings"):
+            self.nav_to(page, key)
+            reached.append(key)
+        self.go_to_help(page)
+        reached.append("help")
+        self.assertEqual(sorted(reached), sorted(self.main.PAGES))
+
+    def test_the_drawer_moves_between_them_once_it_is_switched_on(self):
+        page = self.build()
+        self.show_menu()
+        self.assertIsNotNone(first(self.topbar(page), ft.IconButton))
         rows = [c for c in walk(page.drawer)
                 if isinstance(c, ft.Container) and c.on_click is not None]
-        self.assertGreaterEqual(len(rows), 2)
-        future_row = next(r for r in rows if "Future Finds" in texts(r))
-        future_row.on_click(Event(future_row))
-        # The drawer defers its navigation so the drawer can close first.
-        page.take_task("_drawer_go_async")
-        self.assertEqual(self.main.surface_of(), "future")
-        self.assertFalse(page.drawer_open)
+        self.assertGreaterEqual(len(rows), len(self.main.PAGES))
+        for key in ("future", "help", "wat2do"):
+            label = self.main.LABELS[key]
+            row = next(r for r in walk(page.drawer)
+                       if isinstance(r, ft.Container) and r.on_click is not None
+                       and label in texts(r))
+            row.on_click(Event(row))
+            # The drawer defers its navigation so the drawer can close first.
+            page.take_task("_drawer_go_async")
+            self.assertEqual(self.main.surface_of(), key)
+            self.assertFalse(page.drawer_open)
 
-    def test_the_drawer_also_offers_the_two_things_the_bar_cannot(self):
+    def test_the_drawer_offers_what_the_bar_cannot(self):
         """Otherwise the drawer is a second copy of the bottom bar."""
-        said = texts(self.build().drawer)
-        self.assertIn("Settings", said)
+        page = self.build()
+        self.show_menu()
+        said = texts(page.drawer)
+        self.assertIn("How this works", said)
         self.assertTrue(any(s.startswith("Theme - ") for s in said), said)
 
     def test_which_one_is_lit_is_read_back_not_remembered(self):
@@ -163,6 +220,7 @@ class TheNavReachesEachOne(WatudoCase):
         of "where am I" kept in the shell would be wrong from that moment
         until the next repaint, so the shell keeps none."""
         page = self.build()
+        self.show_menu()
         _TAB_INDEX["wat2do"] = 1          # as a swipe on the tab bar would
         self.assertEqual(self.main.surface_of(), "future")
         self.rerender()
@@ -172,18 +230,34 @@ class TheNavReachesEachOne(WatudoCase):
                        and "Future Finds" in texts(c)]
         self.assertTrue(highlighted, "the drawer must light the tab she is on")
 
+    def test_a_swipe_still_wins_after_a_visit_to_settings(self):
+        """Settings is remembered by the shell because it has no tab bar to
+        read back; the moment a tab page is shown again, the tab index is
+        the truth once more."""
+        page = self.build()
+        self.nav_to(page, "settings")
+        self.assertEqual(self.main.surface_of(), "settings")
+        self.nav_to(page, "wat2do")
+        _TAB_INDEX["wat2do"] = 1
+        self.assertEqual(self.main.surface_of(), "future")
+
     def test_navigation_does_no_work_of_its_own(self):
         """A slow synchronous handler holds the old frame and drops the next
         taps. Moving between surfaces must be a tab index and a repaint."""
         page = self.build()
         before = len(self.opener.calls)
-        bar = self.bar(page)
-        bar.selected_index = 1
-        bar.on_change(Event(bar))
+        self.nav_to(page, "future")
         # The page's own reads are already deferred behind page.run_task;
         # the shell must not add a blocking one on the way in.
         self.assertLessEqual(len(self.opener.calls) - before, 2,
                              "navigation should not go to the wire")
+
+    def test_reaching_settings_costs_nothing_on_the_wire(self):
+        page = self.build()
+        before = len(self.opener.calls)
+        self.nav_to(page, "settings")
+        self.assertEqual(len(self.opener.calls), before,
+                         "Settings is entirely local and must not probe")
 
 
 class TheThemeApplies(WatudoCase):
@@ -324,58 +398,56 @@ class TheChromeIsHonest(WatudoCase):
         self.assertIn(ft.Icons.DASHBOARD_CUSTOMIZE, icons)
 
 
-class SettingsIsSmallButReal(WatudoCase):
-    """Watudo has its own preferences store, so it cannot inherit an address
-    set in the dashboard. Without this dialog it could only ever talk to the
-    two addresses compiled into `config.DEFAULT_CANDIDATES`."""
+class SettingsIsOneOfTheSurfaces(WatudoCase):
+    """The shell's half of Settings: that it is a destination like any other
+    rather than something the topbar opens over the page.
 
-    def open(self, page):
-        buttons = [c for c in walk(self.shell(page))
-                   if isinstance(c, ft.IconButton) and c.icon == ft.Icons.SETTINGS]
-        self.assertEqual(len(buttons), 1)
-        buttons[0].on_click(Event(buttons[0]))
-        return page.dialogs[-1]
+    What each control on it actually does is `test_settings.py`.
+    """
 
-    def test_it_shows_the_address_and_why_it_is_not_answering(self):
-        dlg = self.open(self.build())
-        said = " ".join(texts(dlg))
+    def test_there_is_no_gear_in_the_topbar_any_more(self):
+        """A third way to the same screen is what made the old drawer a copy
+        of the old bar. Settings is on the bar; that is the way there."""
+        page = self.build()
+        gears = [c for c in walk(self.topbar(page))
+                 if isinstance(c, ft.IconButton) and c.icon == ft.Icons.SETTINGS]
+        self.assertEqual(gears, [])
+
+    def test_it_opens_as_the_page_body_not_as_a_dialog(self):
+        page = self.build()
+        self.nav_to(page, "settings")
+        self.assertEqual(page.dialogs, [], "Settings is a surface, not a dialog")
+        said = " ".join(texts(self.body(page)))
+        for heading in ("Server", "Navigation", "Theme", "Appearance",
+                        "Your day", "Pain & spoons", "Diagnostics"):
+            self.assertIn(heading, said)
+
+    def test_it_still_says_the_address_and_why_it_is_not_answering(self):
+        page = self.build()
+        self.nav_to(page, "settings")
+        said = " ".join(texts(self.body(page)))
         self.assertIn(self.config.SERVER_URL, said)
         self.assertIn("unreachable", said,
                       "a failure must say which failure it was")
 
-    def test_a_new_address_is_probed_and_written_down(self):
-        import asyncio
+    def test_the_topbar_keeps_the_theme_button_because_it_is_not_navigation(self):
+        """It changes the app you are looking at without leaving the page
+        you are on, which no destination can do."""
         page = self.build()
-        dlg = self.open(page)
-        field = first(dlg.content, ft.TextField)
-        field.value = "10.0.0.9:6900"
-        asyncio.run(field.on_submit(Event(field)))
-        self.assertEqual(self.config.SERVER_URL, "http://10.0.0.9:6900")
-        self.assertEqual(self.stub_prefs.data[self.config.KEY_URL],
-                         "http://10.0.0.9:6900")
-        self.assertIn("http://10.0.0.9:6900/api/config", self.opener.calls)
+        palettes = [c for c in walk(self.topbar(page))
+                    if isinstance(c, ft.IconButton) and c.icon == ft.Icons.PALETTE]
+        self.assertEqual(len(palettes), 1)
 
-    def test_the_knobs_take_effect_on_the_page_behind_the_dialog(self):
+    def test_a_surface_that_raises_names_the_surface_that_raised(self):
+        from unittest import mock
+        from agedashii_watudo.pages import settings as settings_page
         page = self.build()
-        dlg = self.open(page)
-        crt = [s for s in walk(dlg) if isinstance(s, ft.Switch)][-1]
-        crt.value = True
-        crt.on_change(Event(crt))
-        self.assertTrue(prefs.crt_overlay())
-        self.assertIsInstance(self.shell(page), ft.Stack)
-
-    def test_the_bottom_bar_is_optional_from_inside_the_app(self):
-        """The page carries its own Present | Future tab bar, so on a phone
-        the bottom bar is a second row of the same two choices. Having the
-        switch here is what makes "optional" true rather than a word."""
-        page = self.build()
-        dlg = self.open(page)
-        bar_switch = [s for s in walk(dlg) if isinstance(s, ft.Switch)][0]
-        self.assertTrue(bar_switch.value)
-        bar_switch.value = False
-        bar_switch.on_change(Event(bar_switch))
-        self.assertFalse(prefs.bottom_bar_enabled())
-        self.assertIsNone(first(self.shell(page), ft.NavigationBar))
+        with mock.patch.object(settings_page, "build",
+                               side_effect=RuntimeError("kaboom")):
+            self.nav_to(page, "settings")
+        said = " ".join(texts(self.body(page)))
+        self.assertIn("Settings could not be built", said)
+        self.assertIn("kaboom", said)
 
 
 class TheScreenTreatment(WatudoCase):

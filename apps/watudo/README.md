@@ -2,7 +2,7 @@
 
 What to do today, and where to go someday. Two surfaces from the Agedashii
 dashboard — Wat2Do and Future Finds — built and shipped as an app of their
-own.
+own, with its own Settings, its own help and its own navigation.
 
 They are one app because they are one question. Wat2Do plans the day; Future
 Finds is the list of places worth a ride someday, and Wat2Do is what imports
@@ -18,7 +18,7 @@ simulator build, and a web bundle.
 
 **Wat2Do** — the day, with date navigation. The checklist with sub-tasks,
 pain and spoons sliders, the template editor, the mission generator, the
-weather strip, and a map that will route from home to a spot. It is the
+weather strip, and a map that will route from the origin to a spot. It is the
 phone's half of the website's Wat2Do and speaks the same four endpoints, so
 the browser and the app show the same day rather than two opinions about it.
 The cards can be reordered, resized and hidden — the Customize button in the
@@ -29,10 +29,49 @@ miles), 17 categories over a server-side table of ~31k California gems, a
 someday list, Wikimedia photos with credits, and the cached street view frame
 where there is one.
 
-The topbar carries the Watudo pill, the outbox chip, Customize, the theme
-picker and Settings. The drawer and the bottom bar both reach the two
-surfaces; the drawer additionally carries the theme picker and Settings,
-which is what stops it from being a second copy of the bar.
+**Settings** — a surface, not a dialog. Server address and Check; all 24
+themes; corner radius, accent glow, CRT overlay and its intensity; the bottom
+bar and the hamburger trigger; and the settings that only mean something
+here — how a day is labelled, whether finished tasks stay on screen, whether
+pain and spoons are tracked and whether they steer the day, what the template
+editor writes for a sub-task, how many subjects a mission rolls, and where
+distances are measured from. Every control carries the sentence that says
+what it does.
+
+**How this works** — the wiki, inside the app. What each surface does, how
+pain and spoons work, what the template editor and the mission generator are
+for, what queues offline and what needs the server. Plain sentences, no
+marketing, and it reads the same in a tunnel because it is static text.
+
+## Getting around
+
+The bar along the bottom is the navigation: **Wat2Do · Future Finds ·
+Settings**. Her words: *"Each of these smaller apps (not tofu) work better
+with the bottom navigation bar and less with the hamburger menu."*
+
+* **The hamburger is off by default** and is switched on in Settings >
+  Navigation. Hidden, its slot in the topbar is *gone* rather than blank —
+  an empty IconButton still takes its 48px, and a gap where a control used to
+  be reads as a control that failed to draw.
+* **How this works is not on the bar.** It is one screen you read once, and
+  it lives under Settings the way a manual lives in a drawer. A fourth stop
+  would push the three used daily closer together.
+* **One rail:** something must reach every surface. Switch the bottom bar
+  off and the hamburger comes back whether or not it is switched on, and the
+  switch in Settings says so rather than letting the app quietly disagree
+  with it. Her own setting is overridden, not rewritten, so the bar coming
+  back restores the choice she made.
+* Present and Future are also the page's own two tabs. That is three handles
+  on one control, not three copies: one `future._S`, one scan, one someday
+  list, and which one is lit is read back out of the page's tab index rather
+  than stored a second time. Settings and How this works have no tab bar, so
+  the shell remembers those two — and forgets them the moment a tab page is
+  shown again.
+
+The topbar carries the Watudo pill, the outbox chip, Customize on a surface
+that has cards to arrange, and the theme button. There is no gear: Settings
+is on the bar, and a third route to the same screen is what made the old
+drawer a copy of the old bar.
 
 ## Offline, and what that actually means
 
@@ -45,17 +84,25 @@ internet access."*
 | | Where it lives |
 |---|---|
 | All 24 themes, and the one you picked last | `agedashii_qi`, plus one SharedPreferences key |
-| Corner radius, accent glow, CRT overlay and its intensity | SharedPreferences |
+| Corner radius, accent glow, CRT overlay and its intensity | SharedPreferences (`agedashii_washi.prefs`) |
 | Card order, width, height and which are hidden | SharedPreferences |
-| Bottom bar on/off | SharedPreferences |
+| Bottom bar on/off, hamburger on/off | SharedPreferences |
+| The day, pain/spoons, template and mission settings | SharedPreferences (`agedashii_watudo.prefs`) |
+| Where distances are measured from | SharedPreferences |
 | The server address | SharedPreferences |
 | Whatever the device has already fetched | the local SQLite store |
 | Any change you make | the outbox, until it can be sent |
 
-None of the above touches the network. There is a test that asserts it
-(`test_offline.py::TheLocalHalfNeverAsksTheNetwork`): a full launch plus a
-repaint with every appearance knob changed makes requests for the day's
-record and nothing else.
+None of the above touches the network. Settings and How this works are
+entirely local — there are tests that assert building either one makes no
+request at all, and that a full launch plus a repaint with every appearance
+knob changed asks the wire for the day's record and nothing else.
+
+Two preference stores, on purpose. Appearance and the bottom bar are
+`agedashii_washi.prefs`, shared with the dashboard and the sibling apps so
+they mean the same thing everywhere. The rest is `agedashii_watudo.prefs`,
+because washi has no key for them and adding one there would make every other
+Agedashii app carry a setting about a checklist it does not have.
 
 ### Needs the server
 
@@ -85,12 +132,12 @@ be false on both counts here.
 
 ## Pointing it at a server
 
-**Settings** (the gear in the topbar, or the drawer) — address, a Check
-button, and the reason it is not answering if it is not: "unreachable",
-"blocked by auth — redirects to … (use the VPN)", "blocked by Cloudflare at
-the edge". Those are different problems and it says which. The same dialog
-carries the bottom bar switch, accent glow, the CRT overlay and corner
-radius; the theme has its own picker on the palette button.
+**Settings > Server** — address, a Check button, and the reason it is not
+answering if it is not: "unreachable", "blocked by auth — redirects to …
+(use the VPN)", "blocked by Cloudflare at the edge". Those are different
+problems and it says which. The probe runs on a worker thread, because
+`config.set_url` opens a socket with a 3 second timeout and three seconds
+inside a synchronous Flet handler is three seconds of dropped taps.
 
 Watudo has its own bundle id, so on a device it gets its own
 SharedPreferences store and its own app-private data directory. It does
@@ -100,6 +147,27 @@ its own. First launch falls back to the shipped candidates in
 
 Off-LAN needs the VPN. `iamprettyfamous.online` will not work as the app's
 address: VoidAuth forward-auth 302s every path, `/api/config` included.
+
+## Where distances come from
+
+**This app has no location permission and asks the device nothing.**
+
+It used to declare `ACCESS_FINE_LOCATION` and `ACCESS_COARSE_LOCATION` ahead
+of a feature that never arrived: every distance was measured from a fixed
+origin (`_wat2do_parts.HOME`, Vulcan Lofts) and `future.scan()` took a
+`centre` that nothing passed. A permission declared for a feature that does
+not exist is what teaches an owner to stop reading permission lists, so it
+has been removed — plugin, manifest entries, iOS usage strings and all.
+
+What replaced it is a setting, not a sensor. **Settings > Measure distances
+from** takes a latitude and longitude and moves the map's home marker, the
+Overpass query, the mission radius, the thrift list and every distance column
+together — and it is what `scan()`'s `centre` parameter now carries. It
+starts at home, it works offline, it prompts for nothing, and it is honest
+about what the app knows: what she told it.
+
+If Watudo ever does ask for a fix, the permission comes back in the same
+commit as the code that requests it. Not before.
 
 ## Running it from source
 
@@ -150,24 +218,18 @@ file:
   at this checkout. They are not on PyPI, so without it a build stops at
   *No matching distribution found for agedashii-washi*.
 
-### Permissions
+## What the chrome is made of
 
-`ACCESS_FINE_LOCATION` and `ACCESS_COARSE_LOCATION`, foreground only. GPS and
-network-location hardware are declared **not required**, so a device without
-a fix can still install and falls back to coarse location.
-
-`ACCESS_BACKGROUND_LOCATION` and `FOREGROUND_SERVICE_LOCATION` are
-deliberately absent. Watudo records no tracks — the dashboard declares them
-because XNAV writes a ride while the screen is off, and this app has no
-equivalent. Asking anyway would mean an all-the-time prompt, a Play listing
-that needs a written justification, and a permission nothing would use.
-
-Honest caveat: **no code in this app asks the device where it is today.**
-Every distance is measured from a fixed origin (`_wat2do_parts.HOME`, Vulcan
-Lofts) and `future.scan()` takes a `centre` that nothing currently passes.
-The permission is declared ahead of the feature, which costs a line in the
-app's permission listing and nothing at runtime — Android only prompts when a
-permission is requested.
+* Themed Material icons throughout, tinted from `PAL()`, so every glyph
+  follows all 24 themes. No emoji in the chrome: emoji only where the thing
+  *is* the thing, and all of this is furniture.
+* Each nav destination has two marks — an outline at rest and a filled one
+  where you are — so a stop is recognisable at a glance rather than being one
+  of four grey glyphs.
+* Everything tappable ripples in the accent colour and eases its state
+  changes over 150 ms (`agedashii_watudo/ui.py`). A handler that has to reach
+  storage cannot repaint instantly, and an unacknowledged tap is the one that
+  gets tapped twice.
 
 ## Tests
 
@@ -175,16 +237,17 @@ permission is requested.
 /home/nvii/venvs/flet/bin/python -m unittest discover -s apps/watudo/tests -t .
 ```
 
-62 tests, about two seconds, no socket and no display. `config._opener` is
+110 tests, about four seconds, no socket and no display. `config._opener` is
 replaced with one that refuses every request, so "offline" is a boolean
 rather than a firewall rule, and the store is a tempfile thrown away with
 each test.
 
 | File | What it pins |
 |---|---|
-| `test_shell.py` | the shell builds headlessly; both surfaces render cold and offline; the drawer and the bottom bar each reach both; which one is lit is read back out of the page's own tab index rather than kept twice; the theme reaches the palette, Material's own mode and the next repaint, and survives a relaunch; the outbox chip says what is queued and nothing when nothing is; SafeArea wraps the chrome and the CRT overlay goes over the top of it with every layer still ignoring taps |
+| `test_shell.py` | the shell builds headlessly; every surface renders cold and offline; the bottom bar reaches the three daily surfaces and lights Settings while Help is open; every surface is reachable with the hamburger hidden; the drawer, once switched on, reaches all four and carries what the bar cannot; which tab is lit is read back out of the page's own tab index rather than kept twice; the theme reaches the palette, Material's own mode and the next repaint, and survives a relaunch; the outbox chip says what is queued and nothing when nothing is; SafeArea wraps the chrome and the CRT overlay goes over the top of it with every layer still ignoring taps |
+| `test_settings.py` | Settings renders as a surface; every control changes the thing it claims — theme, radius, glow, CRT and its intensity, bottom bar, hamburger, friendly dates, hide-finished, pain/spoons tracking and steering, the sub-task marker, mission size, the origin, the server address; turning the bar off forces the menu back without rewriting her setting; nothing inside a `Row(wrap=True)` expands; every setting survives a restart and a corrupt value costs the setting and not the app; the help surface says what queues and what needs the server |
 | `test_offline.py` | nothing local goes to the wire; a tick with no signal is queued, is visible to the very next read, and 40 ticks coalesce to 1 |
-| `test_isolation.py` | no file under `apps/watudo/` imports `agedashii_tofu`, `agedashii_moto` or `agedashii_foodzen`, statically or at runtime; the build manifest declares what it needs and not what it does not |
+| `test_isolation.py` | no file under `apps/watudo/` imports `agedashii_tofu`, `agedashii_moto` or `agedashii_foodzen`, statically or at runtime; the build manifest declares what it needs and **no permission at all**, and the README and the help surface agree with it |
 
 ## What it is built on
 
@@ -203,19 +266,17 @@ the only Flet plugin.
 * The theme is remembered under a key this app writes itself
   (`agedashii.theme`). `agedashii_washi.prefs` does not own a theme key —
   in the dashboard the picker is per-session and resets every launch.
-* Settings here is a dialog, not a page: server address, bottom bar, accent
-  glow, CRT overlay, corner radius, plus the theme picker on its own button.
-  Everything else in the dashboard's Settings (page order, units, sodium
-  target, refresh interval) either does not apply to these two surfaces or
-  is not exposed yet.
-* CRT intensity is stored and honoured but has no control in this app; the
-  overlay is on or off here, at whatever intensity was last set.
-* Future Finds is reachable from the bottom bar, the drawer and the page's
-  own tab bar. They are three handles on one control, not three copies —
-  one `future._S`, one scan, one someday list, and which one is lit is read
-  back out of the page's tab index rather than kept a second time. The cost
-  is that on a phone the bottom bar and the tab bar show the same two
-  choices one above the other, which is why the bottom bar has a switch.
+* Settings does not carry the dashboard's page order, units, sodium target or
+  refresh interval. The first two do not apply to these surfaces; the last
+  two are washi settings this app never shows, so they stay at their
+  defaults here.
+* The origin is typed, not sensed — see *Where distances come from* above.
+  There is no "find me" button, because there is nothing behind it.
+* Changing an appearance or navigation setting repaints the whole shell,
+  which scrolls Settings back to the top. That is the cost of seeing the
+  corner radius change everywhere at once; the settings that only affect
+  Wat2Do do not repaint, because the surface they change is not the one on
+  screen.
 * Every render builds both tabs, because `wat2do.build()` hands `_tabs` two
   already-constructed bodies rather than callables. That is the page's own
   shape and this shell does not change it; it does catch a failure in

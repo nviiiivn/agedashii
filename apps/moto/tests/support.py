@@ -272,7 +272,13 @@ class ShellCase(unittest.TestCase):
 
 def reset_page_state():
     """Put every page module's between-rebuild state back to empty."""
-    from agedashii_moto.pages import garage, trips, xnav
+    from agedashii_moto.pages import garage, settings, trips, xnav
+
+    # Settings' status line outlives a rebuild on purpose (see the comment
+    # on `_STATUS` there), which means it also outlives a test. A leftover
+    # "theme saved" would let the next test's assertion pass for the wrong
+    # reason.
+    settings._STATUS.value = ""
 
     trips._S.update({"builder": [], "leg_routes": {}, "combined": None,
                      "detail": set(), "editor": None, "ride": None, "note": ""})

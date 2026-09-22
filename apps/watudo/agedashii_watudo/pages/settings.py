@@ -180,7 +180,6 @@ def theme_card(page, saver, on_change=None):
     and the theme is back to the default every launch - a small annoyance
     there and a larger one in an app you open to tick three boxes.
     """
-    p = PAL()
     repaint = _repainter(on_change)
 
     def swatch(key):

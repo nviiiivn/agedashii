@@ -691,8 +691,14 @@ def _navigator(page, p, the_map, route_layer, nav_markers, poi_layer):
                                              ft.Icon(ft.Icons.TRENDING_UP, size=16,
                                                      color=p["text2"]),
                                              elev_badge,
-                                             ft.Text("next 100 ft", size=9,
-                                                     color=p["text2"])]),
+                                             # The window is 100 ft of road
+                                             # (elevation_delta_ft), so the
+                                             # label converts the distance
+                                             # rather than restating "ft"
+                                             # beside a badge reading metres.
+                                             ft.Text(f"next "
+                                                     f"{U.near_text(100 / 5280)}",
+                                                     size=9, color=p["text2"])]),
                            ]), pad=12)
 
     def poi_card():
@@ -710,6 +716,11 @@ def _navigator(page, p, the_map, route_layer, nav_markers, poi_layer):
                 bgcolor=ft.Colors.with_opacity(0.16 if on else 0.05, colour),
                 border=BRD(ft.Colors.with_opacity(0.45 if on else 0.22, colour), 1),
                 on_click=lambda e, c=cat["id"]: _run(page, toggle_poi, c),
+                # A POI toggle fires an Overpass query, which is the slowest
+                # thing on this screen and the one most in need of saying
+                # "yes, I felt that" before the answer arrives.
+                ink=True, ink_color=ft.Colors.with_opacity(0.18, p["accent"]),
+                animate=ft.Animation(120, ft.AnimationCurve.EASE_OUT),
                 content=ft.Row(spacing=4, tight=True, controls=[
                     ft.Icon(cat["icon"], size=13, color=colour),
                     ft.Text(cat["label"], size=10, color=colour)])))

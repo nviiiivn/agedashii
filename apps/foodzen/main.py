@@ -61,9 +61,10 @@ FOODZEN, EATZEN, BPM, SETTINGS, GUIDE = ("foodzen", "eatzen", "bpm",
 PAGES = [FOODZEN, EATZEN, BPM, SETTINGS]
 
 # Everything render() will accept. The guide is reachable from Settings and
-# from nowhere else - it is read once and then rarely, and the fourth slot on
-# a phone's bottom bar has better uses. It is still a real surface rather than
-# a dialog, because a manual in a 380px-tall modal is not a manual.
+# from nowhere else - it is read once and then rarely, and a bar that has to
+# stay legible on a 400px phone should not spend a slot on it. It is still a
+# real surface rather than a dialog, because a manual in a 380px-tall modal
+# is not a manual.
 SURFACES = PAGES + [GUIDE]
 
 # Which navigation entry lights up for a surface that is not itself one.

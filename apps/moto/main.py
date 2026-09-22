@@ -670,7 +670,11 @@ async def main(page):
         paint_sync()
         body.content = build_surface(page, key)
         body.bgcolor = p["bg"]
-        page.drawer = nav_drawer()
+        # Not built at all when there is no trigger for it. The drawer is
+        # eight-odd containers per render and nothing can open it with the
+        # hamburger hidden, so building it anyway would be paying for a
+        # control she has switched off.
+        page.drawer = nav_drawer() if motoprefs.hamburger_shown() else None
         page.controls.clear()
         chrome = [ft.Container(padding=PAD(8, 12), bgcolor=p["bg"],
                                content=topbar()),

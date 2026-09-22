@@ -218,7 +218,7 @@ class TheNavReachesEachOne(ShellCase):
                 self.tap(page, self._drawer_row(page, module.LABELS[key]))
                 self.assertEqual(_current_label(page), module.LABELS[key])
 
-    def test_the_bottom_bar_offers_all_three_and_switching_works(self):
+    def test_the_bottom_bar_offers_every_surface_and_switching_works(self):
         prefs._V[prefs.KEY_BOTTOM_ENABLED] = True
         page = self.build_shell()
         module = load_main()

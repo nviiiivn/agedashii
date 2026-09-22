@@ -343,6 +343,25 @@ class TheReadmeExists(unittest.TestCase):
     def test_it_points_at_the_tests_that_prove_the_shell(self):
         self.assertIn("apps/moto/tests", self.text)
 
+    def test_it_documents_the_settings_this_app_now_carries(self):
+        """It used to say "Moto has no Settings page", which was true and is
+        not any more. A README that is wrong about the main thing that
+        changed is worse than no README."""
+        self.assertNotIn("Moto has no Settings page", self.text)
+        low = self.text.lower()
+        for word in ("settings", "hamburger", "bottom bar", "units", "theme"):
+            self.assertIn(word, low)
+
+    def test_it_does_not_claim_a_bug_that_has_since_been_fixed(self):
+        """`forms.rebuilder` had a relative import past the top of its own
+        package and raised the moment it was called. It does not now, and a
+        known-issues section naming a fixed bug sends a reader hunting."""
+        from agedashii_washi import forms
+
+        source = Path(forms.__file__).read_text()
+        self.assertNotIn("from .. import api", source)
+        self.assertNotIn("from .. import api as M", self.text)
+
 
 if __name__ == "__main__":
     unittest.main()

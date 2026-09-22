@@ -237,8 +237,19 @@ class WatudoCase(unittest.TestCase):
         self.addCleanup(store.close)
 
         # 3. Preferences, the theme and the panel editor all start shipped.
+        #    Both stores: washi's, and this app's own.
+        from agedashii_watudo import prefs as wprefs
+        from agedashii_watudo.pages import settings as settings_page
+        self.wprefs = wprefs
         prefs.reset_all()
         self.addCleanup(prefs.reset_all)
+        wprefs.reset_all()
+        self.addCleanup(wprefs.reset_all)
+        # Settings keeps its last status line at module level so a message
+        # survives the repaint the setting itself caused; one test's "saved"
+        # must not be another test's starting condition.
+        settings_page._STATUS.update({"msg": "", "bad": False})
+        self.addCleanup(settings_page._STATUS.update, {"msg": "", "bad": False})
         panels.set_editing(False)
         self.addCleanup(panels.set_editing, False)
         _TAB_INDEX.pop("wat2do", None)
@@ -271,6 +282,44 @@ class WatudoCase(unittest.TestCase):
         self.assertEqual(len(page.controls), 1,
                          "the shell adds exactly one root control")
         return page.controls[0]
+
+    def chrome(self, page):
+        """The topbar/body/bar column, from under whatever is over it.
+
+        With the CRT overlay on the root is a Stack with the SafeArea
+        underneath, so a test that reaches for `.content` straight off the
+        root works until someone turns the overlay on.
+        """
+        import flet as ft
+        root = self.shell(page)
+        if isinstance(root, ft.Stack):
+            root = root.controls[0]
+        return root.content
+
+    def topbar(self, page):
+        return self.chrome(page).controls[0]
+
+    def body(self, page):
+        """The surface currently on screen, without the chrome around it."""
+        return self.chrome(page).controls[1]
+
+    def bar(self, page):
+        import flet as ft
+        return first(self.shell(page), ft.NavigationBar)
+
+    def nav_to(self, page, key):
+        """Go somewhere the way she would: tap the bottom bar."""
+        bar = self.bar(page)
+        self.assertIsNotNone(bar, "no bottom bar to navigate with")
+        bar.selected_index = self.main.BAR_PAGES.index(key)
+        bar.on_change(Event(bar))
+        self.assertEqual(self.main.surface_of(), key)
+
+    def show_menu(self):
+        """Turn the hamburger on, as Settings > Navigation does."""
+        from agedashii_watudo import prefs as wprefs
+        wprefs.set_menu_button(True)
+        self.rerender()
 
     def rerender(self):
         """The whole-app repaint the shell parks on S, as a write would."""

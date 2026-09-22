@@ -168,6 +168,14 @@ class NoExpandInsideAWrappingRow(unittest.TestCase):
             if not base.exists():
                 continue
             for f in _py_files(base):
+                # Test files are exempt, and deliberately so. A good guard
+                # against this bug CONSTRUCTS one on purpose to prove it is
+                # not passing vacuously - Moto's suite has exactly that:
+                # "the sweep above passes trivially if it never finds a
+                # wrap at all, so here is a tree that should fail it".
+                # Flagging that is flagging the test for being a good test.
+                if "tests" in f.parts:
+                    continue
                 try:
                     tree = ast.parse(f.read_text())
                 except SyntaxError:
