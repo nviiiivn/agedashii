@@ -348,7 +348,7 @@ def layout(surface, builders, empty_hint=None):
                 content=content))
 
     if not cells:
-        from .ui import sub
+        from .widgets import sub
         label = SURFACE_LABELS.get(surface, surface)
         return ft.Column(spacing=10, expand=True, controls=[
             sub(empty_hint or f"Every panel is hidden. Settings > Layout > {label}.",
@@ -452,7 +452,7 @@ def _apply():
     well as on Done, so an app killed mid-arrange has still kept the work.
     """
     from . import prefs
-    from .ui import S
+    from agedashii_qi import S
 
     rerender = getattr(S, "rerender", None)
     if callable(rerender):
@@ -515,7 +515,8 @@ def _editable(surface, key, label, width, height, content):
     import flet as ft
 
     from . import prefs
-    from .ui import PAL, PAD, RAD, BRD
+    from agedashii_qi import PAL, RAD
+    from .widgets import PAD, BRD
 
     p = PAL()
 

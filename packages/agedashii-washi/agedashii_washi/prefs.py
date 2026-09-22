@@ -144,7 +144,7 @@ SODIUM_TARGETS = (1500, 2300)
 # alone. Imported lazily in `_radius_choices()` so this module stays free of
 # a hard dependency on the drawing layer.
 def _radius_choices():
-    from . import ui as _ui
+    from agedashii_qi import appearance as _ui
     return _ui.RADIUS_CHOICES, _ui.DEFAULT_RADIUS
 
 # Seconds of cached-response reuse. 30 is what api.TTL ships with; 0 means
@@ -981,7 +981,7 @@ def apply_runtime():
     except Exception:  # noqa: BLE001 - a settings knob is never worth a crash
         pass
     try:
-        from . import ui
+        from agedashii_qi import appearance as ui
         ui.S.radius = corner_radius()
         ui.S.glow = accent_glow()
         ui.S.crt = crt_overlay()

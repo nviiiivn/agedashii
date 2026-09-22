@@ -12,7 +12,8 @@ server is worse than a visible failure - it looks like it worked.
 """
 import flet as ft
 
-from ..ui import PAL, PAD, FOCUS_WIDTH
+from agedashii_qi import PAL, FOCUS_WIDTH
+from .widgets import PAD
 
 
 class Writer:
@@ -88,7 +89,7 @@ class Writer:
 def rebuilder(page, build_fn):
     """Re-read from the server and repaint the whole page."""
     from .. import api as M
-    from ..ui import S
+    from agedashii_qi import S
 
     def rebuild():
         M.refresh()
@@ -114,7 +115,7 @@ def offline_banner(p, what="this page", sample=True):
     data is on screen is itself a small untruth when the list below the
     banner is honestly empty, and this app cannot afford those.
     """
-    from ..ui import card
+    from .widgets import card
     lead = ("Showing sample data - not connected to the server."
             if sample else "Not connected to the server.")
     return card(ft.Row(spacing=8, controls=[
