@@ -1,4 +1,4 @@
-"""Tests for flet_app/routing.py — offline routing and its server fallback.
+"""Tests for agedashii_tofu/routing.py — offline routing and its server fallback.
 
 Three things these guard, none of which shows up until the phone is already
 somewhere with no signal:
@@ -36,7 +36,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flet_app import routing as R  # noqa: E402
+from agedashii_tofu import routing as R  # noqa: E402
 
 
 def _encode6(points):

@@ -26,8 +26,8 @@ import urllib.error
 import urllib.parse
 from pathlib import Path
 
-from flet_app import api, config
-from flet_app.store import Store
+from agedashii_tofu import api, config
+from agedashii_tofu.store import Store
 
 
 class Response:
@@ -645,7 +645,7 @@ class TestPagesStillBuild(ApiOfflineCase):
             def close(self, *a, **k):
                 pass
 
-        from flet_app.pages import extras, garage, tools
+        from agedashii_tofu.pages import extras, garage, tools
         self.go_offline()
         for module in (tools, garage, extras):
             with self.subTest(page=module.__name__):

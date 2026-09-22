@@ -18,7 +18,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flet_app.pages import _wat2do_parts as W  # noqa: E402
+from agedashii_tofu.pages import _wat2do_parts as W  # noqa: E402
 
 
 class EmptyScanIsNotAnEmptyNeighbourhood(unittest.TestCase):
@@ -139,7 +139,7 @@ class CheckKeysMatchTheWebsite(unittest.TestCase):
 
 class DatesAreLocal(unittest.TestCase):
     def test_today_matches_the_api_helper(self):
-        from flet_app import api
+        from agedashii_tofu import api
         self.assertEqual(W.today_str(), api.local_today())
 
     def test_shifting_a_day_crosses_a_month_boundary_correctly(self):

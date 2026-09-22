@@ -19,10 +19,11 @@
 #   tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux]
 # Defaults to apk if no target is given.
 #
-# IPA is deliberately NOT a target here. Building one needs macOS - Xcode,
-# and the iOS SDK - and Tower is Linux. There is no Mac on this network.
-# See the note at the bottom of this file for the two honest routes onto an
-# iPhone.
+# IPA is deliberately NOT a target here. Building one needs macOS, because
+# `flutter build ipa` shells out to xcodebuild. That is being solved
+# separately with a macOS guest under KVM on this same machine - see the
+# note at the bottom of this file - but it is a different pipeline with a
+# different prerequisite, so it does not belong in this script.
 set -uo pipefail
 
 APP="${1:-}"
@@ -71,10 +72,10 @@ cp -r "$SRC/packages/agedashii-washi/agedashii_washi" "$STAGE/"
 
 if [ "$APP" = tofu ]; then
   # Tofu is the repo root itself: its entry point is main.py and its pages
-  # live in flet_app/, which also carries the aliases that let it keep
+  # live in agedashii_tofu/, which also carries the aliases that let it keep
   # showing the three split apps' surfaces until they are confirmed.
   cp "$SRC/main.py" "$STAGE/"
-  cp -r "$SRC/flet_app" "$STAGE/"
+  cp -r "$SRC/agedashii_tofu" "$STAGE/"
   cp -r "$SRC/apps/moto/agedashii_moto"       "$STAGE/"
   cp -r "$SRC/apps/watudo/agedashii_watudo"   "$STAGE/"
   cp -r "$SRC/apps/foodzen/agedashii_foodzen" "$STAGE/"
@@ -150,15 +151,22 @@ echo "=== $APP done ($(date -Is)) rc=$rc_all"
 ls -la "$OUT"
 exit $rc_all
 
-# Getting onto an iPhone, honestly
-# ---------------------------------
-# `flet build ipa` needs macOS. There is no Mac here and GitHub's macOS
-# runners bill at a 10x multiplier against an allowance that is currently
-# exhausted. The two routes that actually work today:
-#   1. The PWA at https://agedashii.alola.lol - Safari, Share, "Add to Home
-#      Screen". No account, no signing, no cost.
-#   2. An unsigned .ipa sideloaded with AltStore or Sideloadly, which
-#      re-sign it with a free Apple ID. That still requires a Mac (or a
-#      macOS runner) to produce the .ipa in the first place.
-# A real App Store install needs a paid Apple Developer account. Nothing in
-# this script pretends otherwise.
+# Getting onto an iPhone
+# ----------------------
+# `flet build ipa` needs macOS, and macOS runs here: a Sonoma guest under
+# KVM on this machine, via sickcodes/docker-osx. That is proven working -
+# KVM passes into the container, the image carries its own QEMU 10.1.2, and
+# Apple's installer catalogue downloads without an account.
+#
+# The one thing that is NOT free to fetch is Xcode itself: every route to it
+# (the developer site, the App Store, the `xcodes` tool) redirects to
+# idmsa.apple.com to sign in. A FREE Apple Developer account is enough - the
+# $99 programme is not needed - but somebody has to sign in once and put the
+# .xip on this machine. After that the iOS build runs unattended.
+#
+# The build must be unsigned (`--no-codesign`), which is what AltStore and
+# Sideloadly want: they re-sign with a free Apple ID on the way in. Only a
+# real App Store install needs the paid programme.
+#
+# Until then, the PWA at https://agedashii.alola.lol is the no-account route
+# onto an iPhone: Safari, Share, Add to Home Screen.

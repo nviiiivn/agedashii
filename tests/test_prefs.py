@@ -1,4 +1,4 @@
-"""Tests for flet_app/prefs.py — the owner-editable layout and settings.
+"""Tests for agedashii_tofu/prefs.py — the owner-editable layout and settings.
 
 Two things these guard, both of which would be invisible until the app is
 already broken on a phone:
@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flet_app import prefs  # noqa: E402
+from agedashii_tofu import prefs  # noqa: E402
 
 
 class FakePrefs:
@@ -429,7 +429,7 @@ class TestPersistence(PrefsTestCase):
 class TestRuntimeApplication(PrefsTestCase):
     def test_refresh_interval_reaches_the_api_cache(self):
         """A setting that changes nothing is a lie; this one moves api.TTL."""
-        from flet_app import api
+        from agedashii_tofu import api
         before = api.TTL
         try:
             prefs.set_refresh_seconds(300)
@@ -465,8 +465,8 @@ class TestSettingsPageBuilds(PrefsTestCase):
         return StubPage()
 
     def test_builds_with_no_prefs(self):
-        from flet_app.pages import settings
-        from flet_app.ui import S
+        from agedashii_tofu.pages import settings
+        from agedashii_tofu.ui import S
         before = S.prefs
         S.prefs = None
         try:
@@ -476,8 +476,8 @@ class TestSettingsPageBuilds(PrefsTestCase):
             S.prefs = before
 
     def test_builds_with_prefs(self):
-        from flet_app.pages import settings
-        from flet_app.ui import S
+        from agedashii_tofu.pages import settings
+        from agedashii_tofu.ui import S
         before = S.prefs
         S.prefs = FakePrefs({prefs.KEY_UNITS: "metric"})
         try:
@@ -654,7 +654,7 @@ class PanelLayout(unittest.TestCase):
     SURFACE = "home"
 
     def setUp(self):
-        from flet_app import panels
+        from agedashii_tofu import panels
         self.panels = panels
         prefs._V = prefs._defaults()
         prefs.reset_panels(self.SURFACE)
@@ -822,7 +822,7 @@ class PanelLayoutReachesTheScreen(unittest.TestCase):
         return out
 
     def _home(self):
-        from flet_app.pages import home
+        from agedashii_tofu.pages import home
 
         class Stub:
             controls = []
@@ -840,13 +840,13 @@ class PanelLayoutReachesTheScreen(unittest.TestCase):
         return home.build(Stub())
 
     def test_default_is_every_home_card_at_full_width(self):
-        from flet_app import panels
+        from agedashii_tofu import panels
         self.assertEqual(self._spans(self._home()),
                          [panels.COLUMNS] * len(panels.panel_keys("home")))
 
     def test_a_custom_width_shows_up_in_the_render(self):
         """Any span, not just the old three presets, reaches the tree."""
-        from flet_app import panels
+        from agedashii_tofu import panels
         keys = panels.panel_keys("home")
         prefs.set_panel_width("home", "machines", 30)
         prefs.set_panel_width("home", "actions", 17)
@@ -856,7 +856,7 @@ class PanelLayoutReachesTheScreen(unittest.TestCase):
         self.assertEqual(self._spans(self._home()), want)
 
     def test_hiding_everything_says_so_instead_of_rendering_a_void(self):
-        from flet_app import panels
+        from agedashii_tofu import panels
         for k in panels.panel_keys("home"):
             prefs.set_panel_hidden("home", k, True)
         self.assertEqual(self._spans(self._home()), [])
@@ -885,7 +885,7 @@ class PanelLayoutSurvivesARestart(unittest.TestCase):
 
     def test_a_resized_hidden_reordered_surface_comes_back(self):
         import asyncio
-        from flet_app import panels
+        from agedashii_tofu import panels
 
         prefs.set_panel_width("home", "machines", 30)
         prefs.set_panel_hidden("home", "nowplaying", True)
@@ -905,7 +905,7 @@ class PanelLayoutSurvivesARestart(unittest.TestCase):
 
     def test_every_surface_is_persisted_not_just_home(self):
         import asyncio
-        from flet_app import panels
+        from agedashii_tofu import panels
 
         store = self.FakeStore()
         asyncio.run(prefs.save(store))
@@ -949,7 +949,7 @@ class AppearanceStore(unittest.TestCase):
 
     # ---------------------------------------------------------- defaults
     def test_ships_rounded_with_no_effects(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
         self.assertEqual(prefs.corner_radius(), ui.DEFAULT_RADIUS)
         self.assertIs(prefs.accent_glow(), False)
         self.assertIs(prefs.crt_overlay(), False)
@@ -963,7 +963,7 @@ class AppearanceStore(unittest.TestCase):
 
     def test_the_shipped_radius_is_a_no_op(self):
         """8 has to redraw exactly what the app drew before the setting existed."""
-        from flet_app import ui
+        from agedashii_tofu import ui
         prefs.set_corner_radius(8)
         for nominal in (2, 3, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 22):
             with self.subTest(nominal=nominal):
@@ -991,7 +991,7 @@ class AppearanceStore(unittest.TestCase):
 
     def test_a_radius_that_is_not_on_the_menu_falls_back(self):
         """A value Settings cannot undo must not be drawn."""
-        from flet_app import ui
+        from agedashii_tofu import ui
         for junk in (7, 999, -4, "wide", None, [3]):
             with self.subTest(stored=junk):
                 prefs._V[prefs.KEY_RADIUS] = junk
@@ -1088,21 +1088,21 @@ class AppearanceStore(unittest.TestCase):
 
     # ------------------------------------------------------ runtime push
     def test_setting_the_radius_reaches_the_drawing_layer(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
         for value in ui.RADIUS_CHOICES:
             with self.subTest(radius=value):
                 prefs.set_corner_radius(value)
                 self.assertEqual(ui.S.radius, value)
 
     def test_setting_the_intensity_reaches_the_drawing_layer(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
         for value in (0, 25, 60, 100):
             with self.subTest(intensity=value):
                 prefs.set_crt_intensity(value)
                 self.assertEqual(ui.S.crt_intensity, value)
 
     def test_load_pushes_the_appearance_it_read(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
         store = self.FakeStore({prefs.KEY_RADIUS: 0, prefs.KEY_GLOW: True,
                                 prefs.KEY_CRT: True, prefs.KEY_CRT_INTENSITY: 90})
         asyncio.run(prefs.load(store))
@@ -1176,8 +1176,8 @@ class RadiusReachesTheControls(unittest.TestCase):
         return found
 
     def _radii(self, page_name):
-        from flet_app import ui
-        from flet_app.pages import home, lab, settings, tools, weather
+        from agedashii_tofu import ui
+        from agedashii_tofu.pages import home, lab, settings, tools, weather
         module = {"home": home, "lab": lab, "tools": tools,
                   "weather": weather, "settings": settings}[page_name]
         page = self.StubPage()
@@ -1216,7 +1216,7 @@ class RadiusReachesTheControls(unittest.TestCase):
         misread a 10px swatch whose 3px corner scales past 5 at the
         softest setting as a circle, and quietly stop checking it.
         """
-        from flet_app import ui
+        from agedashii_tofu import ui
         prefs.set_corner_radius(8)
         shipped = {}
         for name in ("home", "settings"):
@@ -1258,8 +1258,8 @@ class RadiusReachesTheControls(unittest.TestCase):
         self.assertEqual(before, after)
 
     def _walk_page(self, name):
-        from flet_app import ui
-        from flet_app.pages import home, lab, tools, weather
+        from agedashii_tofu import ui
+        from agedashii_tofu.pages import home, lab, tools, weather
         module = {"home": home, "lab": lab, "tools": tools, "weather": weather}[name]
         page = self.StubPage()
         ui.apply_theme(page)
@@ -1280,7 +1280,7 @@ class AccentGlow(unittest.TestCase):
         prefs.apply_runtime()
 
     def test_off_means_no_shadow_at_all(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
         prefs.set_accent_glow(False)
         self.assertIsNone(ui.GLOW())
         self.assertIsNone(ui.GLOW_STYLE())
@@ -1288,7 +1288,7 @@ class AccentGlow(unittest.TestCase):
         self.assertEqual(ui.FOCUS_WIDTH(), 1)
 
     def test_on_puts_alolas_shadow_on_a_heading(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
         prefs.set_accent_glow(True)
         style = ui.title("Machines").style
         self.assertIsNotNone(style)
@@ -1297,7 +1297,7 @@ class AccentGlow(unittest.TestCase):
 
     def test_the_glow_is_the_current_themes_accent_not_a_fixed_colour(self):
         """24 themes; a hard-coded yellow would be wrong on 23 of them."""
-        from flet_app import theme_data, ui
+        from agedashii_tofu import theme_data, ui
         prefs.set_accent_glow(True)
         seen = {}
         for key in theme_data.THEMES:
@@ -1310,7 +1310,7 @@ class AccentGlow(unittest.TestCase):
                            "every theme glowed the same colour")
 
     def test_the_active_nav_indicator_brightens_with_the_glow(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
 
         class P:
             theme = None
@@ -1353,13 +1353,13 @@ class CrtOverlayDoesNotEatTaps(unittest.TestCase):
         self.assertIs(prefs.crt_overlay(), False)
 
     def test_the_overlay_is_removed_from_hit_testing(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
         overlay = ui.crt_overlay()
         self.assertIs(overlay.ignore_interactions, True)
 
     def test_the_overlay_carries_no_handler_of_its_own(self):
         """Belt and braces: nothing to fire even if the flag were dropped."""
-        from flet_app import ui
+        from agedashii_tofu import ui
         overlay = ui.crt_overlay()
         for attr in ("on_click", "on_tap_down", "on_long_press", "on_hover", "url"):
             with self.subTest(attr=attr):
@@ -1372,7 +1372,7 @@ class CrtOverlayDoesNotEatTaps(unittest.TestCase):
         grow with page content, and every layer independently carries the
         flag rather than relying on the outermost one alone.
         """
-        from flet_app import ui
+        from agedashii_tofu import ui
         controls = RadiusReachesTheControls._walk(ui.crt_overlay())
         self.assertEqual(len(controls), 3,
                          "the overlay must stay a small, fixed number of "
@@ -1383,7 +1383,7 @@ class CrtOverlayDoesNotEatTaps(unittest.TestCase):
     def test_intensity_scales_every_layer_through_one_lever(self):
         """One number, S.crt_intensity, has to move all three layers
         together - not three settings a future edit could desync."""
-        from flet_app import ui
+        from agedashii_tofu import ui
         self._saved_intensity = ui.S.crt_intensity
         try:
             ui.S.crt_intensity = 0
@@ -1403,7 +1403,7 @@ class CrtOverlayDoesNotEatTaps(unittest.TestCase):
             ui.S.crt_intensity = self._saved_intensity
 
     def test_an_out_of_range_intensity_does_not_raise(self):
-        from flet_app import ui
+        from agedashii_tofu import ui
         self._saved_intensity = ui.S.crt_intensity
         try:
             for junk in (-50, 999, 100.9):
@@ -1425,7 +1425,7 @@ class CrtOverlayDoesNotEatTaps(unittest.TestCase):
         untouched by being covered.
         """
         import flet as ft
-        from flet_app import ui
+        from agedashii_tofu import ui
 
         fired = []
         button = ft.Container(on_click=lambda e: fired.append(True),
@@ -1452,18 +1452,18 @@ class BottomBarToggleDoesNotCrash(unittest.TestCase):
     """
 
     def test_bump_calls_what_it_was_given(self):
-        from flet_app.pages import settings
+        from agedashii_tofu.pages import settings
         seen = []
         settings._bump(lambda: seen.append(1))
         self.assertEqual(seen, [1])
 
     def test_bump_with_no_callback_is_a_no_op(self):
-        from flet_app.pages import settings
+        from agedashii_tofu.pages import settings
         settings._bump(None)          # must not raise
 
     def test_bump_swallows_a_failing_repaint(self):
         # A repaint that throws must not lose the edit that triggered it.
-        from flet_app.pages import settings
+        from agedashii_tofu.pages import settings
 
         def boom():
             raise RuntimeError("repaint failed")
@@ -1476,7 +1476,7 @@ class BottomBarToggleDoesNotCrash(unittest.TestCase):
         import builtins
         import os
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "flet_app", "pages", "settings.py")
+                            "agedashii_tofu", "pages", "settings.py")
         tree = ast.parse(open(path).read())
         module_level = {n.name for n in ast.walk(tree)
                         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
@@ -1647,7 +1647,7 @@ class CardEditMode(unittest.TestCase):
     SURFACE = "home"
 
     def setUp(self):
-        from flet_app import panels
+        from agedashii_tofu import panels
         self.panels = panels
         self._saved = dict(prefs._V)
         prefs._V = prefs._defaults()
@@ -1660,7 +1660,7 @@ class CardEditMode(unittest.TestCase):
         prefs._V.update(self._saved)
 
     def _home(self):
-        from flet_app.pages import home
+        from agedashii_tofu.pages import home
         return home.build(_StubPage())
 
     def _spans(self, tree):
@@ -1967,7 +1967,7 @@ class CardEditMode(unittest.TestCase):
         Settings has cards but not a *rearrangeable* stack: it never
         calls `panels.layout()`, so there is nothing for edit mode to do.
         """
-        from flet_app.pages import settings
+        from agedashii_tofu.pages import settings
         self.panels.begin_render()
         settings.build(_StubPage())
         self.assertFalse(self.panels.has_surface())
@@ -1983,7 +1983,7 @@ class SettingsDrivesTheTwoSurfacesSeparately(PrefsTestCase):
     """
 
     def _pills(self):
-        from flet_app.pages import settings
+        from agedashii_tofu.pages import settings
         tree = settings.build(_StubPage())
         out = {}
         page_keys = prefs.page_order()
@@ -2054,7 +2054,7 @@ class PanelReorderByDrop(PrefsTestCase):
     def test_cycling_a_width_wraps(self):
         """One column (of 60) at a time, wrapping at the ends - the
         resize grip's drag, which calls this once per column crossed."""
-        from flet_app import panels
+        from agedashii_tofu import panels
         self.assertEqual(prefs.cycle_panel_width("home", "weather", -1), 59)
         prefs.reset_panels("home")
         # Already at full (the default); one more step wraps past the top
@@ -2067,7 +2067,7 @@ class PanelReorderByDrop(PrefsTestCase):
         of the range stops at full rather than coming out the other side
         near 1/60. Already-at-the-limit correctly reports "nothing
         changed" (None) rather than re-announcing the same span."""
-        from flet_app import panels
+        from agedashii_tofu import panels
         prefs.set_panel_width("home", "weather", panels.MAX_WIDTH - 2)
         self.assertEqual(
             prefs.cycle_panel_width("home", "weather", 5, wrap=False),
@@ -2083,7 +2083,7 @@ class PanelReorderByDrop(PrefsTestCase):
 
     def test_cycling_the_width_presets_wraps_through_the_common_fractions(self):
         """The tap shortcut: full -> 3/4 -> 2/3 -> ... -> 1/6 -> full."""
-        from flet_app import panels
+        from agedashii_tofu import panels
         got = [prefs.cycle_panel_width_preset("home", "weather")
                for _ in range(len(panels.COMMON_WIDTHS))]
         self.assertEqual(got, list(panels.COMMON_WIDTHS[1:]) + [panels.COMMON_WIDTHS[0]])
@@ -2097,7 +2097,7 @@ class PanelReorderByDrop(PrefsTestCase):
 
     def test_cycling_a_height_wraps(self):
         """One cell at a time, 0 (auto) through 8, wrapping."""
-        from flet_app import panels
+        from agedashii_tofu import panels
         self.assertEqual(prefs.cycle_panel_height("home", "weather", -1),
                          panels.MAX_HEIGHT, "wrapping down from auto")
         prefs.reset_panels("home")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate flet_app/foodzen_catalog.py from the dashboard's FZ_CATALOG.
+"""Generate agedashii_tofu/foodzen_catalog.py from the dashboard's FZ_CATALOG.
 
 The website categorises a grocery item by name (Produce / Meat / Dairy / ...)
 using a 231-entry lookup table in its JS. The app has to categorise
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_SRC = Path.home() / "www/dashbored/dashbored-web/app.js"
-OUT = Path(__file__).resolve().parent.parent / "flet_app" / "foodzen_catalog.py"
+OUT = Path(__file__).resolve().parent.parent / "agedashii_tofu" / "foodzen_catalog.py"
 
 
 def extract(js_path):

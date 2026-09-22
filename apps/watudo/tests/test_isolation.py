@@ -1,7 +1,7 @@
 """Watudo must not reach back into the dashboard or the other two apps.
 
-The point of splitting `flet_app` into Qi, Washi and three apps is that each
-app can be built, shipped and broken on its own. One `from flet_app...` line
+The point of splitting `agedashii_tofu` into Qi, Washi and three apps is that each
+app can be built, shipped and broken on its own. One `from agedashii_tofu...` line
 anywhere under `apps/watudo/` undoes that silently - the app still runs from
 a full checkout and only fails when someone builds it from its own
 directory, which is the one moment nobody is watching.
@@ -25,7 +25,7 @@ from .harness import APP_DIR, WatudoCase, load_main
 
 # The dashboard, and the other two apps in this repo. Watudo may depend on
 # `agedashii_qi` and `agedashii_washi` and on nothing else of ours.
-FORBIDDEN = ("flet_app", "agedashii_moto", "agedashii_foodzen")
+FORBIDDEN = ("agedashii_tofu", "agedashii_moto", "agedashii_foodzen")
 
 
 def python_files():
@@ -68,7 +68,7 @@ class NoFileNamesTheDashboardOrASiblingApp(unittest.TestCase):
         for path in python_files():
             for name in imported_modules(path):
                 root = name.split(".")[0]
-                if root.startswith("agedashii") or root == "flet_app":
+                if root.startswith("agedashii") or root == "agedashii_tofu":
                     ours.add(root)
         self.assertTrue(ours <= allowed, sorted(ours - allowed))
 

@@ -1,16 +1,16 @@
 import asyncio
 
 import flet as ft
-from flet_app.ui import (PAL, PAD, BRD, RAD, S, apply_theme, dot,
+from agedashii_tofu.ui import (PAL, PAD, BRD, RAD, S, apply_theme, dot,
                          GLOW, crt_overlay)
-from flet_app.pages.lab import _TAB_INDEX
-from flet_app.pages.eatzen import _show, _dismiss
-from flet_app.theme_data import THEMES, THEME_NAMES
-from flet_app.pages import home, lab, tools, trips, weather, garage, wat2do, extras, settings
-from flet_app import api as M
-from flet_app import config
-from flet_app import panels
-from flet_app import prefs
+from agedashii_tofu.pages.lab import _TAB_INDEX
+from agedashii_tofu.pages.eatzen import _show, _dismiss
+from agedashii_tofu.theme_data import THEMES, THEME_NAMES
+from agedashii_tofu.pages import home, lab, tools, trips, weather, garage, wat2do, extras, settings
+from agedashii_tofu import api as M
+from agedashii_tofu import config
+from agedashii_tofu import panels
+from agedashii_tofu import prefs
 
 ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 

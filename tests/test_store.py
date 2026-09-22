@@ -1,4 +1,4 @@
-"""Tests for flet_app/store.py — the offline-first cache and write queue.
+"""Tests for agedashii_tofu/store.py — the offline-first cache and write queue.
 
 Every test here runs with the radio off, by construction: the store never
 opens a socket, and `flush` is handed a fake `send_fn`. That is the whole
@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flet_app import store as S  # noqa: E402
+from agedashii_tofu import store as S  # noqa: E402
 
 
 class StoreCase(unittest.TestCase):

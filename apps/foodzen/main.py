@@ -5,7 +5,7 @@ own ``main.py`` - same topbar, same drawer, same SafeArea, same CRT stack -
 and deliberately imports none of it: Foodzen stands on Qi (the look) and
 Washi (the system) and on nothing that belongs to another app. The three
 apps in this repo share those two packages and share no code with each other,
-which is the point of the split; importing ``flet_app`` here would quietly
+which is the point of the split; importing ``agedashii_tofu`` here would quietly
 undo it.
 
 Three surfaces:

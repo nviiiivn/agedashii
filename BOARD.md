@@ -58,7 +58,7 @@ queue, because there is no photo left to retry once the call returns.
 | S7 | APK + IPA + Linux x64 per app, built on Tower | — | ready | manifest, label and id verified per artifact |
 | S8 | Hosting: a download page per app | — | ready | each URL 200s with the right size and type |
 | S9 | Trim Tofu once the three are confirmed | — | **blocked** | her confirmation, on device |
-| S10 | Rename `flet_app/` to `agedashii_tofu/` | me | ready | deferred: three agents are mid-flight asserting they do not import `flet_app` |
+| S10 | Rename `agedashii_tofu/` to `agedashii_tofu/` | me | ready | deferred: three agents are mid-flight asserting they do not import `agedashii_tofu` |
 
 ### Blocked, and why
 

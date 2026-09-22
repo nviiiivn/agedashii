@@ -11,14 +11,14 @@ Two details are worth knowing before changing anything:
   versa. The website's scheme wins because the server's JSON files were written
   by it.
 * **Nothing here is invented.** ``save_state`` returns the record the device
-  now holds, read back out of ``flet_app.store`` after the write: the
+  now holds, read back out of ``agedashii_tofu.store`` after the write: the
   server's own answer once the write has landed, and this device's copy with
   the change already applied while it is still queued. Either way the page
   repaints from something real, never from what it hoped happened. Whether
   the server has seen it yet is the sync chip's job to say, not this one's.
 
 Network helpers return ``None`` on failure rather than raising, matching
-``flet_app.api``; they also go through ``api._get``/``config._opener`` so the
+``agedashii_tofu.api``; they also go through ``api._get``/``config._opener`` so the
 connected/offline status the rest of the app reads stays accurate.
 """
 import json

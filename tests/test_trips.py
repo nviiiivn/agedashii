@@ -24,8 +24,8 @@ import unittest
 
 import flet as ft
 
-from flet_app import api, panels, prefs
-from flet_app.pages import _trips_parts as T
+from agedashii_tofu import api, panels, prefs
+from agedashii_tofu.pages import _trips_parts as T
 
 from test_api_offline import ApiOfflineCase
 
@@ -770,7 +770,7 @@ class ThePageBuilds(ApiOfflineCase):
 
     def setUp(self):
         super().setUp()
-        from flet_app.pages import trips, xnav
+        from agedashii_tofu.pages import trips, xnav
         self.trips = trips
         self.xnav = xnav
         self._reset_state()

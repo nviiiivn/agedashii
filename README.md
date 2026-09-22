@@ -13,7 +13,7 @@ reused on next launch. No rebuild, no editing source.
 
 On startup the app tries each known address in order and adopts the first that
 answers, so a saved address that has gone stale falls back to the defaults in
-`flet_app/config.py` rather than hanging.
+`agedashii_tofu/config.py` rather than hanging.
 
 ### Reaching it from outside the house
 
@@ -136,15 +136,15 @@ quietly shipping nothing.
 
 - `main.py` — async entry point: loads the saved server address before first
   paint, then the nav shell (topbar, drawer, bottom bar, page router)
-- `flet_app/config.py` — which server to talk to: candidates, probing, failure
+- `agedashii_tofu/config.py` — which server to talk to: candidates, probing, failure
   diagnosis, `SharedPreferences` persistence
-- `flet_app/api.py` — the client: per-endpoint adapters reshaping server JSON,
+- `agedashii_tofu/api.py` — the client: per-endpoint adapters reshaping server JSON,
   30s TTL cache, mock fallback, AI chat
-- `flet_app/mock.py` — mock data, same shapes as the adapters
-- `flet_app/theme_data.py` — 21 themes extracted 1:1 from the dashboard's CSS by
+- `agedashii_tofu/mock.py` — mock data, same shapes as the adapters
+- `agedashii_tofu/theme_data.py` — 21 themes extracted 1:1 from the dashboard's CSS by
   `tools/gen-themes.py`
-- `flet_app/ui.py` — theme + app state, card/chip/dot helpers, `apply_theme`
-- `flet_app/pages/` — one module per page; tabbed pages share `lab._tabs`
+- `agedashii_tofu/ui.py` — theme + app state, card/chip/dot helpers, `apply_theme`
+- `agedashii_tofu/pages/` — one module per page; tabbed pages share `lab._tabs`
 - `tests/` — stdlib unittest
 
 Architecture: pages read only the `M` interface — `from .. import api as M`.

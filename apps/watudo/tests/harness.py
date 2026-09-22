@@ -42,7 +42,7 @@ def load_main():
     By path and not by name on purpose. The repo root is on sys.path during
     discovery and it holds the dashboard's own ``main.py``, so ``import
     main`` would quietly load the wrong app - and that app imports
-    ``flet_app``, which is exactly what test_isolation is there to prove
+    ``agedashii_tofu``, which is exactly what test_isolation is there to prove
     this one does not.
 
     The module name is not ``__main__``, so the ``ft.run`` guard at the

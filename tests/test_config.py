@@ -1,4 +1,4 @@
-"""Tests for flet_app/config.py — server discovery and persistence.
+"""Tests for agedashii_tofu/config.py — server discovery and persistence.
 
 These run offline. Anything that needs a server gets a throwaway
 http.server on a loopback port, so the suite does not depend on the real
@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flet_app import config  # noqa: E402
+from agedashii_tofu import config  # noqa: E402
 
 
 def serve(handler_cls):
@@ -290,7 +290,7 @@ class TestApiUsesConfig(ConfigTestCase):
         payload = json.dumps({"m1": {"display": "Box", "widgets": {"system": {"uptime": "1d"}}}}).encode()
         srv, base = serve(handler(200, payload))
         try:
-            from flet_app import api
+            from agedashii_tofu import api
             api.refresh()
             config.SERVER_URL = base
             machines = api.machines()

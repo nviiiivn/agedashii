@@ -514,7 +514,7 @@ class Theming(ShellCase):
 # ------------------------------------------------------------------ the rules
 class TheRules(ShellCase):
     THIS_APP = APP / "agedashii_foodzen"
-    FORBIDDEN = ("flet_app", "agedashii_moto", "agedashii_watudo")
+    FORBIDDEN = ("agedashii_tofu", "agedashii_moto", "agedashii_watudo")
 
     def _sources(self):
         return [APP / "main.py", *sorted(self.THIS_APP.rglob("*.py"))]

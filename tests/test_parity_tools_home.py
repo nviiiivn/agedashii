@@ -22,8 +22,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flet_app import api  # noqa: E402
-from flet_app.pages import home  # noqa: E402
+from agedashii_tofu import api  # noqa: E402
+from agedashii_tofu.pages import home  # noqa: E402
 
 
 # --------------------------------------------------------------------- feeds
@@ -547,7 +547,7 @@ class HomeRenders(unittest.TestCase):
         return out
 
     def _build(self, dash=None, weather=None, containers=34):
-        from flet_app import prefs
+        from agedashii_tofu import prefs
         prefs._V = prefs._defaults()
         with mock.patch.object(api, "dashboard", return_value=dash), \
              mock.patch.object(api, "docker_running", return_value=containers), \
@@ -619,7 +619,7 @@ class HomeRenders(unittest.TestCase):
     def test_navigation_tiles_are_absent_when_there_is_no_shell_to_navigate(self):
         """Better no tile than a tile that does nothing. S.goto is set by
         main(); a standalone build has none."""
-        from flet_app.ui import S
+        from agedashii_tofu.ui import S
         had = getattr(S, "goto", None)
         if had is not None:
             del S.goto
@@ -632,7 +632,7 @@ class HomeRenders(unittest.TestCase):
                 S.goto = had
 
     def test_navigation_tiles_appear_and_land_on_the_right_tab(self):
-        from flet_app.ui import S
+        from agedashii_tofu.ui import S
         jumped = []
         had = getattr(S, "goto", None)
         S.goto = lambda key, path=(): jumped.append((key, tuple(path)))
@@ -724,7 +724,7 @@ class ToolsDoesNotBuildEveryTabBeforeItPaints(unittest.TestCase):
 
     def test_every_tools_tab_body_is_deferred(self):
         import ast
-        bodies = self._bodies("flet_app/pages/tools.py", "tools")
+        bodies = self._bodies("agedashii_tofu/pages/tools.py", "tools")
         self.assertEqual(len(bodies), 4)
         self.assertTrue(all(isinstance(b, ast.Lambda) for b in bodies),
                         "every Tools tab body must be deferred")
@@ -750,7 +750,7 @@ class FeedsShowsAPageAtATimeAndSaysSo(unittest.TestCase):
              for i in range(76)]
 
     def setUp(self):
-        from flet_app.pages import tools
+        from agedashii_tofu.pages import tools
         self.tools = tools
         self.saved = dict(tools._F)
         self.saved_state = dict(tools._FEEDS)
@@ -820,7 +820,7 @@ class TheBrowseWallIsFoldedAway(unittest.TestCase):
     a 260px scroll window below the list you came to read."""
 
     def setUp(self):
-        from flet_app.pages import foodzen
+        from agedashii_tofu.pages import foodzen
         self.fz = foodzen
         foodzen._OPEN["browse"] = False
 
@@ -848,13 +848,13 @@ class TheBrowseWallIsFoldedAway(unittest.TestCase):
                                                        lambda *a: None)), [])
 
     def test_open_it_builds_every_one_of_them(self):
-        from flet_app.foodzen_catalog import CATALOG
+        from agedashii_tofu.foodzen_catalog import CATALOG
         self.fz._OPEN["browse"] = True
         built = self._buttons(self.fz._browse(StubPage(), lambda *a: None))
         self.assertEqual(len(built), len(CATALOG))
 
     def test_the_count_is_on_the_header_either_way(self):
-        from flet_app.foodzen_catalog import CATALOG
+        from agedashii_tofu.foodzen_catalog import CATALOG
         for state in (False, True):
             with self.subTest(open=state):
                 self.fz._OPEN["browse"] = state

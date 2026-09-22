@@ -15,8 +15,8 @@ import ast
 import os
 import unittest
 
-from flet_app import api
-from flet_app.pages import lab
+from agedashii_tofu import api
+from agedashii_tofu.pages import lab
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -24,7 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _machines_source():
     """The text of lab._machines, for the checks that are about what it
     does *not* build."""
-    with open(os.path.join(ROOT, "flet_app/pages/lab.py")) as fh:
+    with open(os.path.join(ROOT, "agedashii_tofu/pages/lab.py")) as fh:
         src = fh.read()
     start = src.index("\ndef _machines(page):")
     end = src.index("\ndef ", start + 1)
@@ -410,7 +410,7 @@ class LabDoesNotBuildEveryTabBeforeItPaints(unittest.TestCase):
     """
 
     def test_build_passes_callables_not_built_controls(self):
-        with open(os.path.join(ROOT, "flet_app/pages/lab.py")) as fh:
+        with open(os.path.join(ROOT, "agedashii_tofu/pages/lab.py")) as fh:
             tree = ast.parse(fh.read())
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call)
@@ -498,7 +498,7 @@ class LabDoesNotBuildEveryTabBeforeItPaints(unittest.TestCase):
         # M.docker_list() SSHes to five hosts and took 6.17 s live, which was
         # most of the freeze. Home already stopped doing this on its hot
         # path; the only call left in _machines must be the background one.
-        with open(os.path.join(ROOT, "flet_app/pages/lab.py")) as fh:
+        with open(os.path.join(ROOT, "agedashii_tofu/pages/lab.py")) as fh:
             tree = ast.parse(fh.read())
         fn = next(n for n in ast.walk(tree)
                   if isinstance(n, ast.FunctionDef) and n.name == "_machines")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Push the app's palettes into the website, so the two never drift.
 
-flet_app/theme_data.py is the one place themes are defined: alola.lol's
+agedashii_tofu/theme_data.py is the one place themes are defined: alola.lol's
 eight values per theme, plus the rule that derives the seven the app also
 needs. The website carries the same palettes twice over - once as CSS custom
 properties in dashbored-web/app.css, once as the THEME_NAMES / THEME_COLORS /
@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flet_app.theme_data import (  # noqa: E402
+from agedashii_tofu.theme_data import (  # noqa: E402
     THEMES, THEME_NAMES, KEYS, _rgb as to_rgb)
 
 DEFAULT_WEB = Path.home() / "www/dashbored/dashbored-web"

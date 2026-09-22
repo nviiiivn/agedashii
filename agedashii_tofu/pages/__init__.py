@@ -8,7 +8,7 @@ confirmed working - her sequencing, and the safe one: nothing is deleted
 on the strength of a refactor that has not been used yet.
 
 The aliases are the same module objects, not copies, for the reason given
-in ``flet_app/__init__.py``: a test that patches one of these patches the
+in ``agedashii_tofu/__init__.py``: a test that patches one of these patches the
 real module.
 """
 import sys as _sys

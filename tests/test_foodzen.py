@@ -1,4 +1,4 @@
-"""Tests for flet_app/foodzen.py — the write path shared with the website.
+"""Tests for agedashii_tofu/foodzen.py — the write path shared with the website.
 
 The app and the website both POST whole FoodZen collections to the same
 server, which does no merging. So the app's records have to be shaped exactly
@@ -29,8 +29,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from flet_app import foodzen as fz  # noqa: E402
-from flet_app.foodzen_catalog import CATALOG  # noqa: E402
+from agedashii_tofu import foodzen as fz  # noqa: E402
+from agedashii_tofu.foodzen_catalog import CATALOG  # noqa: E402
 
 WEB_APP_JS = Path.home() / "www/dashbored/dashbored-web/app.js"
 

@@ -6,7 +6,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from flet_app import api  # noqa: E402
+from agedashii_tofu import api  # noqa: E402
 
 class MachineOnlineFlag(unittest.TestCase):
     """A machine that cannot be reached must not read as up.

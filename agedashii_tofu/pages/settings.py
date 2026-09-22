@@ -20,7 +20,7 @@ is the same one that scrolls past it. The cards on a page can be dragged,
 because there the handle is a distinct icon rather than the whole row; see
 panels._editable for why that distinction is what makes it safe.
 
-Everything is stored by flet_app/prefs.py, which also owns the read API the
+Everything is stored by agedashii_tofu/prefs.py, which also owns the read API the
 rest of the app consumes. This page only edits; it never decides what a
 preference means.
 """

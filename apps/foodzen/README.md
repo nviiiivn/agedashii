@@ -156,7 +156,7 @@ server answering; the drawer and the bottom bar reach each surface; a drawer
 sub-row lands on the tab it names (checked against the page's real tab order,
 so reordering the tabs fails the test rather than silently misrouting the
 menu); themes apply to the body and the drawer; the CRT stacks over the
-SafeArea and not under it; and no file in this app imports `flet_app`,
+SafeArea and not under it; and no file in this app imports `agedashii_tofu`,
 `agedashii_moto` or `agedashii_watudo`, by AST, by name at runtime, and by
 string literal.
 
@@ -204,7 +204,7 @@ the glyph.
 - **EatZen and BPM refuse to draw offline**, as above.
 - **`agedashii_foodzen/pages/_compat.py` is a patch with an expiry date.**
   `agedashii_washi.forms.rebuilder` opens with `from .. import api as M`,
-  which was correct at `flet_app/pages/_forms.py` and is an ImportError at
+  which was correct at `agedashii_tofu/pages/_forms.py` and is an ImportError at
   `agedashii_washi/forms.py`. Every editable page calls it on its first line.
   `_compat` delegates to the shared helper and only substitutes its own copy
   while that import raises; fix the `..` in `packages/` and this module can be

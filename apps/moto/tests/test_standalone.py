@@ -4,7 +4,7 @@ Two kinds of check live here.
 
 **Boundaries.** The whole point of the split is that Moto builds without the
 dashboard and without the other two apps. That is easy to believe and easy
-to break: one `from flet_app.ui import PAL` left behind, or one page
+to break: one `from agedashii_tofu.ui import PAL` left behind, or one page
 importing a helper out of Wat2Do, and the build either fails or quietly
 drags nine other pages and their network reads into a 3-surface app.
 
@@ -26,10 +26,10 @@ from pathlib import Path
 
 from .support import APP_DIR, load_main
 
-#: What this app must never reach for. `flet_app` is the dashboard's own
+#: What this app must never reach for. `agedashii_tofu` is the dashboard's own
 #: package - the shell Moto was modelled on and deliberately does not
 #: import; the other two are the apps being split out alongside it.
-FORBIDDEN = ("flet_app", "agedashii_watudo", "agedashii_foodzen")
+FORBIDDEN = ("agedashii_tofu", "agedashii_watudo", "agedashii_foodzen")
 
 #: What it is allowed to reach for, on purpose: the two shared packages.
 EXPECTED_SHARED = ("agedashii_qi", "agedashii_washi")
@@ -79,7 +79,7 @@ class ItDoesNotImportTheOtherApps(unittest.TestCase):
     def test_the_shipped_package_does_not_even_mention_the_old_module_paths(self):
         """Comments are not imports, but they are directions.
 
-        `xnav.py` pointed at `flet_app/tileserver.py` for months after that
+        `xnav.py` pointed at `agedashii_tofu/tileserver.py` for months after that
         file stopped existing. A stale pointer in a docstring costs the next
         reader the same search every time.
         """

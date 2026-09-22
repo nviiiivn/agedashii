@@ -184,7 +184,7 @@ each test.
 |---|---|
 | `test_shell.py` | the shell builds headlessly; both surfaces render cold and offline; the drawer and the bottom bar each reach both; which one is lit is read back out of the page's own tab index rather than kept twice; the theme reaches the palette, Material's own mode and the next repaint, and survives a relaunch; the outbox chip says what is queued and nothing when nothing is; SafeArea wraps the chrome and the CRT overlay goes over the top of it with every layer still ignoring taps |
 | `test_offline.py` | nothing local goes to the wire; a tick with no signal is queued, is visible to the very next read, and 40 ticks coalesce to 1 |
-| `test_isolation.py` | no file under `apps/watudo/` imports `flet_app`, `agedashii_moto` or `agedashii_foodzen`, statically or at runtime; the build manifest declares what it needs and not what it does not |
+| `test_isolation.py` | no file under `apps/watudo/` imports `agedashii_tofu`, `agedashii_moto` or `agedashii_foodzen`, statically or at runtime; the build manifest declares what it needs and not what it does not |
 
 ## What it is built on
 
@@ -194,7 +194,7 @@ each test.
   client, the 60-column panel layout engine, preferences, tabs, dialogs,
   forms and the widget vocabulary.
 
-And on nothing else of ours. It does not import the dashboard (`flet_app`)
+And on nothing else of ours. It does not import the dashboard (`agedashii_tofu`)
 or either sibling app (`agedashii_moto`, `agedashii_foodzen`); `flet-map` is
 the only Flet plugin.
 

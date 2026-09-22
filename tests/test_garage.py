@@ -7,9 +7,9 @@ import ast
 import os
 import unittest
 
-from flet_app import api as M
-from flet_app import panels
-from flet_app.pages import garage
+from agedashii_tofu import api as M
+from agedashii_tofu import panels
+from agedashii_tofu.pages import garage
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -199,7 +199,7 @@ class RecordLinesShowEveryColumn(unittest.TestCase):
     """The website's tables have six columns; a phone row must not drop any."""
 
     def setUp(self):
-        from flet_app.ui import PAL
+        from agedashii_tofu.ui import PAL
         self.p = PAL()
 
     def test_mileage(self):
@@ -256,7 +256,7 @@ class FlipperMeta(unittest.TestCase):
     find out every Reddit source answers HTTP 429."""
 
     def setUp(self):
-        from flet_app.ui import PAL
+        from agedashii_tofu.ui import PAL
         self.p = PAL()
 
     def test_median_sources_and_grouped_errors(self):
@@ -282,7 +282,7 @@ class FlipperMeta(unittest.TestCase):
 class DealCards(unittest.TestCase):
 
     def setUp(self):
-        from flet_app.ui import PAL
+        from agedashii_tofu.ui import PAL
         self.p = PAL()
 
     def test_a_scored_listing_shows_what_it_earned(self):
@@ -366,7 +366,7 @@ class DrawerReachesTheGarageAndWeatherTabs(unittest.TestCase):
         self._check("garage", "apps/moto/agedashii_moto/pages/garage.py")
 
     def test_weather(self):
-        self._check("weather", "flet_app/pages/weather.py")
+        self._check("weather", "agedashii_tofu/pages/weather.py")
 
 
 if __name__ == "__main__":

@@ -23,9 +23,9 @@ import unittest
 
 from test_api_offline import ApiOfflineCase
 
-from flet_app import api
-from flet_app.pages import _wat2do_parts as W
-from flet_app.pages import future as F
+from agedashii_tofu import api
+from agedashii_tofu.pages import _wat2do_parts as W
+from agedashii_tofu.pages import future as F
 
 def _all_text(node, out=None):
     """Every Text value in a built control tree, for asserting on wording."""
@@ -379,7 +379,7 @@ class TestFuturePageBuilds(ApiOfflineCase):
         wording says both of those things, and both would be false here.
         """
         import flet as ft
-        from flet_app.ui import PAL
+        from agedashii_tofu.ui import PAL
         for somedays in (None, [], [{"name": "x"}]):
             with self.subTest(somedays=somedays):
                 notice = F.not_connected(PAL(), somedays)
@@ -400,7 +400,7 @@ class TestFuturePageBuilds(ApiOfflineCase):
 
     def test_extras_still_builds_with_the_future_tab_in_it(self):
         import flet as ft
-        from flet_app.pages import extras
+        from agedashii_tofu.pages import extras
         self.go_offline()
         self.assertIsInstance(extras.build(self.StubPage()), ft.Control)
 

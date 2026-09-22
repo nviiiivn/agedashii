@@ -8,8 +8,8 @@ and it is exactly the sort of thing that has shipped broken here before.
 """
 import unittest
 
-from flet_app import api
-from flet_app.pages import extras, lab
+from agedashii_tofu import api
+from agedashii_tofu.pages import extras, lab
 
 
 # What /api/dashboard answered, trimmed to the fields under test.
@@ -276,7 +276,7 @@ class CuratedLists(unittest.TestCase):
     }
 
     def test_placeable_rows_come_back_sorted_by_distance_from_home(self):
-        from flet_app.pages import future
+        from agedashii_tofu.pages import future
         spots, nameless = future.curated_spots(self.CURATED, "weirdseed")
         self.assertEqual([s["name"] for s in spots],
                          ["Albany Bulb", "Winchester Mystery House"])
@@ -284,7 +284,7 @@ class CuratedLists(unittest.TestCase):
         self.assertLess(spots[0]["dist_m"], spots[1]["dist_m"])
 
     def test_rows_with_no_coordinates_are_named_not_dropped(self):
-        from flet_app.pages import future
+        from agedashii_tofu.pages import future
         spots, nameless = future.curated_spots(self.CURATED, "ebt")
         self.assertEqual([s["name"] for s in spots],
                          ["Chabot Space & Science Center"])
@@ -293,21 +293,21 @@ class CuratedLists(unittest.TestCase):
                           "A museum with no city at all"])
 
     def test_an_unknown_list_is_empty_rather_than_an_exception(self):
-        from flet_app.pages import future
+        from agedashii_tofu.pages import future
         self.assertEqual(future.curated_spots(self.CURATED, "nope"), ([], []))
         self.assertEqual(future.curated_spots(None, "ebt"), ([], []))
         self.assertEqual(future.curated_spots(self.CURATED, "events_stale_h"),
                          ([], []), "the float sitting among the lists is not a list")
 
     def test_the_list_is_capped_the_way_the_website_caps_it(self):
-        from flet_app.pages import future
+        from agedashii_tofu.pages import future
         many = {"movies": [{"name": f"loc {i}", "lat": 37.8 + i / 10000,
                             "lon": -122.2} for i in range(400)]}
         spots, _ = future.curated_spots(many, "movies")
         self.assertEqual(len(spots), future.MAX_CURATED)
 
     def test_the_scrape_age_is_stated_so_stale_events_cannot_read_as_tonight(self):
-        from flet_app.pages import future
+        from agedashii_tofu.pages import future
         self.assertEqual(future._events_age(self.CURATED), "events scraped 7h ago")
         self.assertEqual(future._events_age({"events_stale_h": 0.4}),
                          "events scraped under an hour ago")

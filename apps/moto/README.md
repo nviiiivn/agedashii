@@ -163,7 +163,7 @@ drawer and the bottom bar each reach all three, that a theme change actually
 repaints, that the CRT overlay sits over the SafeArea and takes no taps, that
 the headless/window guard picks the right mode and port, that `pyproject.toml`
 carries every block `flet build` reads, and that nothing in the app imports
-`flet_app`, `agedashii_watudo` or `agedashii_foodzen`.
+`agedashii_tofu`, `agedashii_watudo` or `agedashii_foodzen`.
 
 ## Known: writes that repaint
 

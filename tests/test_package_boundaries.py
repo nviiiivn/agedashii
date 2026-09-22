@@ -52,7 +52,7 @@ class NoImportAboveAPackageRoot(unittest.TestCase):
     """A relative import past the top of a package raises when CALLED.
 
     agedashii_washi/forms.py carried `from .. import api as M` inside
-    rebuilder(). It was correct at its old home, flet_app/pages/_forms.py,
+    rebuilder(). It was correct at its old home, agedashii_tofu/pages/_forms.py,
     where api really was two levels up. As a top-level package there is no
     second level, so every call raised
 
@@ -102,7 +102,7 @@ class TheSplitHoldsItsShape(unittest.TestCase):
 
     def test_no_app_imports_another_app_or_home(self):
         forbidden_for = {
-            name: {"flet_app"} | (set(APPS) - {name}) for name in APPS
+            name: {"agedashii_tofu"} | (set(APPS) - {name}) for name in APPS
         }
         offenders = []
         for name, root in APPS.items():

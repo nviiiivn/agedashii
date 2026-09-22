@@ -6,9 +6,9 @@ old names so that none of its seventeen pages had to change while the
 split apps - Moto, Watudo, Foodzen - are being proven. Nothing is removed
 from Home until those ship and work.
 
-These are ALIASES, not copies. ``sys.modules["flet_app.api"]`` IS
+These are ALIASES, not copies. ``sys.modules["agedashii_tofu.api"]`` IS
 ``agedashii_washi.api``, the same object, so a test that patches
-``flet_app.api.something`` patches the real module. An earlier version of
+``agedashii_tofu.api.something`` patches the real module. An earlier version of
 this file re-exported the names instead, which quietly gave every test a
 private copy to patch and broke 156 of them at once.
 """
