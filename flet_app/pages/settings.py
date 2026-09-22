@@ -371,7 +371,15 @@ def panels_card(page, saver, on_layout=None):
             width_text.update()
 
         async def on_width_settle(e):
-            span = panels.snap_width(round(e.control.value))
+            # NOT snapped. This used to call panels.snap_width(), which
+            # pulled the value to the nearest common fraction within two
+            # columns - so dragging to 22 and letting go silently became
+            # 20. With stops at 60/45/40/30/20/15/12/10 that captured a
+            # large part of the range, and her verdict was exact: "i still
+            # can't customize the sizing its like 'your way' or nothing".
+            # The tap-to-preset shortcut on the edit-mode grip is the fast
+            # path to a tidy fraction; the slider now means what it says.
+            span = round(e.control.value)
             prefs.set_panel_width(surface, key, span)
             e.control.value = span
             width_text.value = panels.width_label(span)

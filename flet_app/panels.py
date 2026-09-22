@@ -92,6 +92,12 @@ def width_label(span):
 def snap_width(span):
     """`span` pulled to the nearest common fraction, if it is close enough.
 
+    NOT called on any user gesture any more. Both callers - the settings
+    slider's release and the edit-mode grip's release - used to run a drag
+    through this, which quietly overrode a deliberate custom width with a
+    tidy one. Kept because it is the right helper if snapping is ever made
+    opt-in, and it is covered by tests.
+
     Call this once, at the end of a gesture - a slider's `on_change_end`,
     a drag's `on_grip_end` - never while a drag or slider is still moving,
     so the motion itself feels continuous and only the landing spot gets
@@ -544,12 +550,12 @@ def _editable(surface, key, label, width, height, content):
         # side back down near 1/60.
         target = prefs.cycle_panel_width(surface, key, steps, wrap=False)
         if target is not None:
-            # Snap the *landing* column to a common fraction if it is close
-            # enough, then save that instead - the drag itself already
-            # moved continuously; only the release gets pulled tidy.
-            snapped = snap_width(target)
-            if snapped != target:
-                prefs.set_panel_width(surface, key, snapped)
+            # The landing column is kept exactly as dragged. This used to
+            # call snap_width() and save the tidied value instead, which
+            # meant a deliberate 22 became 20 on release. Her words: "i
+            # still can't customize the sizing its like 'your way' or
+            # nothing". Tapping the grip still jumps between the common
+            # fractions, which is the fast path; the drag is now literal.
             _apply()
 
     def on_grip_tap(e):

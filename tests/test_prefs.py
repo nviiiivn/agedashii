@@ -1865,17 +1865,26 @@ class CardEditMode(unittest.TestCase):
         self._sweep(self._grip()[0], 200, 197, 195)      # 5px, under one column
         self.assertEqual(prefs.panel_width(self.SURFACE, first), self.panels.COLUMNS)
 
-    def test_a_drag_that_lands_near_a_stop_snaps_there(self):
-        """Assistance, not a constraint: close to a common fraction settles
-        exactly on it; far from every one is left exactly where she put it
-        (covered by test_a_long_drag_moves_further_than_a_short_one, which
-        lands on 40 with room to spare on both sides)."""
+    def test_a_drag_lands_exactly_where_she_put_it(self):
+        """No snapping. This asserted the opposite until she said "i still
+        can't customize the sizing its like 'your way' or nothing" - a drag
+        to 42 was being pulled to the 40 stop two columns away, and with
+        stops at 60/45/40/30/20/15/12/10 that captured much of the range.
+        Tapping the grip still jumps between the tidy fractions; dragging
+        is literal."""
         self.panels.set_editing(True)
         first = prefs.panels(self.SURFACE)[0]
-        # 60 - 18 columns = 42, one column short of the 40 stop - within
-        # WIDTH_SNAP_TOLERANCE (2) of it.
+        # 60 - 18 columns = 42, one column short of the 40 stop. It must
+        # stay 42.
         self._sweep(self._grip()[0], 300, 156)           # 144px left = 18 columns
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), 40)
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), 42)
+
+    def test_every_column_between_the_stops_is_reachable(self):
+        """The point of a custom width: the values a snap would have eaten."""
+        for span in (42, 41, 39, 31, 29, 22, 19, 13, 11, 7, 3):
+            with self.subTest(span=span):
+                self.assertTrue(prefs.set_panel_width(self.SURFACE, "weather", span))
+                self.assertEqual(prefs.panel_width(self.SURFACE, "weather"), span)
 
     def test_an_event_shaped_differently_costs_the_drag_not_the_app(self):
         """A gesture handler that raises is invisible; the card just dies."""
