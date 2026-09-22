@@ -21,8 +21,10 @@ description = "Companion app for dashbored - nvii's homelab dashboard"
 requires-python = ">=3.12"
 
 [tool.flet]
-# Display name: window title, .desktop entry, macOS product, app launcher.
-product = "agedashii"
+# Display name: window title, .desktop entry, macOS product, app launcher,
+# and the label Android shows in the launcher and the multitasking view.
+# Capital A: it is a name, not a package.
+product = "Agedashii"
 org = "online.iamprettyfamous"
 # Pinned rather than left to be composed from org + project name, so the
 # identity the OS installs under can never drift with a directory rename.
@@ -32,3 +34,40 @@ org = "online.iamprettyfamous"
 bundle_id = "online.iamprettyfamous.agedashii"
 company = "nvii"
 copyright = "Copyright (c) 2026 nvii"
+
+# Permissions. Without these the plugin is present, the code runs, and the
+# feature fails at the point of use with a message about the manifest -
+# which is exactly what XNAV did: "Record" produced "location permissions
+# are not declared in the platform manifest". Declaring the plugin in
+# requirements.txt does NOT declare its permissions; flet writes
+# AndroidManifest.xml and Info.plist from these tables and nothing else.
+#
+# LOCATION is for XNAV: live position, track recording, route-from-here.
+# BACKGROUND and FOREGROUND_SERVICE_LOCATION are what keep a ride recording
+# while the screen is off, which is the normal way a ride is recorded.
+[tool.flet.android.permission]
+"android.permission.ACCESS_FINE_LOCATION" = true
+"android.permission.ACCESS_COARSE_LOCATION" = true
+"android.permission.ACCESS_BACKGROUND_LOCATION" = true
+"android.permission.FOREGROUND_SERVICE_LOCATION" = true
+# CAMERA is for the EatZen photo feature. FilePicker's image source offers
+# the camera as well as the gallery, and the camera half fails the same way
+# as GPS did without this.
+"android.permission.CAMERA" = true
+"android.permission.READ_MEDIA_IMAGES" = true
+
+# Declared as NOT required so the Play listing and sideload do not refuse a
+# device that lacks GPS hardware - the app degrades to network location
+# rather than being uninstallable.
+[tool.flet.android.feature]
+"android.hardware.location.gps" = false
+"android.hardware.location.network" = false
+"android.hardware.camera" = false
+
+# iOS wants a sentence per permission, shown verbatim in the system prompt,
+# and the App Store rejects a build that uses the API without one.
+[tool.flet.ios.info]
+NSLocationWhenInUseUsageDescription = "Agedashii uses your location to show where you are on the map and to record a ride."
+NSLocationAlwaysAndWhenInUseUsageDescription = "Agedashii keeps reading your location while a ride is recording, including when the screen is off."
+NSCameraUsageDescription = "Agedashii uses the camera to photograph a meal or a nutrition label."
+NSPhotoLibraryUsageDescription = "Agedashii reads a photo you choose of a meal or a nutrition label."

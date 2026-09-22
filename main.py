@@ -628,6 +628,15 @@ async def main(page):
         if prefs.bottom_bar_enabled():
             chrome.append(bottom_bar())
         shell = ft.Column(spacing=0, expand=True, controls=chrome)
+        # Keep the chrome out from under the hardware. On a Pixel 8 Pro the
+        # topbar drew beneath the clock and battery and the gesture bar sat
+        # over the bottom row, so the menu was half unreachable - the app
+        # had no SafeArea anywhere. Flutter reports zero intrusions on
+        # desktop, so this is a no-op on the laptop rather than a second
+        # layout to keep working. It wraps the chrome and NOT the CRT
+        # overlay below: a screen effect that stopped short of the cutout
+        # would draw a bright band exactly where the cutout is.
+        shell = ft.SafeArea(content=shell, expand=True)
         # The CRT vignette goes on here, once, over the whole shell - not
         # per page and not per card. Two controls for the entire app when it
         # is on, none at all when it is off, which is the default. The
