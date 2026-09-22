@@ -24,11 +24,20 @@ from agedashii_washi import prefs
 from agedashii_washi.ui_compat import PAL, RAD, card, chip, sub, title
 from agedashii_washi.forms import Writer, offline_banner, rebuilder
 
+from .. import glyphs
+
 # Longest side kept once a photo leaves the device. A phone photo off the
 # sensor is 3-8 MB; neither the vision model nor the upload needs more than
 # this, and shrinking it here (not just on the server) keeps a slow upload
 # from being the reason "never block the UI" gets broken.
 PHOTO_MAX_PX = 1280
+
+# The slot the food emoji sits in, at the head of a row. Fixed width so the
+# food fields line up down the card whether or not the glyph came back empty,
+# and a plain Container rather than an expanding one because this row is a
+# Wrap and an Expanded child of a Wrap has no width to take a share of - see
+# the long comment at `line` below for what that looked like on screen.
+EMOJI_SLOT_W = 22
 
 # The food name field's width. Wide enough to read a real food name in -
 # "chicken breast, meat and skin" - and narrow enough that on a ~411 dp

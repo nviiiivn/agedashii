@@ -51,7 +51,12 @@ import flet as ft
 from agedashii_washi import api as M
 from agedashii_washi import config
 from agedashii_washi.ui_compat import PAL, PAD, BRD, RAD, card, chip, title, sub
-from ._wat2do_parts import HOME, haversine_m, miles
+# HOME is the shipped origin and `origin()` is the one in force - the same
+# point unless Settings has been given somewhere else to measure from. Both
+# are imported: everything below measures from `origin()`, and HOME stays
+# part of this module's surface because it is what the default *is*.
+from ._wat2do_parts import (HOME, haversine_m, miles, origin,  # noqa: F401
+                            origin_label)
 
 GEMS_PATH = "/api/future/gems"
 
@@ -185,7 +190,7 @@ def spot_from(element):
             "name": name, "cat": gem_classify(tags, name),
             "lat": round(float(lat), 6), "lon": round(float(lon), 6),
             "imgs": tag_images(tags),
-            "dist_m": haversine_m(HOME, (float(lat), float(lon)))}
+            "dist_m": haversine_m(origin(), (float(lat), float(lon)))}
 
 
 def spots_from(elements):
@@ -246,7 +251,7 @@ def curated_spots(curated, key):
                       "lat": round(lat, 6), "lon": round(lon, 6),
                       "note": str(r.get("note") or ""), "imgs": [],
                       "url": str(r.get("url") or ""),
-                      "dist_m": haversine_m(HOME, (lat, lon))})
+                      "dist_m": haversine_m(origin(), (lat, lon))})
     spots.sort(key=lambda s: s["dist_m"])
     return spots[:MAX_CURATED], nameless
 
@@ -262,7 +267,7 @@ def gem_to_spot(gem):
             "cat": gem.get("cat") or "pretty", "lat": lat, "lon": lon,
             "note": gem.get("note") or "", "imgs": [],
             "pending": bool(gem.get("pending")),
-            "dist_m": haversine_m(HOME, (lat, lon))}
+            "dist_m": haversine_m(origin(), (lat, lon))}
 
 
 # -------------------------------------------------------------- server calls
@@ -272,8 +277,13 @@ def scan(cats, radius_m, centre=None):
     Served from the store, so the last scan you ran is still there in a
     canyon. Each (cats, radius, centre) is its own cache entry, which is the
     point: they are different questions with different answers.
+
+    `centre` had no caller at all until Settings grew an origin: every scan
+    was measured from the shipped HOME whatever the rest of the app thought.
+    It defaults to `origin()` now, so the default is still HOME and the
+    parameter means something.
     """
-    lat, lon = centre or HOME
+    lat, lon = centre or origin()
     if not cats:
         return []
     joined = ",".join(sorted(cats))
@@ -543,13 +553,13 @@ def build(page):
         metres = dict(DISTANCES)[_S["dist"]]
         say(True, f"scanning {_S['dist']} mi...")
         repaint()
-        got = await asyncio.to_thread(scan, list(_S["cats"]), metres)
+        got = await asyncio.to_thread(scan, list(_S["cats"]), metres, origin())
         if got is None:
             _S["spots"] = None
             say(False, config.STATUS.get("detail") or "server unreachable")
         else:
             _S["spots"] = got
-            say(True, f"{len(got)} within {_S['dist']} mi of home")
+            say(True, f"{len(got)} within {_S['dist']} mi of {origin_label()}")
         rerender()
 
     # --------------------------------------------------------------- writes

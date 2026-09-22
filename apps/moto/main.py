@@ -1,6 +1,6 @@
 """Agedashii Moto - Trips + Garage, in an app of its own.
 
-Three surfaces and nothing else:
+Three surfaces, their own Settings, and a guide:
 
   Trips    the trip library, the two-point offline planner, the route
            editor, recorded rides, and xNav as its fourth tab
@@ -8,15 +8,36 @@ Three surfaces and nothing else:
            and the server's Craigslist/Reddit scanner
   XNAV     the live map on its own, full height - GPS, track recording and
            turn-by-turn guidance
+  Settings this app's own: the server address, the theme, the corner
+           radius, the glow, the CRT overlay, the navigation itself, and
+           the units - none of which could be changed from inside Moto
+           before, only by opening the dashboard app instead
+  Help     "How this works", off Settings. Not on the bar: it is read
+           once, and the bar is for the places you go back to.
 
-This file is the shell those three live in: the topbar, the drawer, the
-bottom bar, the theme, the CRT overlay and the outbox chip. It builds none
-of the surfaces itself - `agedashii_moto.pages` does that, and it was
-already doing it inside the big dashboard app before the split.
+This file is the shell they live in: the topbar, the drawer, the bottom
+bar, the theme, the CRT overlay and the outbox chip. It builds none of the
+surfaces itself - `agedashii_moto.pages` does that, and it was already
+doing it inside the big dashboard app before the split.
+
+THE BAR IS THE NAVIGATION; THE MENU IS AN OPTION
+    "Each of these smaller apps (not tofu) work better with the bottom
+    navigation bar and less with the hamburger menu... i want the ability
+    to show / hide the hamburger menu trigger as well."
+
+    So the bar carries all four surfaces and is on by default, and the
+    hamburger is a preference. Hidden, its slot in the topbar is not
+    drawn at all rather than left as a dead gap. Nothing becomes
+    unreachable either way: the bar reaches every surface, Help hangs off
+    Settings, and the tabs inside Trips and Garage have always been on
+    the surfaces themselves as well as in the drawer.
+
+    One rail: the last of the two cannot be switched off. See
+    `motoprefs.hamburger_shown`.
 
 It is modelled on the dashboard's own `main.py` and deliberately does not
 import it. Home carries nine pages, a layout editor, a Settings page and a
-set of preferences naming all nine; Moto carries three surfaces that fit on
+set of preferences naming all nine; Moto carries four surfaces that fit on
 a bottom bar with room to spare. Importing Home's shell would bring the
 other six pages, their network reads and their preferences along with it,
 which is the whole thing the split was for.
@@ -30,9 +51,10 @@ WHAT NEEDS A NETWORK, AND WHAT DOES NOT
 
     Everything else is local and stays local: the 24 themes, the corner
     radius, the glow, the CRT overlay, the per-surface card layouts, the
-    units, the routing graph and the map tiles. A ride planned in a canyon
-    with no bars plans the same as one planned on wifi, and the map draws
-    from the on-device MBTiles archive rather than going quiet.
+    units, the navigation preferences, the routing graph and the map
+    tiles. A ride planned in a canyon with no bars plans the same as one
+    planned on wifi, and the map draws from the on-device MBTiles archive
+    rather than going quiet.
 
     The chip in the topbar is the one place the difference is admitted to:
     it appears only when the server has not got something yet, says what,
@@ -49,20 +71,58 @@ from agedashii_washi import config, panels, prefs
 from agedashii_washi.surface import _TAB_INDEX, _dismiss, _show
 from agedashii_washi.widgets import BRD, PAD
 
-from agedashii_moto.pages import garage, trips, xnav
+from agedashii_moto import motoprefs
+from agedashii_moto.pages import garage, help as helppage, settings, trips, xnav
 
 # The gradient the brand pill is painted in. The same three stops the
 # dashboard uses, because it is the same brand - Moto is a door into it,
 # not a different product.
 ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 
-#: Every surface, in menu order. Three of them, so unlike Home there is no
-#: "More" sentinel and no split between a bar set and a menu set: the bar
-#: and the drawer list exactly the same three things.
-PAGES = ["trips", "garage", "xnav"]
-LABELS = {"trips": "Trips", "garage": "Garage", "xnav": "XNAV"}
-ICONS = {"trips": ft.Icons.MAP, "garage": ft.Icons.TWO_WHEELER,
-         "xnav": ft.Icons.NAVIGATION}
+#: Every surface on the navigation, in order. Four of them, so unlike Home
+#: there is still no "More" sentinel and no split between a bar set and a
+#: menu set: the bar and the drawer list exactly the same four things.
+PAGES = ["trips", "garage", "xnav", "settings"]
+
+#: Reachable, but not on the bar. Help is read once and then not again;
+#: giving it a permanent slot would cost a fifth of the bar for it.
+EXTRA_PAGES = ["help"]
+
+#: The surfaces built out of `panels.layout` - the ones the topbar's
+#: Arrange button applies to. Settings and Help are ordinary columns with
+#: nothing to rearrange, so a test that asks "does every surface register a
+#: card stack" asks it of these three and not of all five.
+CARD_PAGES = ["trips", "garage", "xnav"]
+
+#: Where the bar's highlight goes for a surface that is not on the bar.
+#: Help lives under Settings, so standing in Help lights Settings rather
+#: than nothing - a bar with no selection reads as "you are nowhere".
+NAV_PARENT = {"help": "settings"}
+
+LABELS = {"trips": "Trips", "garage": "Garage", "xnav": "XNAV",
+          "settings": "Settings", "help": "Help"}
+
+# Themed Material icons, never emoji: this is chrome, and chrome has to
+# follow all 24 themes. An emoji is painted by the font at a fixed colour
+# and would sit on the design rather than in it.
+#
+# Four marks that cannot be mistaken for each other at 24px, which the old
+# set could: MAP for Trips beside NAVIGATION for XNAV is two arrows on two
+# maps. ROUTE is a line with stops on it - a planned trip; NAVIGATION is
+# the compass arrow - where you are now; TWO_WHEELER is a motorcycle; TUNE
+# is a row of sliders, which is what Settings actually is, rather than the
+# gear every app in the world uses for everything.
+ICONS = {"trips": ft.Icons.ROUTE_OUTLINED, "garage": ft.Icons.TWO_WHEELER,
+         "xnav": ft.Icons.NAVIGATION_OUTLINED, "settings": ft.Icons.TUNE,
+         "help": ft.Icons.MENU_BOOK}
+
+# The filled twin of each mark, for the destination you are standing on.
+# Outline-to-filled is Material's own selected-state language and it reads
+# at a glance on a phone, where the indicator pill alone is easy to miss in
+# bright sun.
+ICONS_SELECTED = {"trips": ft.Icons.ROUTE, "garage": ft.Icons.TWO_WHEELER,
+                  "xnav": ft.Icons.NAVIGATION, "settings": ft.Icons.TUNE,
+                  "help": ft.Icons.MENU_BOOK}
 
 # What sits inside each surface, so the drawer can offer a tab directly
 # instead of landing you on the surface to hunt for it. Each entry is
@@ -70,7 +130,10 @@ ICONS = {"trips": ft.Icons.MAP, "garage": ft.Icons.TWO_WHEELER,
 # must match the `_tabs(..., key=)` calls in the page modules, and a test
 # walks both and fails if they drift.
 #
-# XNAV has no entry because it has no tabs - it is one screen.
+# XNAV has no entry because it has no tabs - it is one screen. Settings
+# has one that is not a tab at all: Help is a surface of its own, and the
+# drawer offering it is the second way in beside the row on the Settings
+# page itself.
 SUBPAGES = {
     "trips": [("Selekt", [("trips", 0)], 1), ("Produce", [("trips", 1)], 1),
               ("Rides", [("trips", 2)], 1), ("xNav", [("trips", 3)], 1)],
@@ -78,6 +141,23 @@ SUBPAGES = {
                ("Mechanic", [("garage", 1)], 1),
                ("Flipper", [("garage", 2)], 1)],
 }
+
+#: Sub-rows that navigate to another surface rather than to a tab. Kept
+#: apart from SUBPAGES because the test that walks SUBPAGES against the
+#: page modules' own `_tabs()` calls would have nothing to match this to.
+SUBSURFACES = {"settings": [("How this works", "help", 1)]}
+
+
+def _sub_rows(key):
+    """Everything the drawer would list *under* `key` - tabs and surfaces.
+
+    One question with one answer, because three places used to ask it and
+    two of them only knew about SUBPAGES: whether to draw a chevron,
+    whether to draw the rows, and which rows. A surface with only a
+    sub-surface (Settings) would otherwise get its rows suppressed by the
+    chevron test and never appear.
+    """
+    return list(SUBPAGES.get(key, [])) + list(SUBSURFACES.get(key, []))
 
 # How often the outbox watcher looks up from its book. Matched to
 # api.ONLINE_RECHECK, which is how long a "we are offline" verdict is
@@ -96,11 +176,22 @@ def build_surface(page, key):
     Split out of `render` so the tests can build every surface without
     standing up a shell, and so the shell has exactly one place that maps a
     key to a page module.
+
+    Every builder takes only `page`, Settings included. The two things
+    Settings needs from the shell - repaint everything, go somewhere else -
+    are read off `S`, where the shell parks them, so this signature stays
+    one line and a surface built with no shell around it can see that
+    there is nowhere to go rather than being handed a callback into a dead
+    page.
     """
     if key == "garage":
         return garage.build(page)
     if key == "xnav":
         return xnav.build(page)
+    if key == "settings":
+        return settings.build(page)
+    if key == "help":
+        return helppage.build(page)
     return trips.build(page)
 
 
@@ -134,6 +225,17 @@ async def main(page):
     # theme she gets in all of them.
     await prefs.load(S.prefs)
     prefs.apply_runtime()
+    # Moto's own two keys, and the reason they are not in `prefs`: that
+    # module writes exactly the keys its own `_defaults()` names, so a key
+    # added from here would be read from nowhere and saved nowhere. See
+    # agedashii_moto/motoprefs.py.
+    await motoprefs.load(S.prefs)
+    # The theme, applied before anything paints. The dashboard's picker has
+    # always changed the theme and never written it down, so every launch
+    # opened on the shipped default again however many times she had picked
+    # another - "the dashboard's picker famously resets every launch". This
+    # is the read half of the fix; Settings > Theme is the write half.
+    apply_theme(page, motoprefs.theme())
 
     body = ft.Container(expand=True, padding=PAD(12, 12))
 
@@ -293,6 +395,13 @@ async def main(page):
             render(page_key)
         return handler
 
+    def go_surface(key):
+        """A drawer sub-row that is another surface - Settings > Help."""
+        async def handler(e):
+            await page.close_drawer()
+            render(key)
+        return handler
+
     def _drawer_go(key):
         page.run_task(_drawer_go_async, key)
 
@@ -347,7 +456,7 @@ async def main(page):
             # unconditional, chevron or not. A surface with no sub-items
             # (XNAV) gets exactly the row it would have had anyway: no
             # chevron, no indent, no extra wrapper.
-            if not SUBPAGES.get(k):
+            if not _sub_rows(k):
                 return ft.Container(
                     padding=PAD(14, 9), border_radius=RAD(8), ink=True,
                     on_click=lambda e, key=k: _drawer_go(key),
@@ -375,11 +484,16 @@ async def main(page):
                                controls=[nav, chevron]),
                 **highlight)
 
-        def sub_row(label, page_key, tab_path, depth=1):
+        def sub_row(label, on_click, depth=1):
             return ft.Container(
                 padding=ft.Padding(14 + 20 * depth, 6, 14, 6),
                 border_radius=RAD(8), ink=True,
-                on_click=go_sub(page_key, tab_path),
+                # The drawer's rows had no press feedback at all beyond the
+                # ripple; 120 ms on the hover/selected tint is what makes a
+                # tap feel answered rather than merely obeyed.
+                ink_color=ft.Colors.with_opacity(0.18, p["accent"]),
+                animate=ft.Animation(120, ft.AnimationCurve.EASE_OUT),
+                on_click=on_click,
                 content=ft.Text(label, size=12.5, color=p["text2"]))
 
         for k in PAGES:
@@ -387,9 +501,13 @@ async def main(page):
             # Sub-items only draw while their section is open - a surface
             # with none of its own never reaches drawer_section_open at all,
             # matching "no chevron, no rows".
-            if SUBPAGES.get(k) and prefs.drawer_section_open(k, current[0]):
-                for label, tab_path, depth in SUBPAGES[k]:
-                    rows.append(sub_row(label, k, tab_path, depth))
+            if _sub_rows(k) and prefs.drawer_section_open(k, current[0]):
+                for label, tab_path, depth in SUBPAGES.get(k, []):
+                    rows.append(sub_row(label, go_sub(k, tab_path), depth))
+                # A sub-row that is another surface rather than a tab -
+                # Settings > How this works. Same shape, different handler.
+                for label, target, depth in SUBSURFACES.get(k, []):
+                    rows.append(sub_row(label, go_surface(target), depth))
 
         return ft.NavigationDrawer(bgcolor=p["bg2"], controls=rows)
 
@@ -404,6 +522,12 @@ async def main(page):
         naming the current one needs a mouse, which a phone does not have.
         The theme is shared storage, so picking one here is picking it for
         every Agedashii app on the device.
+
+        Kept beside the full picker in Settings rather than replaced by it:
+        this is one tap from anywhere and Settings is two, and switching
+        theme is the one appearance change she makes often. Both write the
+        same key - a theme picked here survives a restart exactly as one
+        picked there does.
         """
         p = PAL()
 
@@ -411,7 +535,13 @@ async def main(page):
             def handler(e):
                 _dismiss(page, dlg)
                 apply_theme(page, key)
+                motoprefs.set_theme(key)
                 render(current[0])
+                # Storage is async and the repaint above is not, so the
+                # write goes behind the frame rather than in front of it.
+                run_task = getattr(page, "run_task", None)
+                if callable(run_task) and S.prefs is not None:
+                    run_task(motoprefs.save, S.prefs)
             return handler
 
         def swatch(key):
@@ -420,6 +550,8 @@ async def main(page):
             return ft.Container(
                 padding=PAD(10, 8), border_radius=RAD(8), ink=True,
                 on_click=pick(key),
+                ink_color=ft.Colors.with_opacity(0.18, p["accent"]),
+                animate=ft.Animation(120, ft.AnimationCurve.EASE_OUT),
                 bgcolor=ft.Colors.with_opacity(0.14, p["accent"]) if on else None,
                 content=ft.Row(spacing=10, controls=[
                     # The theme's own colours, so the row previews itself.
@@ -464,15 +596,24 @@ async def main(page):
         p = PAL()
         editing = panels.editing()
         # Only on a surface that has a card stack to arrange. A button that
-        # does nothing is worse than no button.
+        # does nothing is worse than no button, which is also why Settings
+        # and Help - ordinary columns, nothing to rearrange - get no
+        # Arrange button rather than a disabled one.
         arrange = [ft.IconButton(
             ft.Icons.CHECK if editing else ft.Icons.DASHBOARD_CUSTOMIZE,
             icon_color=p["accent"] if editing else p["text2"],
             tooltip="Done arranging" if editing
             else "Arrange the cards on this page",
             on_click=toggle_customize)] if (panels.has_surface() or editing) else []
+        # Hidden means *gone*, not disabled and not an empty box of the same
+        # width: "when hidden, its topbar slot goes away entirely rather
+        # than leaving a dead gap". The brand pill slides left into the
+        # space, which is the same place it sits on the website.
+        menu = [ft.IconButton(ft.Icons.MENU, icon_color=p["text2"],
+                              tooltip="Menu", on_click=open_menu)] \
+            if motoprefs.hamburger_shown() else []
         return ft.Row(spacing=10, controls=[
-            ft.IconButton(ft.Icons.MENU, icon_color=p["text2"], on_click=open_menu),
+            *menu,
             brand_chip(),
             ft.Text(LABELS[current[0]], size=12, color=p["text2"]),
             ft.Container(expand=True),
@@ -490,21 +631,36 @@ async def main(page):
             render(PAGES[idx])
 
     def bottom_bar():
-        # selected_index must be a real index (Flet asserts on it). All three
-        # surfaces are on the bar, so `current` is always one of them - but
-        # the fallback stays rather than trusting that forever.
-        here = PAGES.index(current[0]) if current[0] in PAGES else 0
+        p = PAL()
+        # selected_index must be a real index (Flet asserts on it). Every
+        # surface on the bar is in PAGES, and a surface that is not - Help -
+        # lights its parent instead of nothing, so the bar never reads as
+        # "you are nowhere". The final fallback stays rather than trusting
+        # either of those forever.
+        here = NAV_PARENT.get(current[0], current[0])
+        index = PAGES.index(here) if here in PAGES else 0
         return ft.NavigationBar(
-            selected_index=here, destinations=[
-                ft.NavigationBarDestination(icon=ICONS[k], label=LABELS[k])
+            selected_index=index,
+            # Icons as controls rather than bare names, so each one is
+            # tinted from PAL() and follows all 24 themes instead of taking
+            # whatever Material's seeded scheme decided. The selected one is
+            # the filled twin in the accent colour - Material's own
+            # selected-state language, and legible in sunlight where the
+            # indicator pill alone is not.
+            destinations=[
+                ft.NavigationBarDestination(
+                    icon=ft.Icon(ICONS[k], color=p["text2"]),
+                    selected_icon=ft.Icon(ICONS_SELECTED[k], color=p["accent"]),
+                    label=LABELS[k], tooltip=LABELS[k])
                 for k in PAGES],
             on_change=bottom_pick,
+            animation_duration=180,
         )
 
     # -------------------------------------------------------------- render
     def render(key):
         p = PAL()
-        if key not in PAGES:
+        if key not in PAGES and key not in EXTRA_PAGES:
             key = FIRST_PAGE
         current[0] = key
         # Cleared before the body builds and set again by panels.layout(), so
@@ -519,9 +675,11 @@ async def main(page):
         chrome = [ft.Container(padding=PAD(8, 12), bgcolor=p["bg"],
                                content=topbar()),
                   body]
-        # The bar repeats what the drawer lists; off, the content gets the
-        # height back and the drawer still reaches all three. Off is worth
-        # having on XNAV in particular, where every row of pixels is map.
+        # The bar is the primary navigation and is on by default; off, the
+        # content gets the height back and the drawer - which cannot also
+        # be hidden, see motoprefs.hamburger_shown - still reaches
+        # everything. Off is worth having on XNAV in particular, where
+        # every row of pixels is map.
         if prefs.bottom_bar_enabled():
             chrome.append(bottom_bar())
         shell = ft.Column(spacing=0, expand=True, controls=chrome)

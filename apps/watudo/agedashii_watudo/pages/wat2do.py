@@ -37,6 +37,7 @@ from agedashii_washi.forms import offline_banner
 from agedashii_washi.surface import _tabs
 from . import _wat2do_parts as W
 from . import future
+from .. import prefs as wprefs
 
 try:                      # optional: the app still runs without the extension
     import flet_map as fmap
@@ -221,8 +222,19 @@ def _present(page):
         done, total = W.progress(flat)
         prog.value = (done / total) if total else 0
         count.value = f"{done}/{total}"
-        items_box.controls = ([item_row(it, i) for i, it in enumerate(flat)]
-                              or [sub("No items - edit the template.", 11)])
+        # The index handed to `toggle` is the row's place in the *whole*
+        # list, taken before anything is filtered out. Enumerating first and
+        # filtering after is what keeps a tick landing on the task it was
+        # next to once finished ones stop being drawn.
+        hide = wprefs.hide_done()
+        rows = [item_row(it, i) for i, it in enumerate(flat)
+                if not (hide and W.row_checked(it))]
+        if not rows and flat:
+            # Everything is done and she has asked not to see finished
+            # tasks. Saying so beats an empty card that looks like a
+            # checklist that failed to load.
+            rows = [sub(f"All {total} done for today.", 11)]
+        items_box.controls = rows or [sub("No items - edit the template.", 11)]
 
     def checklist_card():
         return card(ft.Column(spacing=8, controls=[
@@ -351,7 +363,7 @@ def _present(page):
             url_template=W.BASEMAPS[_S["basemap"]][1],
             user_agent_package_name="online.iamprettyfamous.agedashii")
         home_marker = fmap.Marker(
-            coordinates=fmap.MapLatitudeLongitude(*W.HOME), width=16, height=16,
+            coordinates=fmap.MapLatitudeLongitude(*W.origin()), width=16, height=16,
             content=ft.Container(width=14, height=14, border_radius=7,
                                  bgcolor="#3fb950",
                                  border=ft.Border.all(2, ft.Colors.WHITE)))
@@ -361,7 +373,7 @@ def _present(page):
         route_layer = fmap.PolylineLayer(polylines=[route_line])
         the_map = fmap.Map(
             height=MAP_HEIGHT, bgcolor=p["bg2"], keep_alive=True,
-            initial_center=fmap.MapLatitudeLongitude(*W.HOME), initial_zoom=13,
+            initial_center=fmap.MapLatitudeLongitude(*W.origin()), initial_zoom=13,
             min_zoom=3, max_zoom=18,
             layers=[tile_layer, route_layer, marker_layer])
 
@@ -482,7 +494,7 @@ def _present(page):
         _S["poi_note"] = poi_note.value
         paint_markers()
         paint_spots()
-        await fit([W.HOME] + [(s["lat"], s["lon"]) for s in _S["spots"]])
+        await fit([W.origin()] + [(s["lat"], s["lon"]) for s in _S["spots"]])
         repaint()
 
     def paint_spots():
@@ -613,7 +625,7 @@ def _present(page):
             say(True, "")
             repaint()
             return
-        centre = W.HOME
+        centre = W.origin()
         if MAPS_AVAILABLE:
             try:
                 cam = await the_map.get_camera()
@@ -648,9 +660,21 @@ def _present(page):
                            color=p["text2"])
     suggest_chip = ft.Row(spacing=5, tight=True, controls=[])
 
-    def paint_suggest():
+    def steering():
+        """The two numbers the suggestion and the mission roll are allowed.
+
+        (None, None) when Settings > Pain & spoons has turned steering off,
+        which makes both fall back to the weather alone - the numbers are
+        still recorded, they just stop deciding anything. One place, so the
+        mode chip and the dice can never disagree about what today is.
+        """
+        if not wprefs.vitals_steer():
+            return None, None
         s = _S["state"] or {}
-        mode, why = W.suggest(_num(s.get("pain")), _num(s.get("spoons")), wx_cur)
+        return _num(s.get("pain")), _num(s.get("spoons"))
+
+    def paint_suggest():
+        mode, why = W.suggest(*steering(), wx_cur)
         label = W.MODES[mode]["label"] + (f" · {why}" if why else "")
         suggest_chip.controls = [ft.Icon(ft.Icons.LIGHTBULB, size=13, color=p["yellow"]),
                                  ft.Text(label, size=11, color=p["yellow"])]
@@ -690,8 +714,7 @@ def _present(page):
         ]
 
     async def roll():
-        s = _S["state"] or {}
-        ctx = W.mission_context(_num(s.get("pain")), _num(s.get("spoons")), wx_cur)
+        ctx = W.mission_context(*steering(), wx_cur)
         mission_note.value = "rolling the dice..."
         repaint()
         venues = _S["venues"]
@@ -915,7 +938,7 @@ def _present(page):
                  "lat": e["lat"], "lon": e["lon"]}
                 for e in (cur.get("events") or [])
                 if e.get("d") == today and e.get("lat") is not None][:8]
-            movies = [(m, W.haversine_m(W.HOME, (m["lat"], m["lon"])))
+            movies = [(m, W.haversine_m(W.origin(), (m["lat"], m["lon"])))
                       for m in (cur.get("movies") or []) if m.get("lat") is not None]
             movies.sort(key=lambda x: x[1])
             out["movies"] = [{"name": m.get("name", ""),
@@ -963,10 +986,17 @@ def _present(page):
     if not _S["deck"]:
         _run(page, _load_deck)
 
-    body = panels.layout("wat2do", {
+    builders = {
         "date": date_nav, "checklist": checklist_card, "vitals": vitals_card,
         "weather": weather_card, "out": out_card, "today": today_card,
-    })
+    }
+    # Not tracking pain and spoons means not drawing the card and not writing
+    # either number. `panels.layout` skips a key with no builder, so the card
+    # keeps its place in her saved order and comes back where she left it the
+    # moment she turns tracking on again.
+    if not wprefs.track_vitals():
+        builders.pop("vitals")
+    body = panels.layout("wat2do", builders)
     # The offline banner and the save status are chrome, not panels: they
     # must not be hideable, or a failed write would have nowhere to show.
     return ft.Column(spacing=10, expand=True, controls=[

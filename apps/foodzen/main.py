@@ -8,13 +8,24 @@ apps in this repo share those two packages and share no code with each other,
 which is the point of the split; importing ``agedashii_tofu`` here would quietly
 undo it.
 
-Three surfaces:
+Five surfaces, four of them on the navigation:
 
     FoodZen   the website's page, unchanged - Grocery, Meals, Scrape,
               Expenses, and EatZen and BPM as its last two tabs.
     EatZen    food logging, promoted to a page of its own because in this
               app it is a headline feature and not a tab buried in Tools.
     BPM       blood pressure readings, same reasoning.
+    Settings  this app's own - server, all 24 themes (and it remembers
+              which), appearance, navigation, the sodium target.
+    Guide     how it all works, reached from Settings.
+
+Navigation is bottom-bar-first, which is what she asked for: "Each of these
+smaller apps (not tofu) work better with the bottom navigation bar and less
+with the hamburger menu". The bar carries every navigable surface, so the
+drawer is a convenience rather than a requirement - and the menu trigger is
+hidden by default and turned back on in Settings. With the bar switched off
+the trigger returns regardless, because an app with neither has no navigation
+at all; see prefs_local.hamburger_shown.
 
 Offline is the normal case, not the error case. Themes, layout, corner
 radius, the CRT and every preference are read from local storage and work
@@ -34,18 +45,38 @@ from agedashii_washi import api as M
 from agedashii_washi import config, panels, prefs
 from agedashii_washi.surface import _TAB_INDEX, _dismiss, _show
 from agedashii_washi.widgets import BRD, PAD
-from agedashii_foodzen.pages import eatzen, foodzen
+from agedashii_foodzen import glyphs, prefs_local
+from agedashii_foodzen.pages import eatzen, foodzen, guide, settings
 
 # The gradient in the brand pill. Same three as the dashboard and the website:
 # the pill is the identity across all of them, so it does not get restyled per
 # app - only the word inside it changes.
 ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 
-FOODZEN, EATZEN, BPM = "foodzen", "eatzen", "bpm"
-PAGES = [FOODZEN, EATZEN, BPM]
-LABELS = {FOODZEN: "FoodZen", EATZEN: "EatZen", BPM: "BPM"}
-ICONS = {FOODZEN: ft.Icons.SHOPPING_CART, EATZEN: ft.Icons.RESTAURANT,
-         BPM: ft.Icons.MONITOR_HEART}
+FOODZEN, EATZEN, BPM, SETTINGS, GUIDE = ("foodzen", "eatzen", "bpm",
+                                         "settings", "guide")
+
+# The navigation: what the bottom bar carries and what the menu lists. Four,
+# which is inside a NavigationBar's comfortable five.
+PAGES = [FOODZEN, EATZEN, BPM, SETTINGS]
+
+# Everything render() will accept. The guide is reachable from Settings and
+# from nowhere else - it is read once and then rarely, and the fourth slot on
+# a phone's bottom bar has better uses. It is still a real surface rather than
+# a dialog, because a manual in a 380px-tall modal is not a manual.
+SURFACES = PAGES + [GUIDE]
+
+# Which navigation entry lights up for a surface that is not itself one.
+PARENT = {GUIDE: SETTINGS}
+
+LABELS = {FOODZEN: "FoodZen", EATZEN: "EatZen", BPM: "BPM",
+          SETTINGS: "Settings", GUIDE: "How this works"}
+# Chrome, so these are themed Material icons and never emoji - see glyphs.py
+# for the rule. Named there rather than here so that "what is the sodium
+# mark" has one answer across the whole app.
+ICONS = {FOODZEN: glyphs.ICON_GROCERY, EATZEN: glyphs.ICON_EATZEN,
+         BPM: glyphs.ICON_BP, SETTINGS: glyphs.ICON_SETTINGS,
+         GUIDE: glyphs.ICON_HELP}
 
 # The tabs inside FoodZen, so the drawer can offer one directly instead of
 # making you land on the page and hunt for it. (label, tab index) against the
@@ -289,7 +320,7 @@ class Shell:
         rows = [ft.Container(height=12)]
 
         def page_row(k):
-            on = k == self.current
+            on = k == PARENT.get(self.current, self.current)
             highlight = dict(
                 # The row you are standing on is the app's active nav item;
                 # glow on, it gets alola's accent shadow. Only the active one,
@@ -343,6 +374,27 @@ class Shell:
             await opener()
 
     # ------------------------------------------------------------- topbar
+    def set_theme(self, key):
+        """Apply a theme, repaint, and remember it for the next launch.
+
+        The remembering is the part the dashboard never did - it applies and
+        stores nothing, which is why its theme resets at every launch. The
+        write is async and goes on the loop rather than being awaited here:
+        this is called from a tap handler, and a tap handler that waits on
+        storage is a tap handler that drops the next tap.
+        """
+        apply_theme(self.page, key)
+        prefs_local.set_theme(key)
+        self.render(self.current)
+        runner = getattr(self.page, "run_task", None)
+        if callable(runner) and S.prefs is not None:
+            async def remember():
+                await prefs_local.save(S.prefs)
+            try:
+                runner(remember)
+            except Exception:  # noqa: BLE001 - no loop: it still applied
+                pass
+
     def open_theme_picker(self, e=None):
         """A named, tappable list of every theme.
 
@@ -355,8 +407,7 @@ class Shell:
         def pick(key):
             def handler(e):
                 _dismiss(self.page, dlg)
-                apply_theme(self.page, key)
-                self.render(self.current)
+                self.set_theme(key)
             return handler
 
         def swatch(key):
@@ -406,6 +457,31 @@ class Shell:
             await prefs.save(S.prefs)
         self.render(self.current)
 
+    def lead_button(self):
+        """What sits in the top-left slot, or nothing at all.
+
+        Three states, in order:
+
+        - on the guide, a way back to the Settings screen that opened it;
+        - the hamburger, when she has asked for it (or when the bottom bar
+          is off and it is the only navigation left - see
+          prefs_local.hamburger_shown);
+        - nothing, and *no placeholder*. A hidden trigger that left a 48px
+          gap behind it would be the worst of both: the menu is gone and
+          the space it cost is not. The brand pill moves to the edge
+          instead, which is what "hide the hamburger menu trigger" has to
+          mean to be worth doing.
+        """
+        p = PAL()
+        if self.current == GUIDE:
+            return [ft.IconButton(ft.Icons.ARROW_BACK, icon_color=p["text2"],
+                                  tooltip="Back to Settings",
+                                  on_click=self._go(SETTINGS))]
+        if prefs_local.hamburger_shown():
+            return [ft.IconButton(ft.Icons.MENU, icon_color=p["text2"],
+                                  tooltip="Menu", on_click=self.open_menu)]
+        return []
+
     def topbar(self):
         p = PAL()
         editing = panels.editing()
@@ -415,7 +491,7 @@ class Shell:
             tooltip="Done arranging" if editing else "Arrange the cards on this page",
             on_click=self.toggle_customize)] if (panels.has_surface() or editing) else []
         return ft.Row(spacing=10, controls=[
-            ft.IconButton(ft.Icons.MENU, icon_color=p["text2"], on_click=self.open_menu),
+            *self.lead_button(),
             self.brand_chip(),
             ft.Container(expand=True),
             self.sync_chip,
@@ -431,11 +507,13 @@ class Shell:
             self.render(PAGES[idx])
 
     def bottom_bar(self):
-        # selected_index must be a real index (Flet asserts on it). Every page
-        # is on the bar here, so there is no "More" and nothing to fall back
-        # to - but the guard stays, because current is set by render() and a
-        # future page that is drawer-only must not crash the bar.
-        here = PAGES.index(self.current) if self.current in PAGES else 0
+        # selected_index must be a real index (Flet asserts on it). Every
+        # navigable page is on the bar, and a surface that is not one - the
+        # guide - lights up the entry it hangs off rather than falling back
+        # to the first tab, which would say you were on Grocery while you
+        # were reading the manual.
+        lit = PARENT.get(self.current, self.current)
+        here = PAGES.index(lit) if lit in PAGES else 0
         return ft.NavigationBar(
             selected_index=here,
             destinations=[ft.NavigationBarDestination(icon=ICONS[k], label=LABELS[k])
@@ -444,16 +522,34 @@ class Shell:
 
     # ------------------------------------------------------------- render
     def body_for(self, key):
-        """The page itself. One call, and nothing in it knows about the shell."""
+        """The page itself. One call, and nothing in it knows about the shell.
+
+        Settings is the exception, and only because it has to be: every knob
+        on it - the theme, the corner radius, the glow, the CRT, the bottom
+        bar, the menu trigger - changes the *chrome*, so repainting only the
+        body would leave the app half changed until you navigated away and
+        back. It is handed the shell's own repaint rather than reaching for
+        one, so it still builds in a harness with no shell at all.
+        """
         if key == EATZEN:
             return eatzen.build_eatzen(self.page)
         if key == BPM:
             return eatzen.build_bpm(self.page)
+        if key == SETTINGS:
+            return settings.build(self.page,
+                                  on_theme=self.repaint, on_layout=self.repaint,
+                                  on_help=lambda: self.render(GUIDE))
+        if key == GUIDE:
+            return guide.build(self.page, back=lambda: self.render(SETTINGS))
         return foodzen.build(self.page)
+
+    def repaint(self):
+        """Rebuild the whole shell on the surface you are standing on."""
+        self.render(self.current)
 
     def render(self, key=None):
         p = PAL()
-        key = key if key in PAGES else FOODZEN
+        key = key if key in SURFACES else FOODZEN
         self.current = key
         # Cleared before the body builds and set again by panels.layout(), so
         # the topbar - built after the body, below - knows whether this page
@@ -533,6 +629,13 @@ async def main(page):
     # CRT come from the same storage - all of it local, none of it a request.
     await prefs.load(S.prefs)
     prefs.apply_runtime()
+    # And this app's own two: the theme and whether the menu trigger is
+    # drawn. The theme is applied a second time here rather than at the top,
+    # because the top is where it has to be applied *before* storage has
+    # answered - a page with no theme at all cannot be painted, and waiting
+    # for storage before the first frame is how a splash screen happens.
+    await prefs_local.load(S.prefs)
+    apply_theme(page, prefs_local.theme())
 
     shell = Shell(page).attach()
 

@@ -27,7 +27,7 @@ CONFLICTS — read this before changing anything
 The dashbored server owns FoodZen, journal, garage and trips, and it writes
 *whole collections*: POST {kind, data} replaces the entire list. There is no
 merge, no field-level patch, and no revision check anywhere in the stack
-(see agedashii_tofu/api.py `_foodzen_apply`, which is already a read-modify-write).
+(see agedashii_washi/api.py `_foodzen_apply`, which is already a read-modify-write).
 
 So this is the situation that has to have an answer: the phone is in a tunnel,
 you tick something off the grocery list, and meanwhile the website adds two

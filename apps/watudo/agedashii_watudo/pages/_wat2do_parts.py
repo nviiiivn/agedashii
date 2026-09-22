@@ -34,8 +34,34 @@ import flet as ft
 from agedashii_washi import api as M
 from agedashii_washi import config
 
+from .. import prefs as wprefs
+
 # Vulcan Lofts, Oakland - the same origin the website measures everything from.
 HOME = (37.769972, -122.216445)
+
+
+def origin():
+    """The point every distance in this app is measured from.
+
+    HOME unless she has typed somewhere else in Settings, which is the only
+    thing that ever changes it. Nothing here asks the device where it is -
+    see the README; the app declares no location permission and this is what
+    it uses instead.
+
+    A function rather than a constant because it is read at draw time and has
+    to answer with whatever the setting says *now*: the map, the POI scan,
+    every distance column and `future.scan()`'s `centre` all come through
+    here, so changing it in Settings moves all of them at once. Read by the
+    dashboard as well, which never sets it and therefore always gets HOME.
+    """
+    return wprefs.origin() or HOME
+
+
+def origin_label():
+    """What to call the origin in a sentence: "home", or the coordinates."""
+    here = wprefs.origin()
+    return "home" if not here else f"{here[0]:.4f}, {here[1]:.4f}"
+
 
 # ---------------------------------------------------------------- POI catalogue
 # id / label / colour / Material icon / Overpass fragment. The fragments are the
@@ -190,7 +216,14 @@ def shift_date(date, delta):
 
 
 def date_label(date):
-    if date == today_str():
+    """What the date nav calls a day.
+
+    "Today" for today unless Settings > Your day has turned the friendly
+    names off, in which case every day reads as its own date. The setting is
+    read here rather than passed in because this is called from two places on
+    one page and the answer must not differ between them.
+    """
+    if date == today_str() and wprefs.friendly_dates():
         return "Today"
     try:
         return time.strftime("%a %d %b", time.strptime(date, "%Y-%m-%d"))
@@ -284,16 +317,23 @@ def template_lines(items):
 
 
 def parse_template_text(text):
-    """Editor text back to template lines, normalising sub markers like the site."""
+    """Editor text back to template lines, normalising sub markers.
+
+    A sub-task is written with whichever marker Settings > Template asks for
+    - "> " like the website, or a two-space indent. Both are read back by
+    `parse_items` here and by the website's own parser, so the choice only
+    decides what this end writes; neither can be misread by the other.
+    """
+    prefix = wprefs.sub_prefix()
     out = []
     for raw in (text or "").split("\n"):
         t = raw.strip()
         if not t:
             continue
         if t.startswith(">"):
-            out.append("> " + _SUB_STRIP.sub("", t).strip())
+            out.append(prefix + _SUB_STRIP.sub("", t).strip())
         elif _SUB_INDENT.match(raw):
-            out.append("> " + t)
+            out.append(prefix + t)
         else:
             out.append(t)
     return out
@@ -422,7 +462,7 @@ def spots_from(elements, allowed_ids=None):
         else:
             continue
         out.append({"name": name, "cat": cat, "lat": lat, "lon": lon,
-                    "dist_m": haversine_m(HOME, (lat, lon))})
+                    "dist_m": haversine_m(origin(), (lat, lon))})
     out.sort(key=lambda s: s["dist_m"])
     return out
 
@@ -499,9 +539,19 @@ def pick_venue(elements, ctx, rng=random):
 
 
 def roll_mission(venue, deck, ctx, rng=random):
-    """A whole mission: venue + 3-6 subjects + one constraint."""
+    """A whole mission: venue + subjects + one constraint.
+
+    Three to six subjects, as the website rolls it, unless Settings >
+    Missions has pinned a number - "3-6 is too many to hold in my head" is a
+    real answer, and so is wanting eight. A pinned number larger than the
+    deck still only ever yields the deck, since a subject is not drawn twice.
+    """
     deck = list(deck or []) or ["TRIANGLES", "STAIRS", "REFLECTIONS"]
-    n = 3 + rng.randrange(4)
+    # Drawn whether or not it is used, so the setting cannot shift the rest
+    # of the roll: with a number pinned, the venue and the constraint still
+    # come off the same sequence of dice they always did.
+    rolled = 3 + rng.randrange(4)
+    n = wprefs.mission_subjects() or rolled
     picked = []
     copy = list(deck)
     while copy and len(picked) < n:
@@ -608,7 +658,7 @@ def weather_now():
 
 
 def build_overpass_ql(cats, radius, ql_timeout=25):
-    lat, lon = HOME
+    lat, lon = origin()
     parts = []
     for c in cats:
         q = c["q"].replace("node[", f"node(around:{radius},{lat},{lon})[")
@@ -730,8 +780,8 @@ def curated():
 
 
 def thrift_near(radius_m=24140, limit=5):
-    """Thrift and flea spots near home, or None. /api/future/scan."""
-    lat, lon = HOME
+    """Thrift and flea spots near the origin, or None. /api/future/scan."""
+    lat, lon = origin()
     d = M._get(f"/api/future/scan?lat={lat}&lon={lon}&r={int(radius_m)}&cats=thrift,flea",
                timeout=40)
     if d is None:
@@ -744,7 +794,8 @@ def route(lat, lon, costing="pedestrian"):
     opts = {"pedestrian": {}, "motorcycle": {"use_hills": 1.0, "use_primary": 0.5,
                                              "use_trails": 0.5}}.get(costing, {})
     payload = {"costing": costing, "directions_options": {"units": "miles"},
-               "locations": [{"lat": HOME[0], "lon": HOME[1]}, {"lat": lat, "lon": lon}]}
+               "locations": [{"lat": origin()[0], "lon": origin()[1]},
+                             {"lat": lat, "lon": lon}]}
     if opts:
         payload["costing_options"] = {costing: opts}
     r = M._post("/api/valhalla/route", payload, timeout=40)

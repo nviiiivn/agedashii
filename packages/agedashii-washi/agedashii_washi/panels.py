@@ -343,9 +343,9 @@ def layout(surface, builders, empty_hint=None):
             # 60 columns, whatever `width` is set to: a width only takes
             # effect from tablet size up, the same rule it always was, just
             # expressed in the new 60-column grid instead of the old 12.
-            cells.append(ft.Container(
+            cells.append(_animated(ft.Container(
                 col={"xs": COLUMNS, "md": max(MIN_WIDTH, min(MAX_WIDTH, width))},
-                content=content))
+                content=content)))
 
     if not cells:
         from .widgets import sub
@@ -362,6 +362,24 @@ def layout(surface, builders, empty_hint=None):
 
     return ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO, controls=[
         ft.ResponsiveRow(columns=COLUMNS, spacing=10, run_spacing=10, controls=cells)])
+
+
+def _animated(container):
+    """A panel that changes size or position should grow, not jump.
+
+    Dragging the width grip, changing a height, or reordering the stack all
+    used to teleport the card to its new geometry in a single frame - which
+    is the difference between "I resized that" and "the screen flickered".
+    Both properties are set on the CONTAINER whose geometry actually
+    changes; animating a child instead does nothing, because the child is
+    not what Flutter is laying out.
+
+    Routed through motion so it obeys reduce-motion with everything else,
+    and so the duration is the same one cards use everywhere in the app
+    rather than a number chosen here.
+    """
+    from . import motion
+    return motion.resizable(container)
 
 
 def _sized(height, content):
@@ -391,8 +409,10 @@ def _sized(height, content):
     cells = max(MIN_HEIGHT, min(MAX_HEIGHT, int(height or 0)))
     if not cells:
         return content
-    return ft.Container(height=cells * HEIGHT_CELL_PX, content=ft.Column(
-        expand=True, scroll=ft.ScrollMode.AUTO, controls=[content]))
+    return _animated(ft.Container(
+        height=cells * HEIGHT_CELL_PX,
+        content=ft.Column(expand=True, scroll=ft.ScrollMode.AUTO,
+                          controls=[content])))
 
 
 def _on_reorder(surface):

@@ -1,4 +1,4 @@
-"""agedashii API client — offline-first, backed by agedashii_tofu.store.
+"""agedashii API client — offline-first, backed by agedashii_washi.store.
 
 Pages do `from agedashii_washi import api as M`. Unknown attribute lookups fetch real data
 from the dashbored server and reshape it to mock.py structures; on connection
@@ -11,7 +11,7 @@ every write a blocking POST that was simply *lost* when there was no signal.
 Kill the app, or walk into a tunnel, and both the cache and the write went
 with it.
 
-Now both go through `agedashii_tofu.store`, a SQLite cache + outbox on the device:
+Now both go through `agedashii_washi.store`, a SQLite cache + outbox on the device:
 
   reads   `_get` answers from the store. A path we have never fetched is
           fetched inline, exactly as before; a path we already hold is

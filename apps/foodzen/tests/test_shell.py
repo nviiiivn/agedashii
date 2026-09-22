@@ -136,6 +136,14 @@ class ShellCase(unittest.TestCase):
         self.addCleanup(lambda: (prefs.set_bottom_bar_enabled(bar),
                                  prefs.set_crt_overlay(crt)))
 
+        # This app's own two preferences, restored the same way. The menu
+        # trigger in particular is off by default, and a test that switched
+        # it on would otherwise leave it on for everything after it.
+        menu = APP_MAIN.prefs_local.hamburger_enabled()
+        mine = APP_MAIN.prefs_local.theme()
+        self.addCleanup(lambda: (APP_MAIN.prefs_local.set_hamburger_enabled(menu),
+                                 APP_MAIN.prefs_local.set_theme(mine)))
+
         self.page = FakePage()
         self.shell = APP_MAIN.Shell(self.page)
 
@@ -238,15 +246,42 @@ class Chrome(ShellCase):
         self.assertEqual(pill.gradient.colors,
                          [APP_MAIN.ORANGE, APP_MAIN.PINK, APP_MAIN.CYAN])
 
-    def test_the_topbar_carries_the_menu_the_pill_and_the_palette(self):
+    def _topbar_icons(self):
+        bar = self.chrome().controls[0].content
+        return [c.icon for c in bar.controls if isinstance(c, ft.IconButton)]
+
+    def test_the_topbar_carries_the_pill_and_the_palette(self):
+        """The two things that are always there, whatever the menu is doing.
+
+        The hamburger used to be asserted here too. It is no longer always
+        drawn - this app is bottom-bar-first and the trigger is a setting -
+        so it has a pair of tests of its own below.
+        """
         self.shell.attach()
         bar = self.chrome().controls[0].content
-        icons = [c.icon for c in bar.controls if isinstance(c, ft.IconButton)]
-        self.assertIn(ft.Icons.MENU, icons)
-        self.assertIn(ft.Icons.PALETTE, icons)
+        self.assertIn(ft.Icons.PALETTE, self._topbar_icons())
         self.assertIn("Foodzen", [getattr(c.content, "value", None)
                                   for c in bar.controls
                                   if isinstance(c, ft.Container)])
+
+    def test_the_menu_trigger_appears_when_she_asks_for_it(self):
+        APP_MAIN.prefs_local.set_hamburger_enabled(True)
+        self.shell.attach()
+        self.assertIn(ft.Icons.MENU, self._topbar_icons())
+
+    def test_hiding_the_menu_trigger_leaves_no_gap(self):
+        """Not a disabled button and not a spacer: the slot goes away.
+
+        "i want the ability to show / hide the hamburger menu trigger" - a
+        hidden trigger that still cost 48px would be the worst of both.
+        """
+        APP_MAIN.prefs_local.set_hamburger_enabled(False)
+        self.shell.attach()
+        bar = self.chrome().controls[0].content
+        self.assertNotIn(ft.Icons.MENU, self._topbar_icons())
+        self.assertEqual(getattr(bar.controls[0].content, "value", None), "Foodzen",
+                         "the brand pill must move to the edge, not sit "
+                         "behind an empty slot")
 
     def test_the_safearea_wraps_the_chrome_and_not_the_crt(self):
         """A screen effect that stopped short of the cutout would draw a
@@ -321,8 +356,12 @@ class Chrome(ShellCase):
 class Navigation(ShellCase):
     def test_the_drawer_lists_every_surface(self):
         self.shell.attach()
-        self.assertEqual(sorted(APP_MAIN.PAGES), sorted(APP_MAIN.LABELS))
-        self.assertEqual(sorted(APP_MAIN.PAGES), sorted(APP_MAIN.ICONS))
+        # Every renderable surface is named and has an icon, the navigable
+        # ones included. The guide has both and is deliberately not on the
+        # bar or in the menu - it hangs off Settings, which is on both.
+        self.assertEqual(sorted(APP_MAIN.SURFACES), sorted(APP_MAIN.LABELS))
+        self.assertEqual(sorted(APP_MAIN.SURFACES), sorted(APP_MAIN.ICONS))
+        self.assertTrue(set(APP_MAIN.PAGES) <= set(APP_MAIN.SURFACES))
         labels = self._drawer_labels()
         for key in APP_MAIN.PAGES:
             self.assertIn(APP_MAIN.LABELS[key], labels)
