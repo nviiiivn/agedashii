@@ -190,6 +190,12 @@ def _router_chip(p):
     if phase == "loading":
         return chip("loading offline router…", p["yellow"],
                     ft.Icons.HOURGLASS_TOP, small=True)
+    if phase == "idle":
+        # The graph is there, it just has not been read yet - see the note
+        # at the top of build() for why that is deliberate. Say so rather
+        # than implying there is no offline routing at all.
+        return chip("offline router ready · loads on first route",
+                    p["text2"], ft.Icons.ALT_ROUTE, small=True)
     if phase == "failed":
         return chip("offline graph unreadable", p["pink"],
                     ft.Icons.ERROR_OUTLINE, small=True)
@@ -376,10 +382,17 @@ def _planner(page, p):
     Returns three zero-argument builders so the panel system can reorder,
     resize or hide the card, the map and the turn list independently.
     """
-    # Start the graph read now, on a background thread. Opening this page
-    # must not block the UI for the ~50 ms it takes, and app startup must not
-    # pay for it at all on the launches that never come here.
-    R.start_loading()
+    # NOT R.start_loading() here. That read is 86 MB parsed in pure Python,
+    # and a worker thread does not help: CPython holds the GIL through it,
+    # so the UI thread cannot run either and Android files an ANR. The
+    # "~50 ms" this used to claim was measured on a Pi with the file already
+    # in page cache; cold, off a phone's flash, it is seconds - long enough
+    # that Moto hung on "loading offline router..." and was killed.
+    #
+    # The graph now loads when a route is actually asked for. route() calls
+    # graph(), which starts the load itself, so planning a route still works
+    # with no extra step - it just costs the wait at the moment she asked
+    # for routing rather than at the moment she opened the page.
 
     units = prefs.unit_system()
 
