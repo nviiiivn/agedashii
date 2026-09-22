@@ -32,6 +32,11 @@ class State:
     glow = False
     crt = False
     crt_intensity = 40  # matches DEFAULT_CRT_INTENSITY below
+    # Off means "animate". Kept here beside the other appearance knobs
+    # rather than in motion.py, because prefs.apply_runtime() mirrors this
+    # whole block onto S in one place and a fifth knob living somewhere
+    # else is how the other four would drift out of sync with it.
+    reduce_motion = False
 
 S = State()
 

@@ -11,6 +11,7 @@ from agedashii_tofu import api as M
 from agedashii_tofu import config
 from agedashii_tofu import panels
 from agedashii_tofu import prefs
+from agedashii_washi import motion
 
 ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 
@@ -650,7 +651,13 @@ async def main(page):
             # every arrow tap would scroll the list back to the top.
             c = settings.build(page, on_theme=lambda: render("settings"),
                                on_layout=lambda: render("settings"))
-        body.content = c
+        # Cross-fade instead of a hard cut. render() replaces the whole
+        # screen in one frame, which is the single biggest reason this
+        # read as cheap next to Flet's own showcase app. motion.switcher
+        # wraps the new content; assigning to it is what animates, and it
+        # returns the content unchanged when reduce-motion is on, so there
+        # is no second code path to keep working.
+        body.content = motion.switcher(c)
         body.bgcolor = p["bg"]
         page.drawer = nav_drawer()
         page.controls.clear()
