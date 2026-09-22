@@ -9,6 +9,7 @@ from flet_app.theme_data import THEMES, THEME_NAMES
 from flet_app.pages import home, lab, tools, trips, weather, garage, wat2do, extras, settings
 from flet_app import api as M
 from flet_app import config
+from flet_app import panels
 from flet_app import prefs
 
 ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
@@ -442,8 +443,34 @@ async def main(page):
         )
         _show(page, dlg)
 
+    async def toggle_customize(e):
+        """Enter or leave arrange-the-cards mode on the page you are on.
+
+        The website has the same one button - GridStack sits at
+        `staticGrid: true` until you press Customize - and the same
+        bargain: nothing on the page moves until you ask, and Done puts it
+        back to a page you can use.
+
+        Done is also where the arrangement is written to storage. Every
+        drag and resize already saves as it happens (see panels._apply),
+        so this is the belt to that braces; both go through prefs.save,
+        because there is one store for layout and this is not a new one.
+        """
+        on = panels.set_editing(not panels.editing())
+        if not on and S.prefs is not None:
+            await prefs.save(S.prefs)
+        render(current[0])
+
     def topbar():
         p = PAL()
+        editing = panels.editing()
+        # Only on a page that has a card stack to arrange. A button that
+        # does nothing is exactly what the dead search icon here was.
+        arrange = [ft.IconButton(
+            ft.Icons.CHECK if editing else ft.Icons.DASHBOARD_CUSTOMIZE,
+            icon_color=p["accent"] if editing else p["text2"],
+            tooltip="Done arranging" if editing else "Arrange the cards on this page",
+            on_click=toggle_customize)] if (panels.has_surface() or editing) else []
         return ft.Row(spacing=10, controls=[
             ft.IconButton(ft.Icons.MENU, icon_color=p["text2"], on_click=open_menu),
             brand_chip(),
@@ -454,6 +481,7 @@ async def main(page):
             machine_dots(),
             ft.Container(expand=True),
             sync_chip,
+            *arrange,
             # There was an ft.Icon(SEARCH) here: a picture of a button that
             # could not be clicked and searched nothing. Removed rather than
             # faked - the drawer now lists every page, which is the jump-to-a-
@@ -501,6 +529,10 @@ async def main(page):
         if key not in reachable:
             key = reachable[0] if reachable else "home"
         current[0] = key
+        # Cleared before the body builds and set again by panels.layout(),
+        # so the topbar - built after the body, below - knows whether this
+        # page has a card stack worth offering Customize for.
+        panels.begin_render()
         if key != "lab":
             # The machine a status dot asked to open stays open while Lab is
             # on screen and is forgotten the moment you leave, so coming

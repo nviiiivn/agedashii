@@ -463,6 +463,52 @@ def move_panel(surface, key, delta):
     return True
 
 
+def move_panel_onto(surface, key, target):
+    """Drop `key` where `target` currently sits. True if anything moved.
+
+    What drag-and-drop means, as opposed to the arrows' one-step `move()`.
+    Pop-then-insert-at-the-old-index is deliberate: dragging downwards
+    lands the card *after* its target and upwards lands it *before*, which
+    is what the finger just did, and it needs no direction test.
+
+    Works on the full order, hidden panels included, so a hidden card keeps
+    its place in the list relative to its neighbours and comes back where
+    she left it rather than at the end.
+    """
+    order = panel_order(surface)
+    if key == target or key not in order or target not in order:
+        return False
+    i, j = order.index(key), order.index(target)
+    order.pop(i)
+    order.insert(j, key)
+    _V[_pkey(surface, "order")] = order
+    return True
+
+
+def cycle_panel_width(surface, key, step=1, wrap=True):
+    """Step a card's width through full -> half -> third. The new one, or None.
+
+    The keyboard-free, pointer-free way to resize: a tap on the width pill
+    wraps round, so three taps come back where they started and nothing is
+    ever out of reach.
+
+    `wrap=False` clamps instead, for the resize grip: dragging hard to the
+    right means "as wide as it goes" and should stop at full, not come out
+    the other side at a third. None when nothing changed, so the caller can
+    skip a repaint it does not need.
+    """
+    from . import panels as _panels
+    if key not in _surface_keys(surface):
+        return None
+    order = list(_panels.WIDTH_ORDER)
+    i = order.index(panel_width(surface, key))
+    j = (i + step) % len(order) if wrap else max(0, min(len(order) - 1, i + step))
+    if j == i:
+        return None
+    want = order[j]
+    return want if set_panel_width(surface, key, want) else None
+
+
 def set_panel_hidden(surface, key, hidden):
     keys = _surface_keys(surface)
     if key not in keys:

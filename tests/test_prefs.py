@@ -1286,7 +1286,7 @@ class BottomBarToggleDoesNotCrash(unittest.TestCase):
 
 
 # ===================================================================
-# Driving the real Settings controls
+# Arrange the cards on the page itself
 # ===================================================================
 class _StubPage:
     """Enough Page for a build() to finish. No event loop, no storage."""
@@ -1326,6 +1326,279 @@ def _walk(control, seen=None):
 
 def _of_type(tree, name):
     return [c for c in _walk(tree) if type(c).__name__ == name]
+
+
+class CardEditMode(unittest.TestCase):
+    """Drag and resize the cards on the page, not in a list in Settings.
+
+    Her ask: "is there way to translate my web feature where i basically
+    can take any page and resize the component boxes/frames and organize
+    them and then save that view?" The website does it with GridStack on a
+    12-column free x/y grid, saved to localStorage. This is the same
+    gesture over the model the app already has - order plus a responsive
+    width - because absolute x/y that reads well at 1400px is unusable on
+    the phone this is actually used on, and because there is already one
+    store for layout and a second one would be a second source of truth.
+    """
+
+    SURFACE = "home"
+
+    def setUp(self):
+        from flet_app import panels
+        self.panels = panels
+        self._saved = dict(prefs._V)
+        prefs._V = prefs._defaults()
+        prefs.reset_panels(self.SURFACE)
+        panels.set_editing(False)
+
+    def tearDown(self):
+        self.panels.set_editing(False)
+        prefs._V.clear()
+        prefs._V.update(self._saved)
+
+    def _home(self):
+        from flet_app.pages import home
+        return home.build(_StubPage())
+
+    def _spans(self, tree):
+        """The column spans of the panel row, and nothing nested in a card."""
+        for c in _walk(tree):
+            if type(c).__name__ == "ResponsiveRow":
+                return [getattr(x, "col", {}).get("md") for x in c.controls]
+        return []
+
+    def _card_labels(self):
+        """The edit-mode header label of each card, in rendered order.
+
+        Read off the header Row that holds the drag handle, so the test
+        follows the tree rather than a hardcoded chain of attributes that
+        breaks whenever the chrome is rearranged.
+        """
+        out = []
+        for target in _of_type(self._home(), "DragTarget"):
+            for c in _walk(target):
+                if type(c).__name__ != "Row":
+                    continue
+                kids = list(getattr(c, "controls", []) or [])
+                if kids and type(kids[0]).__name__ == "Draggable":
+                    out.append(kids[1].value)
+                    break
+        return out
+
+    # ---------------------------------------------------------- off
+    def test_it_is_off_until_she_asks(self):
+        self.assertFalse(self.panels.editing())
+
+    def test_normal_mode_adds_no_control_at_all(self):
+        """The pages were just cut from ~1900 controls to ~240.
+
+        A wrapper per card, drawn whether or not she is arranging
+        anything, would start giving that back - and a page that takes a
+        second to build is a page whose buttons "do nothing", because
+        Flet holds the old frame while the handler runs.
+        """
+        tree = self._home()
+        for name in ("DragTarget", "Draggable", "GestureDetector"):
+            self.assertEqual(_of_type(tree, name), [], name)
+
+    def test_edit_mode_is_the_only_thing_that_costs_controls(self):
+        plain = len(list(_walk(self._home())))
+        self.panels.set_editing(True)
+        edit = len(list(_walk(self._home())))
+        cards = len(prefs.panels(self.SURFACE))
+        self.assertEqual(len(_of_type(self._home(), "DragTarget")), cards)
+        self.assertEqual((edit - plain) % cards, 0)
+        self.assertLess((edit - plain) / cards, 12,
+                        "a card's edit chrome is a header and a grip, not a page")
+
+    # ---------------------------------------------------------- drag
+    def test_dragging_one_card_onto_another_reorders_the_page(self):
+        self.panels.set_editing(True)
+        before = prefs.panels(self.SURFACE)
+        tree = self._home()
+        targets = _of_type(tree, "DragTarget")
+        self.assertEqual(len(targets), len(before))
+
+        # Drag the last card onto the first: start on its Draggable, drop
+        # on the first card's DragTarget, exactly as Flet fires them.
+        _of_type(targets[-1], "Draggable")[0].on_drag_start(None)
+        targets[0].on_accept(None)
+
+        want = [before[-1]] + before[:-1]
+        self.assertEqual(prefs.panels(self.SURFACE), want)
+        # ...and it reaches the tree, not just the store.
+        self.assertEqual(self._card_labels(),
+                         [self.panels.panel_labels(self.SURFACE)[k] for k in want])
+
+    def test_a_drop_on_itself_changes_nothing(self):
+        self.panels.set_editing(True)
+        before = prefs.panels(self.SURFACE)
+        targets = _of_type(self._home(), "DragTarget")
+        _of_type(targets[2], "Draggable")[0].on_drag_start(None)
+        targets[2].on_accept(None)
+        self.assertEqual(prefs.panels(self.SURFACE), before)
+
+    def test_a_drop_with_nothing_picked_up_changes_nothing(self):
+        """Flet can deliver an accept for a drag this build never saw."""
+        self.panels.set_editing(True)
+        before = prefs.panels(self.SURFACE)
+        self.panels.EDIT["dragging"] = None
+        _of_type(self._home(), "DragTarget")[0].on_accept(None)
+        self.assertEqual(prefs.panels(self.SURFACE), before)
+
+    # ---------------------------------------------------------- width
+    def _grip(self, index=0):
+        tree = self._home()
+        return _of_type(tree, "GestureDetector")[index], tree
+
+    def test_tapping_the_width_pill_cycles_full_half_third(self):
+        self.panels.set_editing(True)
+        first = prefs.panels(self.SURFACE)[0]
+        got = []
+        for _ in range(3):
+            self._grip()[0].on_tap(None)
+            got.append(prefs.panel_width(self.SURFACE, first))
+        self.assertEqual(got, ["half", "third", "full"])
+
+    def test_the_new_width_reaches_the_rendered_tree(self):
+        self.panels.set_editing(True)
+        self._grip()[0].on_tap(None)
+        self.assertEqual(self._spans(self._home())[0], 6)
+        self._grip()[0].on_tap(None)
+        self.assertEqual(self._spans(self._home())[0], 4)
+
+    def _at(self, x):
+        """A drag event at horizontal position `x`."""
+        import types
+        return types.SimpleNamespace(
+            local_position=types.SimpleNamespace(x=float(x), y=0.0))
+
+    def _sweep(self, grip, *xs):
+        grip.on_horizontal_drag_start(self._at(xs[0]))
+        for x in xs[1:]:
+            grip.on_horizontal_drag_update(self._at(x))
+        grip.on_horizontal_drag_end(self._at(xs[-1]))
+
+    def test_dragging_the_grip_sideways_resizes(self):
+        """`on_horizontal_drag_*`, not `on_pan_*`, on purpose.
+
+        These cards live in a vertically scrolling Column. A pan
+        recognizer and the scrollable's own vertical drag recognizer both
+        enter Flutter's gesture arena, and whichever crosses its slop
+        first wins - so a diagonal drag scrolls the page instead of
+        resizing the card. A horizontal-only recognizer never contends
+        with a vertical one.
+        """
+        self.panels.set_editing(True)
+        first = prefs.panels(self.SURFACE)[0]
+        self._sweep(self._grip()[0], 200, 180, 140)      # 60px left
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), "half",
+                         "leftwards is narrower")
+        self._sweep(self._grip()[0], 100, 170)           # 70px right
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), "full")
+
+    def test_a_long_drag_moves_more_than_one_step(self):
+        self.panels.set_editing(True)
+        first = prefs.panels(self.SURFACE)[0]
+        self._sweep(self._grip()[0], 300, 180)           # 120px left, 2 steps
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), "third")
+
+    def test_the_drag_clamps_instead_of_wrapping(self):
+        """Hard right means "as wide as it goes", not back round to 1/3."""
+        self.panels.set_editing(True)
+        first = prefs.panels(self.SURFACE)[0]
+        self._sweep(self._grip()[0], 600, 0)             # far left
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), "third")
+        self._sweep(self._grip()[0], 0, 600)             # far right
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), "full")
+
+    def test_a_twitch_is_not_a_resize(self):
+        self.panels.set_editing(True)
+        first = prefs.panels(self.SURFACE)[0]
+        self._sweep(self._grip()[0], 200, 197, 195)
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), "full")
+
+    def test_an_event_shaped_differently_costs_the_drag_not_the_app(self):
+        """A gesture handler that raises is invisible; the card just dies."""
+        import types
+        self.panels.set_editing(True)
+        first = prefs.panels(self.SURFACE)[0]
+        grip = self._grip()[0]
+        grip.on_horizontal_drag_start(types.SimpleNamespace())
+        grip.on_horizontal_drag_update(types.SimpleNamespace())
+        grip.on_horizontal_drag_end(types.SimpleNamespace())
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), "full")
+        self._grip()[0].on_tap(None)          # ...and the tap still works
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), "half")
+
+    # ---------------------------------------------------------- persistence
+    def test_an_arrangement_made_on_the_page_survives_a_restart(self):
+        """Through prefs.save, the store Settings already writes.
+
+        The website keeps its GridStack layout in
+        localStorage['nvii-ov-layout-v1'], which is per browser and
+        invisible to everything else. Inventing a second store here would
+        have made the same mistake inside one app.
+        """
+        self.panels.set_editing(True)
+        targets = _of_type(self._home(), "DragTarget")
+        _of_type(targets[-1], "Draggable")[0].on_drag_start(None)
+        targets[0].on_accept(None)
+        self._grip()[0].on_tap(None)
+        want = (prefs.panels(self.SURFACE),
+                [prefs.panel_width(self.SURFACE, k)
+                 for k in prefs.panels(self.SURFACE)])
+
+        store = FakePrefs()
+        self.assertTrue(asyncio.run(prefs.save(store)))
+        prefs._V = prefs._defaults()
+        self.panels.set_editing(False)
+        self.assertNotEqual(prefs.panels(self.SURFACE), want[0])
+
+        asyncio.run(prefs.load(store))
+        self.assertEqual((prefs.panels(self.SURFACE),
+                          [prefs.panel_width(self.SURFACE, k)
+                           for k in prefs.panels(self.SURFACE)]), want)
+
+    def test_only_the_handle_is_draggable_not_the_whole_card(self):
+        """Otherwise the surface cannot be scrolled while arranging it.
+
+        Flutter's Draggable and the enclosing scrollable compete for the
+        same vertical drag and the Draggable wins, so a card draggable
+        edge to edge would pin the page in place in edit mode - on a
+        phone, with eight cards, most of them out of reach.
+        """
+        self.panels.set_editing(True)
+        for target in _of_type(self._home(), "DragTarget"):
+            with self.subTest(card=type(target).__name__):
+                handles = _of_type(target, "Draggable")
+                self.assertEqual(len(handles), 1)
+                self.assertEqual(type(handles[0].content).__name__, "Icon")
+
+    def test_leaving_edit_mode_gives_the_plain_page_back(self):
+        self.panels.set_editing(True)
+        self.assertTrue(_of_type(self._home(), "DragTarget"))
+        self.panels.set_editing(False)
+        self.assertEqual(_of_type(self._home(), "DragTarget"), [])
+
+    # ---------------------------------------------------------- affordance
+    def test_a_page_with_a_card_stack_says_so(self):
+        self.panels.begin_render()
+        self.assertFalse(self.panels.has_surface())
+        self._home()
+        self.assertTrue(self.panels.has_surface())
+
+    def test_a_page_without_one_does_not(self):
+        """So the topbar leaves Customize out rather than drawing a dead
+        button - which is exactly what the search icon here used to be.
+
+        Settings has cards but not a *rearrangeable* stack: it never
+        calls `panels.layout()`, so there is nothing for edit mode to do.
+        """
+        from flet_app.pages import settings
+        self.panels.begin_render()
+        settings.build(_StubPage())
+        self.assertFalse(self.panels.has_surface())
 
 
 class SettingsDrivesTheTwoSurfacesSeparately(PrefsTestCase):
@@ -1379,3 +1652,38 @@ class SettingsDrivesTheTwoSurfacesSeparately(PrefsTestCase):
         self.assertIsNone(pills["settings"]["Menu"],
                           "Settings is the only way back from a layout you regret")
         self.assertIsNotNone(pills["settings"]["Bar"])
+
+
+class PanelReorderByDrop(PrefsTestCase):
+    """`move_panel_onto` - what a drag means, next to the arrows' one step."""
+
+    def test_dropping_downwards_lands_after_the_target(self):
+        self.assertTrue(prefs.move_panel_onto("home", "greeting", "weather"))
+        order = prefs.panel_order("home")
+        self.assertEqual(order.index("greeting"), order.index("weather") + 1)
+
+    def test_dropping_upwards_lands_before_the_target(self):
+        self.assertTrue(prefs.move_panel_onto("home", "wat2do", "stats"))
+        order = prefs.panel_order("home")
+        self.assertEqual(order.index("wat2do"), order.index("stats") - 1)
+
+    def test_a_hidden_neighbour_keeps_its_place(self):
+        """Order is kept for every panel, hidden included, so un-hiding
+        one brings it back where she left it and not at the end."""
+        prefs.set_panel_hidden("home", "nowplaying", True)
+        prefs.move_panel_onto("home", "wat2do", "greeting")
+        self.assertIn("nowplaying", prefs.panel_order("home"))
+
+    def test_unknown_or_self_is_refused(self):
+        self.assertFalse(prefs.move_panel_onto("home", "greeting", "greeting"))
+        self.assertFalse(prefs.move_panel_onto("home", "nope", "greeting"))
+        self.assertFalse(prefs.move_panel_onto("home", "greeting", "nope"))
+
+    def test_cycling_a_width_wraps(self):
+        self.assertEqual(prefs.cycle_panel_width("home", "weather"), "half")
+        self.assertEqual(prefs.cycle_panel_width("home", "weather"), "third")
+        self.assertEqual(prefs.cycle_panel_width("home", "weather"), "full")
+        self.assertEqual(prefs.cycle_panel_width("home", "weather", -1), "third")
+
+    def test_cycling_an_unknown_panel_is_refused(self):
+        self.assertIsNone(prefs.cycle_panel_width("home", "nope"))

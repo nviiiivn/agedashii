@@ -3,7 +3,7 @@
 The website lets you drag panels around; the app could only pick a theme.
 What is here now is the phone-shaped equivalent - reorder the pages and
 choose, separately, which appear in the menu and which ride the bottom bar,
-reorder, hide and resize the cards on every surface - plus the settings that were
+reorder/hide/resize the cards on every surface - plus the settings that were
 only ever hard-coded constants (units, the DASH sodium ceiling, how long
 cached data stays good), and a Diagnostics card that answers "why is it
 showing sample data" without a log file.
@@ -13,10 +13,12 @@ one eye drove both surfaces: "seemingly theres no way to customize the
 bottom bar without the menu becoming affected.. it's not different /
 optional like i asked for user preferences."
 
-Reordering is done with arrows rather than drag-and-drop on purpose: these
-lists live inside a scrolling column, and a long-press drag inside a scroll
-view is ambiguous on a touch screen - the gesture that reorders a row is the
-same one that scrolls past it.
+Reordering *here* is done with arrows rather than drag-and-drop on purpose:
+these lists live inside a scrolling column, and a long-press drag inside a
+scroll view is ambiguous on a touch screen - the gesture that reorders a row
+is the same one that scrolls past it. The cards on a page can be dragged,
+because there the handle is a distinct icon rather than the whole row; see
+panels._editable for why that distinction is what makes it safe.
 
 Everything is stored by flet_app/prefs.py, which also owns the read API the
 rest of the app consumes. This page only edits; it never decides what a
