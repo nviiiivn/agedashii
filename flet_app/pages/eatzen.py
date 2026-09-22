@@ -178,24 +178,33 @@ def build_eatzen(page):
             row["idk"] = e.control.value
             recalc(); paint(); page.update()
 
-        return card(ft.Column(spacing=6, controls=[
-            field(row, "food", "food"),
-            hint,
-            ft.Row(spacing=6, wrap=True, controls=[
-                field(row, "qty", "1", width=58),
-                field(row, "unit", "unit", width=82),
-                field(row, "na", "sodium mg", width=104, numeric=True),
-                field(row, "addsug", "sugar g", width=90, numeric=True),
-            ]),
-            ft.Row(spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-                ft.Checkbox(label="IDK", value=row["idk"], on_change=toggle_idk,
-                            label_style=ft.TextStyle(size=11, color=p["text2"])),
-                ft.Container(expand=True),
-                ft.TextButton("From label", on_click=lambda e, i=i: open_label(i)),
-                ft.IconButton(ft.Icons.CLOSE, icon_size=16, icon_color=p["text2"],
-                              on_click=lambda e, i=i: remove_row(i)),
-            ]),
-        ]), pad=10)
+        # One wrapped line, not four stacked ones. This was a full-width
+        # food field, then a hint, then a row of four inputs, then a row of
+        # controls - all inside a padded card. Empty, a single row stood
+        # about four lines tall, and "What you ate" opened as a grey slab
+        # taller than the screen. wrap=True lets it reflow to two lines on a
+        # phone instead of forcing the page sideways.
+        line = ft.Row(spacing=6, wrap=True,
+                      vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.Container(expand=True, content=field(row, "food", "food"),
+                         width=None),
+            field(row, "qty", "1", width=52),
+            field(row, "unit", "unit", width=72),
+            field(row, "na", "sodium mg", width=96, numeric=True),
+            field(row, "addsug", "sugar g", width=84, numeric=True),
+            ft.Checkbox(label="IDK", value=row["idk"], on_change=toggle_idk,
+                        label_style=ft.TextStyle(size=11, color=p["text2"])),
+            ft.IconButton(ft.Icons.LABEL_OUTLINE, icon_size=17,
+                          icon_color=p["text2"], tooltip="Add it from the label",
+                          on_click=lambda e, i=i: open_label(i)),
+            ft.IconButton(ft.Icons.CLOSE, icon_size=16, icon_color=p["text2"],
+                          tooltip="Remove this row",
+                          on_click=lambda e, i=i: remove_row(i)),
+        ])
+        # The hint only takes a line when it has something to say; empty it
+        # is a zero-height container, so a blank row really is one line.
+        body = [line] if isinstance(hint, ft.Container) else [line, hint]
+        return card(ft.Column(spacing=4, controls=body), pad=8)
 
     def paint():
         rows_col.controls[:] = [row_controls(i, r) for i, r in enumerate(_rows)]
