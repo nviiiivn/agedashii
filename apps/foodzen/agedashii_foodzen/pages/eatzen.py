@@ -31,9 +31,24 @@ from agedashii_washi.forms import Writer, offline_banner, rebuilder
 PHOTO_MAX_PX = 1280
 
 
-def _tools_build():
-    from . import tools
-    return tools.build
+def _page_build():
+    """The page to rebuild after a write, for a client with no shell of its own.
+
+    In the dashboard these two surfaces were tabs inside Tools, so this named
+    `tools.build`. There is no Tools in Foodzen and no `tools` module beside
+    this one, so the import raised ImportError and EatZen and BPM could not be
+    built at all.
+
+    FoodZen's own page is the right answer here: it is the page that carries
+    EatZen and BPM as tabs, so rebuilding it puts you back where you were.
+    Imported inside the function because foodzen.py imports this module at
+    module level - the cycle only resolves if one half of it is deferred.
+
+    With a shell present this is never called: `rebuilder` prefers the
+    whole-app re-render registered on S, which keeps the chrome.
+    """
+    from . import foodzen
+    return foodzen.build
 
 
 def _now_local():
@@ -137,7 +152,7 @@ def _row_sodium(row):
 
 def build_eatzen(page):
     p = PAL()
-    w = Writer(page, rebuilder(page, _tools_build()))
+    w = Writer(page, rebuilder(page, _page_build()))
     if not M.STATUS_LIVE():
         return ft.Column(spacing=8, controls=[offline_banner(p, "EatZen")])
 
@@ -628,7 +643,7 @@ def build_eatzen(page):
 
 def build_bpm(page):
     p = PAL()
-    w = Writer(page, rebuilder(page, _tools_build()))
+    w = Writer(page, rebuilder(page, _page_build()))
     if not M.STATUS_LIVE():
         return ft.Column(spacing=8, controls=[offline_banner(p, "BPM")])
 

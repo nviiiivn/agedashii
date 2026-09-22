@@ -10,3 +10,73 @@ dependencies = ["flet>=0.86,<0.87", "agedashii-washi==1.0.0"]
 
 [tool.setuptools.packages.find]
 include = ["agedashii_foodzen*"]
+
+# ---------------------------------------------------------------------------
+# What the built app calls itself, on every platform.
+#
+# Without this block `flet build` invents all of it from the directory name:
+# it would derive the product "foodzen" and the bundle id "com.flet.foodzen",
+# which makes the app's identity a side effect of what this directory happens
+# to be called. That is how the old name survived a rename of everything else
+# in the dashboard, so it is written down here instead.
+#
+# Split off from the dashboard's own pyproject.toml rather than shared with
+# it: these are separate installable apps that sit next to each other on a
+# home screen, and two of them answering to the same bundle id would mean the
+# second install replaces the first.
+[tool.flet]
+# Display name: window title, .desktop entry, macOS product, app launcher, and
+# the label Android shows in the launcher and the multitasking view. Two
+# words, because the pill in the topbar says one of them and the family name
+# is the other - "Foodzen" alone on a home screen beside "Agedashii" would not
+# say they are the same thing.
+product = "Agedashii Foodzen"
+org = "online.iamprettyfamous"
+# Pinned rather than composed from org + project name, so the identity the OS
+# installs under can never drift with a directory rename. This is the Android
+# applicationId and the iOS/macOS bundle identifier. It extends the
+# dashboard's "online.iamprettyfamous.agedashii" with a fourth segment rather
+# than replacing it: same family, distinct app, installable side by side.
+bundle_id = "online.iamprettyfamous.agedashii.foodzen"
+company = "nvii"
+copyright = "Copyright (c) 2026 nvii"
+
+# Permissions. Without these the plugin is present, the code runs, and the
+# feature fails at the point of use with a message about the manifest - which
+# is exactly what XNAV did in the dashboard: "Record" produced "location
+# permissions are not declared in the platform manifest". Declaring a plugin
+# in requirements.txt does NOT declare its permissions; flet writes
+# AndroidManifest.xml and Info.plist from these tables and nothing else.
+#
+# CAMERA and READ_MEDIA_IMAGES are for the EatZen photo feature. It opens a
+# FilePicker with FilePickerFileType.IMAGE, and that picker's source list
+# offers the camera alongside the gallery - so without CAMERA the photo half
+# of the feature fails the same way the GPS half did: at the moment she taps
+# it, with a manifest error and no photo.
+#
+# DELIBERATELY ABSENT: every location permission. The dashboard asks for four
+# of them because XNAV records motorcycle rides. Foodzen has no map, no
+# recording and no route, and nothing in it that a coordinate would improve.
+# An app that asks for a permission it never uses trains its owner to grant
+# permissions without reading them - and Android shows the request whether or
+# not the code ever calls the API.
+[tool.flet.android.permission]
+"android.permission.CAMERA" = true
+"android.permission.READ_MEDIA_IMAGES" = true
+
+# Declared as NOT required so the Play listing and a sideload do not refuse a
+# device without a camera. Every other way into EatZen - typing a sentence,
+# picking an existing photo, entering the numbers by hand - works on a device
+# that has none, so a camera is a nice-to-have and the manifest should say so
+# rather than making the app uninstallable.
+[tool.flet.android.feature]
+"android.hardware.camera" = false
+
+# iOS wants a sentence per permission, shown verbatim in the system prompt,
+# and the App Store rejects a build that touches the API without one. Written
+# to say what is actually done with the photo: it goes to her own machine on
+# her own network, and the nutrition numbers still come from the local table
+# either way.
+[tool.flet.ios.info]
+NSCameraUsageDescription = "Foodzen uses the camera to photograph a meal or a nutrition label, so the food can be named and looked up."
+NSPhotoLibraryUsageDescription = "Foodzen reads a photo you choose of a meal or a nutrition label, so the food can be named and looked up."

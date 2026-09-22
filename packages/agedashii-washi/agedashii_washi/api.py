@@ -1,6 +1,6 @@
 """agedashii API client — offline-first, backed by flet_app.store.
 
-Pages do `from .. import api as M`. Unknown attribute lookups fetch real data
+Pages do `from agedashii_washi import api as M`. Unknown attribute lookups fetch real data
 from the dashbored server and reshape it to mock.py structures; on connection
 failure they fall back to mock data. Real-but-empty (e.g. foodzen) stays empty.
 

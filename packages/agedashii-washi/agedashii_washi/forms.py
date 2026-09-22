@@ -88,7 +88,13 @@ class Writer:
 
 def rebuilder(page, build_fn):
     """Re-read from the server and repaint the whole page."""
-    from .. import api as M
+    # `.` not `..`: this was flet_app/pages/_forms.py, where the api
+    # module was two levels up. Here it is a sibling, and `..` is above
+    # the top-level package - which raises ImportError the moment
+    # rebuilder() is CALLED, not when it is imported. Every Save in
+    # every app repaints through this line, and all of them passed
+    # their build and their tests while it was broken.
+    from . import api as M
     from agedashii_qi import S
 
     def rebuild():

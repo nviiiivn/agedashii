@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Agedashii Watudo - Wat2Do and Future Finds.
+
+  An hourglass. A day planner for someone who tracks pain and spoons is not
+  a list of tasks, it is a budget of a thing that runs out, and an hourglass
+  is the only common shape that says "a day" and "finite" at once. Future
+  Finds - the places to go someday - is the sand still in the top half; it
+  is carried by the reading rather than by a second glyph, because two
+  glyphs in one icon is two glyphs nobody can see at 48px.
+
+  Upright and symmetrical on purpose: it is the counterweight to Moto's
+  diagonal and Foodzen's bottom-heavy bowl, so the three stay apart in
+  silhouette.
+
+  Geometry: caps are 320x46 bars at y=228 and y=750; the glass pinches to
+  52px at the waist. Worst corner sits 326px from centre, inside the 338px
+  adaptive-mask circle.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="brand" gradientUnits="userSpaceOnUse" x1="352" y1="512" x2="672" y2="512">
+      <stop offset="0" stop-color="#ffb020"/>
+      <stop offset="0.5" stop-color="#ff5e8a"/>
+      <stop offset="1" stop-color="#39d0ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="#0d1117"/>
+  <g fill="url(#brand)">
+    <rect x="352" y="228" width="320" height="46" rx="23"/>
+    <path d="M 388 274 L 636 274 L 538 512 L 636 750 L 388 750 L 486 512 Z"/>
+    <rect x="352" y="750" width="320" height="46" rx="23"/>
+  </g>
+</svg>

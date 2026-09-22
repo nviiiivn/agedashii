@@ -5,7 +5,7 @@ Two halves that share one map, because on a bike there is only ever one map.
 **The recorder** works with the radio off, and that is the point:
 
 * Tiles come from an MBTiles archive on the device, handed to the map by a
-  loopback HTTP server (see flet_app/tileserver.py). If no archive is
+  loopback HTTP server (see agedashii_washi/tileserver.py). If no archive is
   installed the map falls back to online tiles and says so plainly, rather
   than showing an empty grey grid and letting you think it is broken.
 * GPS is the phone's own receiver talking to satellites. It never needed a
