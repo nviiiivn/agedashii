@@ -493,9 +493,13 @@ async def main(page):
 
     def render(key):
         p = PAL()
-        visible = prefs.visible_pages()
-        if key not in visible:
-            key = visible[0] if visible else "home"
+        # Reachable, not "listed in the menu". The bar is its own set now,
+        # so a page she put on the bar and took out of the menu is still a
+        # page; bouncing her back to the first menu entry would make that
+        # bar button dead the moment she tapped it.
+        reachable = prefs.reachable_pages()
+        if key not in reachable:
+            key = reachable[0] if reachable else "home"
         current[0] = key
         if key != "lab":
             # The machine a status dot asked to open stays open while Lab is

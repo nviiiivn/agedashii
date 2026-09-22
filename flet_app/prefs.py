@@ -41,8 +41,20 @@ NS = "agedashii."
 LEGACY_NS = "nvii."
 
 KEY_PAGE_ORDER = NS + "page_order"
+# Pages hidden from the *menu* (the drawer), and nothing else. This used to
+# mean "hidden everywhere": the bar was filtered through it, so the single
+# eye in Settings > Layout drove both surfaces at once and there was no way
+# to keep a page in the menu but off the bar. The key name is unchanged on
+# purpose - its drawer meaning is the one an existing install already has,
+# so that half of the migration is free.
 KEY_PAGES_HIDDEN = NS + "pages_hidden"
+# Pages on the bottom bar. Now an independent set: a page is on the bar
+# because it is in here, whether or not the menu also lists it.
 KEY_BOTTOM_PAGES = NS + "bottom_pages"
+# Which generation of the two keys above is stored. 1 is the coupled scheme
+# where bottom_pages only took effect for a page that was also unhidden;
+# 2 is the split. See `load()` for the one-time conversion between them.
+KEY_LAYOUT_SCHEME = NS + "layout_scheme"
 KEY_HOME_ORDER = NS + "home_order"
 KEY_HOME_HIDDEN = NS + "home_hidden"
 KEY_UNITS = NS + "units"
@@ -85,8 +97,17 @@ PAGE_LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools", "garage": "Garage
                "wat2do": "Wat2Do", "trips": "Trips", "weather": "Weather",
                "extras": "Extras", "settings": "Settings"}
 
-# Settings cannot be hidden: it is the only way back from a layout you regret.
+# Settings must stay reachable from at least one surface: it is the only way
+# back from a layout you regret. It may leave the menu *or* the bar - just
+# not both. Enforced on the way in (`set_page_hidden`, `set_in_bottom_bar`
+# refuse the last one) and again on the way out (`hidden_pages()` drops it
+# from the hidden set if nothing else reaches it), because a value written
+# by an older build or hand-edited in storage never went through the setter.
 PROTECTED_PAGES = {"settings"}
+
+# The scheme this build writes. Bumped when the meaning of a stored layout
+# key changes and `load()` has to convert.
+LAYOUT_SCHEME = 2
 
 DEFAULT_BOTTOM = ["home", "lab", "tools", "garage", "wat2do"]
 
@@ -124,6 +145,7 @@ def _defaults():
         KEY_PAGE_ORDER: list(PAGE_KEYS),
         KEY_PAGES_HIDDEN: [],
         KEY_BOTTOM_PAGES: list(DEFAULT_BOTTOM),
+        KEY_LAYOUT_SCHEME: LAYOUT_SCHEME,
         KEY_HOME_ORDER: list(HOME_PANEL_KEYS),
         KEY_HOME_HIDDEN: [],
         KEY_UNITS: "imperial",
@@ -222,14 +244,26 @@ def page_order():
     return sanitise_order(_V.get(KEY_PAGE_ORDER), PAGE_KEYS)
 
 
+def _bar_set():
+    """The raw chosen-for-the-bar set, before any rail is applied."""
+    return set(sanitise_set(_V.get(KEY_BOTTOM_PAGES), PAGE_KEYS))
+
+
 def hidden_pages():
-    """Page keys the owner has switched off. Never includes Settings."""
-    return [k for k in sanitise_set(_V.get(KEY_PAGES_HIDDEN), PAGE_KEYS)
-            if k not in PROTECTED_PAGES]
+    """Page keys the owner has taken out of the *menu*, in canonical order.
+
+    Taking a page out of the menu says nothing about the bar any more; the
+    two are separate sets. A protected page is only allowed out of the menu
+    while the bar still carries it, so this is where the read-side rail
+    lives: if Settings is hidden and not on the bar, it is not hidden.
+    """
+    hidden = sanitise_set(_V.get(KEY_PAGES_HIDDEN), PAGE_KEYS)
+    bar = _bar_set()
+    return [k for k in hidden if k not in PROTECTED_PAGES or k in bar]
 
 
 def visible_pages():
-    """Pages to offer at all, in order. This is what the drawer should list."""
+    """Pages the menu lists, in order. Not the same set as the bar's."""
     hidden = set(hidden_pages())
     return [k for k in page_order() if k not in hidden]
 
@@ -237,16 +271,33 @@ def visible_pages():
 def bottom_bar_pages():
     """Pages for the bottom navigation bar, in order, at most MAX_BOTTOM.
 
-    Hidden pages are filtered out, so switching a page off removes it from the
-    bar without a second edit. Never returns an empty list: a bar of nothing
-    but "More" is a dead end, so the first visible page stands in.
+    Independent of the menu: a page rides the bar because it is in the
+    chosen set, whether or not the menu also lists it. That is the whole
+    point - "i disabled the bottom bar and 'show' everything. seemingly
+    theres no way to customize the bottom bar without the menu becoming
+    affected". It used to intersect with `visible_pages()`, so it was.
+
+    Never returns an empty list: a bar of nothing but "More" is a dead end,
+    so the first page the menu offers stands in.
     """
-    visible = visible_pages()
-    chosen = set(sanitise_set(_V.get(KEY_BOTTOM_PAGES), PAGE_KEYS))
-    bar = [k for k in visible if k in chosen][:MAX_BOTTOM]
-    if not bar and visible:
-        bar = visible[:1]
-    return bar
+    chosen = _bar_set()
+    bar = [k for k in page_order() if k in chosen][:MAX_BOTTOM]
+    if bar:
+        return bar
+    fallback = visible_pages() or reachable_pages()
+    return fallback[:1]
+
+
+def reachable_pages():
+    """Every page you can get to, in order - the menu plus the bar.
+
+    What `render()` must check a page against. Under the old coupled scheme
+    "on the bar" implied "in the menu", so `visible_pages()` was the whole
+    truth; now a page can be bar-only, and bouncing her off it because the
+    menu does not list it would make the bar's own buttons dead.
+    """
+    reach = set(visible_pages()) | _bar_set() | PROTECTED_PAGES
+    return [k for k in page_order() if k in reach]
 
 
 def bottom_bar_enabled():
@@ -517,24 +568,48 @@ def move_page(key, delta):
     set_page_order(move(page_order(), key, delta))
 
 
-def set_page_hidden(key, hidden):
-    """Show or hide a page. Hiding a protected page is silently refused."""
-    if key not in PAGE_KEYS or (hidden and key in PROTECTED_PAGES):
-        return
+def set_page_in_menu(key, wanted):
+    """Put a page in the menu, or take it out. Returns True if it changed.
+
+    Refused for a protected page that the bar does not carry either - that
+    would strand Settings, and Settings is the only way back from a layout
+    you regret. Refusing rather than silently ignoring lets the caller say
+    why instead of drawing a switch that does nothing.
+    """
+    if key not in PAGE_KEYS:
+        return False
+    if not wanted and key in PROTECTED_PAGES and key not in _bar_set():
+        return False
     current = set(hidden_pages())
-    if hidden:
-        current.add(key)
-    else:
+    if wanted:
+        if key not in current:
+            return False
         current.discard(key)
+    else:
+        if key in current:
+            return False
+        current.add(key)
     _V[KEY_PAGES_HIDDEN] = [k for k in PAGE_KEYS if k in current]
+    return True
+
+
+def set_page_hidden(key, hidden):
+    """Hide or show a page *in the menu*. The bar is a separate setting.
+
+    Kept as the inverse of `set_page_in_menu` because "hidden" is the word
+    the stored key and the older call sites use.
+    """
+    return set_page_in_menu(key, not hidden)
 
 
 def set_in_bottom_bar(key, wanted):
-    """Add or remove a page from the bottom bar.
+    """Add or remove a page from the bottom bar. True if the set changed.
 
-    Adding past MAX_BOTTOM is refused rather than silently truncating a page
-    the owner already put there; the caller reports it.  Returns True if the
-    set changed.
+    Two refusals, both reported rather than silently absorbed:
+      - past MAX_BOTTOM, because truncating would drop a page she already
+        put there in favour of the one she just asked for;
+      - the last surface holding a protected page, for the same reason
+        `set_page_in_menu` refuses it.
     """
     if key not in PAGE_KEYS:
         return False
@@ -544,6 +619,8 @@ def set_in_bottom_bar(key, wanted):
             return False
         current.append(key)
     elif not wanted and key in current:
+        if key in PROTECTED_PAGES and key in set(hidden_pages()):
+            return False
         current.remove(key)
     else:
         return False
@@ -651,6 +728,7 @@ async def load(prefs):
     if prefs is None:
         return False
     read_any = False
+    saw_scheme = False
     # Every fixed key, plus the three per-surface panel keys. Without these
     # the layout editor wrote to memory only: reorder a card, resize it,
     # hide it, restart the app, and it was all back to the shipped order.
@@ -662,7 +740,22 @@ async def load(prefs):
         if value is None:
             continue
         read_any = True
+        if key == KEY_LAYOUT_SCHEME:
+            saw_scheme = True
         _V[key] = value
+    # An install that has stored something but has never stored a scheme
+    # number was written by the coupled build, where `bottom_pages` only
+    # took effect for a page that was also unhidden. Under the split those
+    # same two values would put a hidden page back on the bar - which is a
+    # layout she never chose, appearing out of nowhere on an upgrade. So
+    # collapse the old pair down to what it actually *showed*, once, and
+    # stamp the scheme so it never runs again. An empty store is a fresh
+    # install with nothing to convert.
+    if read_any and not saw_scheme:
+        _V[KEY_BOTTOM_PAGES] = [
+            k for k in sanitise_set(_V.get(KEY_BOTTOM_PAGES), PAGE_KEYS)
+            if k not in set(sanitise_set(_V.get(KEY_PAGES_HIDDEN), PAGE_KEYS))]
+    _V[KEY_LAYOUT_SCHEME] = LAYOUT_SCHEME
     # Normalise once, here, so every later read is cheap and the stored shape
     # can never surprise a caller.
     _V[KEY_PAGE_ORDER] = page_order()
@@ -702,6 +795,10 @@ def save_payload():
         KEY_PAGE_ORDER: page_order(),
         KEY_PAGES_HIDDEN: hidden_pages(),
         KEY_BOTTOM_PAGES: sanitise_set(_V.get(KEY_BOTTOM_PAGES), PAGE_KEYS),
+        # Always this build's number, never whatever was read: writing it is
+        # what tells the next start-up that the menu/bar split has already
+        # been applied and must not be applied again.
+        KEY_LAYOUT_SCHEME: LAYOUT_SCHEME,
         KEY_HOME_ORDER: home_panel_order(),
         KEY_HOME_HIDDEN: hidden_home_panels(),
         KEY_UNITS: unit_system(),

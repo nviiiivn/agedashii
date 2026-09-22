@@ -132,16 +132,66 @@ class TestDefaults(PrefsTestCase):
 
 
 class TestVisibility(PrefsTestCase):
-    def test_hiding_removes_from_visible_and_from_the_bar(self):
+    """The menu and the bottom bar are two sets, not one.
+
+    Her words: "i disabled the bottom bar and 'show' everything. seemingly
+    theres no way to customize the bottom bar without the menu becoming
+    affected.. it's not different / optional like i asked for user
+    preferences." She was right: `bottom_bar_pages()` intersected with
+    `visible_pages()`, so the single eye per row in Settings drove both
+    surfaces and there was no way to have a page in one but not the other.
+    """
+
+    def test_taking_a_page_out_of_the_menu_leaves_the_bar_alone(self):
         prefs.set_page_hidden("lab", True)
         self.assertNotIn("lab", prefs.visible_pages())
-        self.assertNotIn("lab", prefs.bottom_bar_pages())
+        self.assertIn("lab", prefs.bottom_bar_pages(),
+                      "the bar is its own set; the menu does not filter it")
         self.assertIn("lab", prefs.page_order(), "order still lists it, so it can come back")
 
-    def test_settings_cannot_be_hidden(self):
-        prefs.set_page_hidden("settings", True)
+    def test_taking_a_page_off_the_bar_leaves_the_menu_alone(self):
+        prefs.set_in_bottom_bar("lab", False)
+        self.assertNotIn("lab", prefs.bottom_bar_pages())
+        self.assertIn("lab", prefs.visible_pages())
+
+    def test_all_four_combinations_are_reachable(self):
+        prefs.set_in_bottom_bar("home", False)       # make a slot
+        prefs.set_in_bottom_bar("weather", True)     # menu + bar
+        prefs.set_page_in_menu("lab", False)         # bar only
+        prefs.set_page_in_menu("extras", False)      # neither
+        self.assertEqual(
+            {k: (k in prefs.visible_pages(), k in prefs.bottom_bar_pages())
+             for k in ("weather", "lab", "trips", "extras")},
+            {"weather": (True, True), "lab": (False, True),
+             "trips": (True, False), "extras": (False, False)})
+
+    def test_a_bar_only_page_is_still_reachable(self):
+        prefs.set_page_in_menu("lab", False)
+        self.assertNotIn("lab", prefs.visible_pages())
+        self.assertIn("lab", prefs.reachable_pages(),
+                      "the shell must not bounce her off a page the bar links to")
+
+    def test_settings_cannot_leave_both_surfaces(self):
+        # Not on the bar by default, so the menu is the only way back.
+        self.assertFalse(prefs.set_page_hidden("settings", True))
         self.assertIn("settings", prefs.visible_pages())
         self.assertEqual(prefs.hidden_pages(), [])
+
+    def test_settings_may_leave_the_menu_once_the_bar_carries_it(self):
+        prefs.set_in_bottom_bar("home", False)       # make room
+        self.assertTrue(prefs.set_in_bottom_bar("settings", True))
+        self.assertTrue(prefs.set_page_in_menu("settings", False))
+        self.assertNotIn("settings", prefs.visible_pages())
+        self.assertIn("settings", prefs.bottom_bar_pages())
+        # ...and now the bar is the last hold, so that is what is refused.
+        self.assertFalse(prefs.set_in_bottom_bar("settings", False))
+        self.assertIn("settings", prefs.bottom_bar_pages())
+
+    def test_a_stranded_settings_from_storage_is_put_back_in_the_menu(self):
+        """No setter wrote this - a hand-edited or older store did."""
+        prefs._V[prefs.KEY_PAGES_HIDDEN] = ["settings"]
+        prefs._V[prefs.KEY_BOTTOM_PAGES] = ["home"]
+        self.assertIn("settings", prefs.visible_pages())
 
     def test_unhiding_restores_it(self):
         prefs.set_page_hidden("trips", True)
@@ -154,6 +204,14 @@ class TestVisibility(PrefsTestCase):
         bar = prefs.bottom_bar_pages()
         self.assertEqual(len(bar), 1, "a bar of nothing but More is a dead end")
         self.assertIn(bar[0], prefs.visible_pages())
+
+    def test_the_bar_stands_in_even_with_the_menu_emptied(self):
+        for key in prefs.PAGE_KEYS:
+            prefs.set_page_in_menu(key, False)
+        for key in list(prefs.DEFAULT_BOTTOM):
+            prefs.set_in_bottom_bar(key, False)
+        self.assertEqual(len(prefs.bottom_bar_pages()), 1)
+        self.assertTrue(prefs.reachable_pages())
 
     def test_bottom_bar_is_capped(self):
         added = prefs.set_in_bottom_bar("weather", True)
@@ -257,6 +315,62 @@ class TestPersistence(PrefsTestCase):
         self.assertEqual(prefs.refresh_seconds(), 300)
         self.assertNotIn("extras", prefs.visible_pages())
         self.assertNotIn("greeting", prefs.panels("home"))
+
+    def test_the_layout_she_already_had_survives_the_menu_bar_split(self):
+        """The upgrade must not hand her a bar she never asked for.
+
+        Under the old scheme `bottom_pages` only took effect for a page
+        that was also unhidden, so her store says "garage is on the bar"
+        and "garage is hidden" at the same time and the bar she actually
+        sees has no garage on it. Read literally under the split, garage
+        would reappear on the bar on first launch. So the pair is
+        collapsed once, on the first load that finds no scheme number, to
+        exactly what the old build was drawing.
+        """
+        store = FakePrefs({
+            "nvii.pages_hidden": ["garage", "extras"],
+            "nvii.bottom_pages": ["home", "lab", "tools", "garage", "wat2do"],
+        })
+        asyncio.run(prefs.load(store))
+        self.assertEqual(prefs.bottom_bar_pages(),
+                         ["home", "lab", "tools", "wat2do"],
+                         "the same four the coupled build was showing")
+        self.assertNotIn("garage", prefs.visible_pages())
+        self.assertNotIn("extras", prefs.visible_pages())
+
+    def test_the_split_is_applied_once_and_never_again(self):
+        """Otherwise every restart would re-couple the two sets.
+
+        The second load has to leave a deliberately menu-hidden, bar-on
+        page exactly as she set it - that combination is the feature.
+        """
+        store = FakePrefs({"nvii.pages_hidden": ["garage"],
+                           "nvii.bottom_pages": ["home", "garage"]})
+        asyncio.run(prefs.load(store))
+        self.assertEqual(prefs.bottom_bar_pages(), ["home"])
+
+        # Now she does the thing the split exists for: garage on the bar,
+        # out of the menu.
+        prefs.set_in_bottom_bar("garage", True)
+        self.assertEqual(prefs.bottom_bar_pages(), ["home", "garage"])
+        asyncio.run(prefs.save(store))
+
+        prefs.reset_all()
+        asyncio.run(prefs.load(store))
+        self.assertEqual(prefs.bottom_bar_pages(), ["home", "garage"])
+        self.assertNotIn("garage", prefs.visible_pages())
+
+    def test_a_fresh_install_is_not_migrated(self):
+        """Nothing stored means nothing to convert - and no phantom edits."""
+        store = FakePrefs()
+        self.assertFalse(asyncio.run(prefs.load(store)))
+        self.assertEqual(prefs.bottom_bar_pages(), list(prefs.DEFAULT_BOTTOM))
+        self.assertEqual(prefs.visible_pages(), list(prefs.PAGE_KEYS))
+
+    def test_the_scheme_number_is_written_by_save(self):
+        store = FakePrefs()
+        asyncio.run(prefs.save(store))
+        self.assertEqual(store.store[prefs.KEY_LAYOUT_SCHEME], prefs.LAYOUT_SCHEME)
 
     def test_the_current_name_wins_when_both_are_present(self):
         """After the first save both exist; the new one is the live value."""
@@ -1169,3 +1283,99 @@ class BottomBarToggleDoesNotCrash(unittest.TestCase):
         top = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
         unknown = {fn.name: u for fn in top if (u := check(fn))}
         self.assertEqual(unknown, {}, f"names used but never bound: {unknown}")
+
+
+# ===================================================================
+# Driving the real Settings controls
+# ===================================================================
+class _StubPage:
+    """Enough Page for a build() to finish. No event loop, no storage."""
+
+    def __init__(self):
+        self.controls = []
+        self.services = []
+        self.overlay = []
+        self.drawer = None
+        self.theme = None
+        self.theme_mode = None
+
+    def update(self, *a, **k):
+        pass
+
+    def add(self, *c):
+        self.controls.extend(c)
+
+
+def _walk(control, seen=None):
+    """Every control in a built tree, once each."""
+    if seen is None:
+        seen = set()
+    if id(control) in seen:
+        return
+    seen.add(id(control))
+    yield control
+    for attr in ("controls", "content"):
+        v = getattr(control, attr, None)
+        if isinstance(v, (list, tuple)):
+            for x in v:
+                if hasattr(x, "__dict__"):
+                    yield from _walk(x, seen)
+        elif v is not None and hasattr(v, "__dict__"):
+            yield from _walk(v, seen)
+
+
+def _of_type(tree, name):
+    return [c for c in _walk(tree) if type(c).__name__ == name]
+
+
+class SettingsDrivesTheTwoSurfacesSeparately(PrefsTestCase):
+    """The real Settings row, tapped the way she taps it.
+
+    Driven through the built control rather than through prefs, because
+    the bug she hit was in the page, not the store, and the last one of
+    those - a handler naming a parameter that did not exist - imported
+    fine and passed every test that never pressed the button.
+    """
+
+    def _pills(self):
+        from flet_app.pages import settings
+        tree = settings.build(_StubPage())
+        out = {}
+        page_keys = prefs.page_order()
+        found = []
+        for c in _walk(tree):
+            text = getattr(getattr(c, "content", None), "value", None)
+            if text in ("Menu", "Bar") and getattr(c, "on_click", None) is not None:
+                found.append((text, c))
+            elif text in ("Menu", "Bar"):
+                found.append((text, None))     # disabled - the last hold
+        for i, key in enumerate(page_keys):
+            out[key] = dict(found[i * 2:i * 2 + 2])
+        return out
+
+    def test_the_bar_pill_leaves_the_menu_alone(self):
+        self.assertIn("garage", prefs.bottom_bar_pages())
+        asyncio.run(self._pills()["garage"]["Bar"].on_click(None))
+        self.assertNotIn("garage", prefs.bottom_bar_pages())
+        self.assertIn("garage", prefs.visible_pages(),
+                      "taking it off the bar must not take it out of the menu")
+
+    def test_the_menu_pill_leaves_the_bar_alone(self):
+        self.assertIn("lab", prefs.visible_pages())
+        asyncio.run(self._pills()["lab"]["Menu"].on_click(None))
+        self.assertNotIn("lab", prefs.visible_pages())
+        self.assertIn("lab", prefs.bottom_bar_pages(),
+                      "taking it out of the menu must not take it off the bar")
+
+    def test_every_page_offers_one_pill_per_surface(self):
+        pills = self._pills()
+        self.assertEqual(sorted(pills), sorted(prefs.PAGE_KEYS))
+        for key, row in pills.items():
+            with self.subTest(page=key):
+                self.assertEqual(sorted(row), ["Bar", "Menu"])
+
+    def test_the_last_surface_holding_settings_is_not_tappable(self):
+        pills = self._pills()
+        self.assertIsNone(pills["settings"]["Menu"],
+                          "Settings is the only way back from a layout you regret")
+        self.assertIsNotNone(pills["settings"]["Bar"])
