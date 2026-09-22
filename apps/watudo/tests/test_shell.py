@@ -9,10 +9,13 @@ What each class pins down:
 
 ``TheShellBuilds``        one root control, the chrome in the right order,
                           the pill saying Watudo and not Agedashii.
-``EverySurfaceRenders``   both destinations build, offline, from cold.
-``TheNavReachesEachOne``  drawer and bottom bar both move between them, and
-                          both read which one is lit out of the same place
-                          the page's own tab bar writes.
+``EverySurfaceRenders``   every destination builds, offline, from cold, and
+                          exactly one control offers Present | Future.
+``TheNavReachesEachOne``  the bottom bar reaches everything it carries, the
+                          fourth surface is reachable with the hamburger
+                          hidden, and the drawer - once switched on - moves
+                          between all four. Which tab is lit is read back
+                          out of the same place the page's tab bar writes.
 ``TheThemeApplies``       a picked theme reaches the palette, the page's
                           Material theme and the next repaint - and is still
                           there on the next launch.
@@ -22,6 +25,8 @@ What each class pins down:
 ``TheScreenTreatment``    SafeArea wraps the chrome, the CRT overlay goes
                           over the top of it, and every layer of the overlay
                           still ignores taps.
+
+What each control on the Settings surface actually does is `test_settings.py`.
 """
 import flet as ft
 
@@ -81,7 +86,7 @@ class TheShellBuilds(WatudoCase):
 
 
 class EverySurfaceRenders(WatudoCase):
-    """Both destinations, built cold with nothing to build them from."""
+    """Every destination, built cold with nothing to build it from."""
 
     def surface_tree(self, page):
         return self.shell(page).content.controls[1]
@@ -89,22 +94,47 @@ class EverySurfaceRenders(WatudoCase):
     def test_wat2do_is_what_the_app_opens_on(self):
         page = self.build()
         self.assertEqual(_TAB_INDEX["wat2do"], 0)
-        tabs = first(self.surface_tree(page), ft.Tabs)
-        self.assertIsNotNone(tabs, "Wat2Do is a tabbed page")
-        self.assertEqual(tabs.selected_index, 0)
+        self.assertEqual(self.main.surface_of(), "wat2do")
+        self.assertIn("Checklist", " ".join(texts(self.surface_tree(page))))
+
+    def test_only_one_control_offers_present_and_future_at_a_time(self):
+        """The bottom bar carries both, so the page's own tab bar over the
+        top of them was the same two choices in two rows - which is what the
+        bottom bar switch existed to escape. Switch the bar off and the tab
+        bar is how you get between them, so it comes back."""
+        page = self.build()
+        self.assertIsNotNone(first(self.shell(page), ft.NavigationBar))
+        self.assertIsNone(first(self.surface_tree(page), ft.Tabs),
+                          "two rows of Present | Future, stacked")
+        prefs.set_bottom_bar_enabled(False)
+        self.rerender()
+        self.assertIsNotNone(first(self.body(page), ft.Tabs),
+                             "with no bar, the tabs are the only way across")
 
     def test_future_finds_renders_offline_with_no_someday_list(self):
         page = self.build()
-        self.main.surface_of()          # no side effects; it only reads
-        bar = first(self.shell(page), ft.NavigationBar)
-        bar.selected_index = 1
-        bar.on_change(Event(bar))
-        tabs = first(self.surface_tree(page), ft.Tabs)
-        self.assertEqual(tabs.selected_index, 1)
+        self.nav_to(page, "future")
+        self.assertEqual(_TAB_INDEX["wat2do"], 1)
         said = " ".join(texts(self.surface_tree(page)))
         self.assertIn("Not connected", said,
                       "offline, Future Finds must say so rather than show a "
                       "plausible empty list as though it were the answer")
+
+    def test_future_finds_is_built_only_when_it_is_the_one_on_screen(self):
+        """`_tabs` is handed two already-built bodies, so a tab bar means
+        building both on every repaint - and Customize appeared on Future,
+        which has no cards to arrange."""
+        page = self.build()
+        said = " ".join(texts(self.surface_tree(page)))
+        self.assertIn("Checklist", said)
+        self.assertNotIn("Someday list", said,
+                         "Future Finds should not be built behind Wat2Do")
+        icons = [c.icon for c in every(self.shell(page), ft.IconButton)]
+        self.assertIn(ft.Icons.DASHBOARD_CUSTOMIZE, icons)
+        self.nav_to(page, "future")
+        icons = [c.icon for c in every(self.shell(page), ft.IconButton)]
+        self.assertNotIn(ft.Icons.DASHBOARD_CUSTOMIZE, icons,
+                         "a button that does nothing is worse than no button")
 
     def test_neither_surface_invents_a_number_when_it_has_no_data(self):
         """Offline and cold there is nothing to show, so nothing is shown."""
@@ -113,8 +143,9 @@ class EverySurfaceRenders(WatudoCase):
         self.assertNotIn("sample data", said)
 
     def test_a_surface_that_raises_says_so_instead_of_blanking(self):
-        """`wat2do.build` hands `_tabs` two already-built bodies, so a crash
-        inside one lands in the shell rather than in the tab guard."""
+        """A failure inside a surface lands in the shell: with no tab bar
+        there is no `_tabs` guard above it, and with one, `wat2do.build`
+        hands `_tabs` two already-built bodies rather than callables."""
         from unittest import mock
         from agedashii_watudo.pages import wat2do
         page = self.build()
@@ -240,6 +271,20 @@ class TheNavReachesEachOne(WatudoCase):
         self.nav_to(page, "wat2do")
         _TAB_INDEX["wat2do"] = 1
         self.assertEqual(self.main.surface_of(), "future")
+
+    def test_everything_tappable_in_the_chrome_answers_the_tap(self):
+        """Flet's own showcase feels smooth because every tappable surface
+        ripples; this app had controls that did nothing until their handler
+        came back, and a tap with no acknowledgement is a tap made twice."""
+        page = self.build()
+        self.show_menu()
+        for tree in (self.topbar(page), page.drawer):
+            for c in walk(tree):
+                if isinstance(c, ft.Container) and c.on_click is not None:
+                    said = texts(c)
+                    self.assertTrue(c.ink, said)
+                    self.assertIsNotNone(c.ink_color, said)
+                    self.assertIsNotNone(c.animate, said)
 
     def test_navigation_does_no_work_of_its_own(self):
         """A slow synchronous handler holds the old frame and drops the next

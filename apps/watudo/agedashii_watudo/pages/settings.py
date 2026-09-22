@@ -551,7 +551,6 @@ def diagnostics_card(page):
     is the last place that may itself break.
     """
     p = PAL()
-    from . import _wat2do_parts as W
 
     def safe(fn, default="unavailable"):
         try:
@@ -570,7 +569,10 @@ def diagnostics_card(page):
         ("Outbox", str(queued), None),
         ("Storage", "on this device" if S.prefs is not None
          else "unavailable - settings reset on restart", S.prefs is not None),
-        ("Measuring from", W.origin_label(), None),
+        # The origin deliberately is not repeated here. The card that sets it
+        # already says where it is, and that line updates as she types; a
+        # second copy down here would only be right until the first edit,
+        # because nothing about an origin change repaints this page.
         ("App version", safe(prefs.app_version), None),
     ]
     return card(ft.Column(spacing=8, controls=[

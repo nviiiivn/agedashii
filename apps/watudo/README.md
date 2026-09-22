@@ -61,12 +61,20 @@ with the bottom navigation bar and less with the hamburger menu."*
   switch in Settings says so rather than letting the app quietly disagree
   with it. Her own setting is overridden, not rewritten, so the bar coming
   back restores the choice she made.
-* Present and Future are also the page's own two tabs. That is three handles
-  on one control, not three copies: one `future._S`, one scan, one someday
-  list, and which one is lit is read back out of the page's tab index rather
-  than stored a second time. Settings and How this works have no tab bar, so
-  the shell remembers those two — and forgets them the moment a tab page is
-  shown again.
+* **Exactly one control offers Present and Future at a time.** They are two
+  tabs of one page, and with the bottom bar carrying both, the page's own tab
+  bar over the top of them was the same two choices in two rows — which is
+  what the bottom bar switch existed to escape. So the tab bar is drawn only
+  when the bottom bar is off, and then it is how you get between them.
+  Either way it is one control, not two copies: one `future._S`, one scan,
+  one someday list, and which of the two is lit is read back out of the
+  page's tab index rather than stored a second time. Settings and How this
+  works have no tab bar, so the shell remembers those two — and forgets them
+  the moment a tab page is shown again.
+* A side effect worth having: only the destination on screen is built. With
+  a tab bar, `_tabs` is handed two already-constructed bodies, so every
+  repaint built Future as well as Present — and left Customize in the topbar
+  on Future, which has no cards to arrange.
 
 The topbar carries the Watudo pill, the outbox chip, Customize on a surface
 that has cards to arrange, and the theme button. There is no gear: Settings
@@ -237,14 +245,14 @@ file:
 /home/nvii/venvs/flet/bin/python -m unittest discover -s apps/watudo/tests -t .
 ```
 
-110 tests, about four seconds, no socket and no display. `config._opener` is
+115 tests, about four seconds, no socket and no display. `config._opener` is
 replaced with one that refuses every request, so "offline" is a boolean
 rather than a firewall rule, and the store is a tempfile thrown away with
 each test.
 
 | File | What it pins |
 |---|---|
-| `test_shell.py` | the shell builds headlessly; every surface renders cold and offline; the bottom bar reaches the three daily surfaces and lights Settings while Help is open; every surface is reachable with the hamburger hidden; the drawer, once switched on, reaches all four and carries what the bar cannot; which tab is lit is read back out of the page's own tab index rather than kept twice; the theme reaches the palette, Material's own mode and the next repaint, and survives a relaunch; the outbox chip says what is queued and nothing when nothing is; SafeArea wraps the chrome and the CRT overlay goes over the top of it with every layer still ignoring taps |
+| `test_shell.py` | the shell builds headlessly; every surface renders cold and offline; exactly one control offers Present \| Future and Future is not built behind Wat2Do; the bottom bar reaches the three daily surfaces and lights Settings while Help is open; every surface is reachable with the hamburger hidden; the drawer, once switched on, reaches all four and carries what the bar cannot; which tab is lit is read back out of the page's own tab index rather than kept twice; the theme reaches the palette, Material's own mode and the next repaint, and survives a relaunch; the outbox chip says what is queued and nothing when nothing is; SafeArea wraps the chrome and the CRT overlay goes over the top of it with every layer still ignoring taps; everything tappable in the chrome ripples |
 | `test_settings.py` | Settings renders as a surface; every control changes the thing it claims — theme, radius, glow, CRT and its intensity, bottom bar, hamburger, friendly dates, hide-finished, pain/spoons tracking and steering, the sub-task marker, mission size, the origin, the server address; turning the bar off forces the menu back without rewriting her setting; nothing inside a `Row(wrap=True)` expands; every setting survives a restart and a corrupt value costs the setting and not the app; the help surface says what queues and what needs the server |
 | `test_offline.py` | nothing local goes to the wire; a tick with no signal is queued, is visible to the very next read, and 40 ticks coalesce to 1 |
 | `test_isolation.py` | no file under `apps/watudo/` imports `agedashii_tofu`, `agedashii_moto` or `agedashii_foodzen`, statically or at runtime; the build manifest declares what it needs and **no permission at all**, and the README and the help surface agree with it |
@@ -277,7 +285,8 @@ the only Flet plugin.
   corner radius change everywhere at once; the settings that only affect
   Wat2Do do not repaint, because the surface they change is not the one on
   screen.
-* Every render builds both tabs, because `wat2do.build()` hands `_tabs` two
+* With the bottom bar switched off the page's tab bar comes back, and that
+  path still builds both tabs: `wat2do.build()` hands `_tabs` two
   already-constructed bodies rather than callables. That is the page's own
-  shape and this shell does not change it; it does catch a failure in
-  either, since `_tabs` cannot.
+  shape, kept because the dashboard renders it the same way; the shell
+  catches a failure in either, since `_tabs` cannot.

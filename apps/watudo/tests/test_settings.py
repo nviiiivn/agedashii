@@ -113,6 +113,20 @@ class TheSurfaceItselfIsReal(SettingsCase):
                                          "a filled TextField in a wrap paints "
                                          "grey over the whole screen")
 
+    def test_the_saved_message_survives_the_repaint_it_caused(self):
+        """Appearance settings rebuild the whole shell, which builds a new
+        Settings page with a new status line - so a message written to the
+        old one would be thrown away in the same breath it was written."""
+        self.flip("Accent glow", True)
+        self.assertIn("accent glow on", " ".join(texts(self.tree())))
+
+    def test_a_setting_that_only_changes_wat2do_does_not_repaint_the_shell(self):
+        """A repaint would scroll Settings back to the top to update a page
+        nobody is looking at."""
+        before = self.tree()
+        self.flip("Hide finished tasks", True)
+        self.assertIs(self.tree(), before, "the surface was rebuilt for nothing")
+
     def test_it_never_goes_to_the_wire_to_draw_itself(self):
         before = len(self.opener.calls)
         self.rerender()

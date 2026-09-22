@@ -111,8 +111,11 @@ TOPICS = [
     ]),
     (ft.Icons.EXPLORE, "Getting around", [
         "The bar along the bottom is the navigation: Wat2Do, Future Finds, "
-        "Settings. Present and Future also have their own tabs at the top of "
-        "the page, which are the same two destinations reached a second way.",
+        "Settings. This page hangs under Settings.",
+        "Only one control offers Present and Future at a time. With the "
+        "bottom bar on, it is the bar; switch the bar off in Settings and the "
+        "page gets its own Present | Future tabs back instead. They used to "
+        "both be on screen, one row above the other, saying the same thing.",
         "The hamburger menu is off by default and can be switched on in "
         "Settings. With the bottom bar switched off it comes back on its own, "
         "because something has to reach every surface.",

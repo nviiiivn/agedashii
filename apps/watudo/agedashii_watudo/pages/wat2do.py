@@ -34,7 +34,7 @@ from agedashii_washi import api as M
 from agedashii_washi import panels
 from agedashii_washi.ui_compat import PAL, PAD, BRD, RAD, card, chip, sub, title
 from agedashii_washi.forms import offline_banner
-from agedashii_washi.surface import _tabs
+from agedashii_washi.surface import _TAB_INDEX, _tabs
 from . import _wat2do_parts as W
 from . import future
 from .. import prefs as wprefs
@@ -48,6 +48,11 @@ except ImportError:       # pragma: no cover - depends on the build
 
 MAP_HEIGHT = 260
 LIST_HEIGHT = 190
+
+# The key this page's tab index is stored under, in `surface._TAB_INDEX`.
+# The app's shell writes it to navigate and reads it back to know where it
+# is, so it is named once here rather than spelled out at each use.
+TAB_KEY = "wat2do"
 
 _S = {
     "date": None,       # which day is on screen
@@ -79,7 +84,7 @@ def _num(v):
         return None
 
 
-def build(page):
+def build(page, tabs=True):
     """Present | Future, the two sub-views the website's Wat2Do page has.
 
     Future Finds is `future.py`, imported rather than reimplemented - it was
@@ -88,9 +93,25 @@ def build(page):
     first mounted; the website keeps it here, next to the day it is planning
     for, so here is where it belongs. Nothing is duplicated: both tabs call
     the same module, and only one page renders at a time.
+
+    `tabs=False` draws only the destination `_TAB_INDEX` names, with no tab
+    bar over it. That is for the Watudo app, whose bottom bar already
+    carries Present and Future: with both, a phone showed the same two
+    choices twice, one row above the other, which is what the bottom bar
+    switch existed to escape. Exactly one control offers them at a time now
+    - the bar when it is on, this tab bar when it is not.
+
+    It is also half the work. With a tab bar, `_tabs` is handed two
+    already-built bodies, so every repaint built Future as well as Present
+    (and left Customize showing on Future, which has no cards to arrange).
+    The dashboard still calls this with no argument and gets the tabs it
+    has always had.
     """
+    if not tabs:
+        return (future.build(page) if _TAB_INDEX.get(TAB_KEY, 0) == 1
+                else _present(page))
     return _tabs(page, [("Present", _present(page)),
-                        ("Future", future.build(page))], key="wat2do")
+                        ("Future", future.build(page))], key=TAB_KEY)
 
 
 def _present(page):

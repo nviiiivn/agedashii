@@ -1,10 +1,9 @@
 """Agedashii Watudo - what to do today, and where to go someday.
 
-Wat2Do and Future Finds, as an app of their own. They ship inside the
-Agedashii dashboard too; this is the same two surfaces with a shell around
-them instead of eight other pages. Nothing in `agedashii_watudo` was changed
-to make this build - the pages are imported exactly as the dashboard imports
-them, off `agedashii_qi` (the look) and `agedashii_washi` (the system).
+Wat2Do and Future Finds, as an app of their own, with the Settings and the
+help an app needs and a dashboard page does not. The two pages still ship
+inside the Agedashii dashboard; they are built off `agedashii_qi` (the look)
+and `agedashii_washi` (the system) and nothing else of ours.
 
 Why the two are one app
 -----------------------
@@ -14,23 +13,40 @@ with Trips because Wat2Do is what *imports* it - "what shall I do" and
 "where might I go" are one question asked twice, and the mission generator
 on the Present tab draws on the same spots.
 
-One page, two destinations
---------------------------
-`wat2do.build()` is already a two-tab page (Present | Future), and this
-shell does not build a second copy of either. The drawer and the bottom bar
-set `surface._TAB_INDEX["wat2do"]` and re-render, which is exactly what the
-dashboard's drawer does to reach Tools > FoodZen > EatZen in one tap. So
-there is one Present, one Future, one `future._S`, and the navigation and
-the tab bar are two handles on the same control rather than two states that
-can disagree. Which destination is lit is *read back* out of `_TAB_INDEX`
-rather than stored here, so they cannot drift.
+Four surfaces, three of them on the bar
+---------------------------------------
+Wat2Do and Future Finds are two tabs of one page: `wat2do.build()` is
+already a two-tab page and this shell does not build a second copy of
+either. Moving between them is a write to `surface._TAB_INDEX["wat2do"]`
+and a repaint, so there is one Present, one Future, one `future._S`, and
+the navigation and the page's own tab bar are handles on the same control
+rather than two states that can disagree. Which of the two is lit is *read
+back* out of `_TAB_INDEX` rather than stored here.
+
+Settings and How this works are surfaces of the shell's own. They have no
+tab bar to read back, so `_HERE` remembers which is showing - and forgets
+again the moment either tab page is.
+
+Bottom bar first
+----------------
+Her words: "Each of these smaller apps (not tofu) work better with the
+bottom navigation bar and less with the hamburger menu so... i want the
+ability to show / hide the hamburger menu trigger as wel please." So the
+bar carries Wat2Do, Future Finds and Settings, the hamburger is off by
+default and its slot goes away rather than sitting empty, and How this
+works hangs under Settings. One rail, in `menu_visible()`: with the bar
+switched off the trigger comes back whether or not it is switched on,
+because something has to reach every surface.
 
 Offline is the product
 ----------------------
 The theme, the corner radius, the glow, the CRT overlay, the card layout and
-every preference are local: they are read from SharedPreferences at launch
+every preference are local: they are read from SharedPreferences at launch -
+`agedashii_washi.prefs` for what every app shares, `agedashii_watudo.prefs`
+for the theme, the menu button and what only Wat2Do has an opinion about -
 and never ask the network anything, so the app looks and lays out exactly
-the same with the radio off. Only the day's record and the Future lists
+the same with the radio off. Settings and the help surface are entirely
+local for the same reason. Only the day's record and the Future lists
 come from the dashbored server, and those go through `agedashii_washi.store`,
 which answers reads from this device's own copy and queues writes in an
 outbox that survives a process death. A tick made in a tunnel is sent later,
@@ -230,6 +246,10 @@ async def main(page):
             # The pill is this app's equivalent of that title, so it gets
             # the wide version of the glow rather than the 10px heading one.
             shadow=GLOW(blur=24, opacity=0.40),
+            # Eased, so turning the glow on or the corners square from
+            # Settings is something the pill *does* rather than something
+            # that has already happened by the time the page repaints.
+            animate=U.motion(),
             content=ft.Text("Watudo", size=13, weight=ft.FontWeight.W_800,
                             color="#0d1117"),
         )
@@ -249,11 +269,15 @@ async def main(page):
     # find after a repaint.
     sync_icon = ft.Icon(ft.Icons.CLOUD_UPLOAD, size=13)
     sync_text = ft.Text("", size=10, weight=ft.FontWeight.W_600)
-    sync_chip = ft.Container(
-        padding=PAD(3, 8), border_radius=RAD(9), visible=False, ink=True,
+    # U.tap rather than a bare `ink=True`: the chip's whole job is to be
+    # tapped when something is stuck, and the drain behind it takes as long
+    # as a socket timeout. A themed ripple is what says the tap landed
+    # before the queue has anything new to report.
+    sync_chip = U.tap(ft.Container(
+        padding=PAD(3, 8), border_radius=RAD(9), visible=False,
         content=ft.Row(spacing=5, tight=True,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                       controls=[sync_icon, sync_text]))
+                       controls=[sync_icon, sync_text])))
 
     def paint_sync():
         """Say what the server has not got yet, in the server's own terms."""
@@ -574,7 +598,11 @@ async def main(page):
                                        reach=reach_lines())
         if key == "help":
             return help_page.build(page, go=go)
-        return wat2do.build(page)
+        # No tab bar while the bottom bar is carrying these two: on a phone
+        # that was the same two choices in two rows, one above the other.
+        # With the bar off, the page's own tabs are how you get between them
+        # and they come back.
+        return wat2do.build(page, tabs=not prefs.bottom_bar_enabled())
 
     # --------------------------------------------------------------- render
     def render(key=None):
