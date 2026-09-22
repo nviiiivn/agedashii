@@ -35,6 +35,7 @@ from agedashii_washi.ui_compat import PAL, PAD, BRD, RAD, card, chip, title, sub
 from agedashii_washi.forms import rebuilder
 from . import _trips_parts as T
 from . import xnav
+from .. import units as U
 from agedashii_washi.surface import _dismiss, _show
 from agedashii_washi.surface import _TAB_INDEX, _tabs
 
@@ -733,14 +734,18 @@ def _builder_card(page, p, say):
         state = cr.get("status")
         ok = state == "ok"
         stats_row.controls = [
-            _stat(p, "distance", f"{cr['distance_mi']:.1f}" if ok else "—", "mi"),
+            _stat(p, "distance",
+                  U.distance_value(cr["distance_mi"]) if ok else "—",
+                  U.distance_unit()),
             _stat(p, "moving", T.fmt_minutes(cr["duration_min"]) if ok else "—"),
             _stat(p, "legs", len(legs)),
         ]
         if ok and (cr.get("ascent_ft") is not None or cr.get("descent_ft") is not None):
             stats_row.controls.append(
                 _stat(p, "climb",
-                      f"↑{cr.get('ascent_ft') or 0} ↓{cr.get('descent_ft') or 0}", "ft"))
+                      f"↑{U.elevation_value(cr.get('ascent_ft') or 0)} "
+                      f"↓{U.elevation_value(cr.get('descent_ft') or 0)}",
+                      U.elevation_unit()))
         if state == "pending":
             stats_row.controls.append(
                 chip("routing…", p["yellow"], ft.Icons.HOURGLASS_TOP, small=True))
@@ -979,7 +984,8 @@ def _trip_card(page, p, t, say):
         mins = route.get("duration_min") if state == "ok" else t.get("duration_min")
         bits = [
             _mini(p, ft.Icons.ROUTE,
-                  f"{mi} mi" if isinstance(mi, (int, float)) else "—"),
+                  U.distance_text(mi) if isinstance(mi, (int, float))
+                  else "—"),
             _mini(p, ft.Icons.SCHEDULE,
                   T.fmt_minutes(mins) if isinstance(mins, (int, float))
                   else ("routing…" if state == "pending" else "—")),
@@ -987,8 +993,8 @@ def _trip_card(page, p, t, say):
         if state == "ok" and (route.get("ascent_ft") is not None
                               or route.get("descent_ft") is not None):
             bits.append(_mini(p, ft.Icons.TRENDING_UP,
-                              f"↑{route.get('ascent_ft') or 0} "
-                              f"↓{route.get('descent_ft') or 0} ft"))
+                              f"↑{U.elevation_value(route.get('ascent_ft') or 0)} "
+                              f"↓{U.elevation_text(route.get('descent_ft') or 0)}"))
         if t.get("difficulty"):
             bits.append(_mini(p, ft.Icons.SPEED, str(t["difficulty"])))
         if wps:
@@ -1426,7 +1432,8 @@ def _produce(page):
                      ft.Icons.HOURGLASS_TOP, small=True)]
         elif pv.get("ok"):
             preview_row.controls = [
-                _stat(p, "distance", f"{pv['distance_mi']:.1f}", "mi"),
+                _stat(p, "distance", U.distance_value(pv["distance_mi"]),
+                      U.distance_unit()),
                 _stat(p, "moving", T.fmt_minutes(pv["duration_min"])),
             ]
         elif pv.get("error"):
@@ -1557,7 +1564,9 @@ async def _preview_route(page, st, row, p, line):
     if res.get("pending"):                             # pragma: no cover
         return
     if st["preview"].get("ok"):
-        row.controls = [_stat(p, "distance", f"{res['distance_mi']:.1f}", "mi"),
+        row.controls = [_stat(p, "distance",
+                              U.distance_value(res["distance_mi"]),
+                              U.distance_unit()),
                         _stat(p, "moving", T.fmt_minutes(res["duration_min"]))]
     else:
         row.controls = [chip(res.get("error", "no route"), p["pink"],
@@ -1889,22 +1898,24 @@ def _ride_viewer(page, p, say):
     s = ride["stats"]
     points = ride["points"]
     stat_row = ft.Row(spacing=8, wrap=True, controls=[
-        _stat(p, "Distance", s.get("distance_mi", "—"), "mi"),
+        _stat(p, "Distance", U.distance_value(s.get("distance_mi")),
+              U.distance_unit()),
         _stat(p, "Time", T.fmt_ms(s.get("duration_ms"))),
-        _stat(p, "Max speed", s.get("max_speed_mph") if s.get("max_speed_mph")
-              is not None else "—", "mph"),
-        _stat(p, "Avg speed", s.get("avg_speed_mph") if s.get("avg_speed_mph")
-              is not None else "—", "mph"),
-        _stat(p, "Ascent", s.get("ascent_ft") if s.get("ascent_ft") is not None
-              else "—", "ft"),
-        _stat(p, "Descent", s.get("descent_ft") if s.get("descent_ft") is not None
-              else "—", "ft"),
+        _stat(p, "Max speed", U.speed_value(s.get("max_speed_mph")),
+              U.speed_unit()),
+        _stat(p, "Avg speed", U.speed_value(s.get("avg_speed_mph")),
+              U.speed_unit()),
+        _stat(p, "Ascent", U.elevation_value(s.get("ascent_ft")),
+              U.elevation_unit()),
+        _stat(p, "Descent", U.elevation_value(s.get("descent_ft")),
+              U.elevation_unit()),
         _stat(p, "Points", s.get("point_count", len(points))),
     ])
 
     clock = ft.Text(T.fmt_clock(ride["head"]), size=12, color=p["text"],
                     width=58)
-    now_mph = ft.Text("— mph", size=12, color=p["accent"], width=64)
+    now_mph = ft.Text(f"— {U.speed_unit()}", size=12, color=p["accent"],
+                      width=72)
     scrub = ft.Slider(min=0, max=max(1.0, ride["duration"]),
                       value=min(ride["head"], ride["duration"]), expand=True,
                       active_color=p["accent"])
@@ -1967,7 +1978,8 @@ def _ride_viewer(page, p, say):
         if got is None:
             return
         lat, lon, _, mph = got
-        now_mph.value = f"{round(mph)} mph" if mph is not None else "— mph"
+        now_mph.value = (U.speed_text(mph) if mph is not None
+                         else f"— {U.speed_unit()}")
         if head_marker is not None:
             head_marker.coordinates = fmap.MapLatitudeLongitude(lat, lon)
         scrub.value = ride["head"]
@@ -2053,15 +2065,15 @@ def _ride_viewer(page, p, say):
         *[ft.Row(spacing=3, tight=True, controls=[
             ft.Container(width=18, height=7, border_radius=RAD(3),
                          bgcolor=T.speed_colour(v)),
-            ft.Text(f"{v}", size=9, color=p["text2"])])
+            ft.Text(U.speed_value(v), size=9, color=p["text2"])])
           for v in (0, 20, 40, 60, 80)],
-        ft.Text("mph", size=9, color=p["text2"]),
+        ft.Text(U.speed_unit(), size=9, color=p["text2"]),
     ])
 
     pacing = ([] if ride["has_time"] else
               [_empty(p, f"This GPX has no timestamps, so the replay is paced "
-                         f"at a steady {int(T.SYNTHETIC_MPH)} mph. The clock "
-                         f"below is synthetic, not measured.",
+                         f"at a steady {U.speed_text(T.SYNTHETIC_MPH)}. The "
+                         f"clock below is synthetic, not measured.",
                       ft.Icons.SCHEDULE)])
 
     return card(ft.Column(spacing=8, controls=[

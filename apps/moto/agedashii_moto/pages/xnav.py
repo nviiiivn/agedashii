@@ -36,6 +36,7 @@ from agedashii_washi import api as M
 from agedashii_washi import panels
 from agedashii_washi.ui_compat import PAD, PAL, BRD, RAD, card, chip, sub, title
 from . import _trips_parts as T
+from .. import units as U
 
 try:                      # optional: the app still runs without the extensions
     import flet_map as fmap
@@ -120,7 +121,7 @@ def build(page):
 
     here = ft.Text("waiting for GPS…", size=11, color=p["text2"])
     speed_text = ft.Text("—", size=30, weight=ft.FontWeight.W_700, color=p["text"])
-    stat_dist = ft.Text("0.0 mi", size=15, weight=ft.FontWeight.W_600, color=p["text"])
+    stat_dist = ft.Text(f"0.0 {U.distance_unit()}", size=15, weight=ft.FontWeight.W_600, color=p["text"])
     stat_time = ft.Text("0:00", size=15, weight=ft.FontWeight.W_600, color=p["text"])
     stat_pts = ft.Text("0", size=15, weight=ft.FontWeight.W_600, color=p["text"])
     note = ft.Text("", size=11, color=p["text2"])
@@ -156,8 +157,9 @@ def build(page):
                 marker_layer])
 
     def redraw_stats():
-        speed_text.value = f"{_mph(_track.get('last_speed')):.0f}"
-        stat_dist.value = f"{_track['distance_m'] / 1609.344:.1f} mi"
+        speed_text.value = U.speed_value(_mph(_track.get("last_speed")),
+                                         dash="0")
+        stat_dist.value = U.metres_text(_track["distance_m"])
         stat_time.value = (_fmt_duration(time.time() - _track["started"])
                            if _track["recording"] else "0:00")
         stat_pts.value = str(len(_track["points"]))
@@ -230,7 +232,7 @@ def build(page):
         if _track["recording"]:
             _track["recording"] = False
             note.value = (f"stopped - {len(_track['points'])} points, "
-                          f"{_track['distance_m'] / 1609.344:.1f} mi")
+                          f"{U.metres_text(_track['distance_m'])}")
         else:
             _track.update({"points": [], "recording": True, "started": time.time(),
                            "last": None, "distance_m": 0.0})
@@ -273,7 +275,7 @@ def build(page):
                                      tooltip="find me", on_click=locate)]),
             ft.Row(spacing=16, vertical_alignment=ft.CrossAxisAlignment.END, controls=[
                 ft.Row(spacing=4, vertical_alignment=ft.CrossAxisAlignment.END,
-                       controls=[speed_text, sub("mph", 11)]),
+                       controls=[speed_text, sub(U.speed_unit(), 11)]),
                 ft.Container(expand=True),
                 stat("distance", stat_dist), stat("moving", stat_time),
                 stat("points", stat_pts),
@@ -388,7 +390,7 @@ def _navigator(page, p, the_map, route_layer, nav_markers, poi_layer):
         if speeds:
             mph = next((v for v in speeds if v), None)
             limit_badge.content = ft.Text(
-                str(int(mph)) if mph else "—", size=15,
+                U.speed_value(mph) if mph else "—", size=15,
                 weight=ft.FontWeight.W_700, color=ft.Colors.BLACK)
             limit_badge.bgcolor = T.maxspeed_colour(mph)
         else:
@@ -400,7 +402,8 @@ def _navigator(page, p, the_map, route_layer, nav_markers, poi_layer):
             elev_badge.value = "—"
             elev_badge.color = p["text2"]
         else:
-            elev_badge.value = f"{'+' if delta > 0 else ''}{delta} ft"
+            elev_badge.value = (f"{'+' if delta > 0 else ''}"
+                                f"{U.elevation_text(delta)}")
             elev_badge.color = (p["pink"] if delta > 30 else
                                 p["green"] if delta < -30 else p["text2"])
 
@@ -408,17 +411,20 @@ def _navigator(page, p, the_map, route_layer, nav_markers, poi_layer):
         r = _NAV["route"]
         if not (r and r.get("ok")):
             stats_row.controls = [
-                _tile(p, "Distance", "—", "mi"), _tile(p, "Duration", "—"),
-                _tile(p, "Ascent", "—", "ft"), _tile(p, "Descent", "—", "ft"),
+                _tile(p, "Distance", "—", U.distance_unit()),
+                _tile(p, "Duration", "—"),
+                _tile(p, "Ascent", "—", U.elevation_unit()),
+                _tile(p, "Descent", "—", U.elevation_unit()),
                 _tile(p, "Curves", "—")]
             return
         asc, desc = (T.profile_climb(_NAV["profile"]) if _NAV["profile"]
                      else (r.get("ascent_ft"), r.get("descent_ft")))
         stats_row.controls = [
-            _tile(p, "Distance", f"{r['distance_mi']:.1f}", "mi"),
+            _tile(p, "Distance", U.distance_value(r["distance_mi"]),
+                  U.distance_unit()),
             _tile(p, "Duration", T.fmt_minutes(r["duration_min"])),
-            _tile(p, "Ascent", asc if asc is not None else "—", "ft"),
-            _tile(p, "Descent", desc if desc is not None else "—", "ft"),
+            _tile(p, "Ascent", U.elevation_value(asc), U.elevation_unit()),
+            _tile(p, "Descent", U.elevation_value(desc), U.elevation_unit()),
             _tile(p, "Curves", len(_NAV["corners"])),
         ]
 
@@ -506,7 +512,8 @@ def _navigator(page, p, the_map, route_layer, nav_markers, poi_layer):
         _NAV["profile"] = None
         _NAV["profile_error"] = ""
         paint_all()
-        say(f"{res['distance_mi']:.1f} mi · {T.fmt_minutes(res['duration_min'])}")
+        say(f"{U.distance_text(res['distance_mi'])} · "
+            f"{T.fmt_minutes(res['duration_min'])}")
         await _fit(the_map, res["points"])
 
         # Speed limits and elevation are separate live services; each one

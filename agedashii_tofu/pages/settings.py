@@ -560,6 +560,15 @@ def appearance_card(page, saver, on_theme=None):
     intensity_slider.on_change = preview_intensity
     intensity_slider.on_change_end = commit_intensity
 
+    async def toggle_motion(e):
+        # The switch reads "Reduce motion", so ON means suppress. The pref
+        # is stored the same way round as the label to keep the two from
+        # ever disagreeing.
+        prefs.set_reduce_motion(e.control.value)
+        await saver.commit("Motion " + ("reduced" if e.control.value else "on"))
+        repaint()
+        page.update()
+
     async def toggle_crt(e):
         prefs.set_crt_overlay(e.control.value)
         intensity_slider.disabled = not e.control.value
@@ -592,6 +601,11 @@ def appearance_card(page, saver, on_theme=None):
         ]),
         sub("How strong the scanlines, dot mask and vignette draw when the "
             "overlay is on.", 10),
+        _switch_row(p, "Reduce motion",
+                    "Turns off the cross-fades between pages, the stagger as "
+                    "cards arrive, and the animation when a card is resized or "
+                    "reordered. Everything still works; it just stops moving.",
+                    prefs.reduce_motion(), toggle_motion),
     ]))
 
 

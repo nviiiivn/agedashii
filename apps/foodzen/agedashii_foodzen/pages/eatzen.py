@@ -295,6 +295,15 @@ def build_eatzen(page):
             # Container is not a Flex and does not consume `expand`. The
             # field stayed unbounded inside the Wrap and the grey slab came
             # back. Verified by dumping the control tree, not by looking.
+            #
+            # The emoji is decoration and says nothing about the numbers: a
+            # food the table does not know shows a neutral plate rather than
+            # a near-miss, and an empty row shows nothing at all. See
+            # glyphs.py for why a wrong glyph is worse than none.
+            ft.Container(width=EMOJI_SLOT_W, alignment=ft.Alignment.CENTER,
+                         content=ft.Text(glyphs.food_emoji(row["food"])
+                                         if str(row["food"]).strip() else "",
+                                         size=16)),
             field(row, "food", "food", width=FOOD_FIELD_W),
             field(row, "qty", "1", width=52),
             field(row, "unit", "unit", width=72),
@@ -621,7 +630,12 @@ def build_eatzen(page):
                 row_controls_log.append(ft.Image(src=thumb_url, width=28, height=28,
                                                  fit=ft.BoxFit.COVER,
                                                  border_radius=RAD(4)))
+            first = ((entry.get("items") or [{}])[0] or {}).get("food", "")
             row_controls_log += [
+                # The meal's own glyph, from its first item - content, so an
+                # emoji rather than a themed icon. Nothing when the table
+                # does not know it: a plate on every row would be noise.
+                ft.Text(glyphs.food_emoji_or_none(first) or "", size=13),
                 sub(str(entry.get("ts") or "")[11:16], 10),
                 ft.Text(names, size=11, color=p["text2"], expand=True),
                 ft.Text(f'{(entry.get("totals") or {}).get("na", 0)} mg', size=11,
@@ -642,19 +656,17 @@ def build_eatzen(page):
 
     return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, controls=[
         card(ft.Column(spacing=8, controls=[
-            ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                  controls=[
-                      ft.Icon(ft.Icons.CAMERA_ALT_OUTLINED, size=16, color=p["accent"]),
-                      title("Photograph it", 14), ft.Container(expand=True),
-                      ft.FilledButton("Photo", height=34, icon=ft.Icons.CAMERA_ALT,
-                                      on_click=do_photo)]),
+            glyphs.head(glyphs.ICON_CAMERA, "Photograph it", 14,
+                        trailing=ft.FilledButton(content="Photo", height=34,
+                                                 icon=ft.Icons.CAMERA_ALT,
+                                                 on_click=do_photo)),
             photo_preview,
             sub("A vision model on Tower names what's on the plate; the sodium "
                 "and sugar always come from the same local table as typing it "
                 "in. Needs Tower live.", 10),
         ])),
         card(ft.Column(spacing=8, controls=[
-            title("Describe it", 14),
+            glyphs.head(ft.Icons.EDIT_NOTE, "Describe it", 14),
             sentence,
             ft.Row(spacing=6, controls=[use_llm, ft.Container(expand=True),
                                         ft.FilledButton("Break it down", height=34,
@@ -662,18 +674,24 @@ def build_eatzen(page):
             sub("Optional — fills the rows below. Nothing saves until you press Log.",
                 10),
         ])),
-        ft.Row([title("What you ate", 14), ft.Container(expand=True),
-                ft.TextButton("Add row", on_click=add_row)]),
+        glyphs.head(glyphs.ICON_EATZEN, "What you ate", 14,
+                    trailing=ft.TextButton(content="Add row", on_click=add_row)),
         rows_col,
         est_note,
         card(ft.Column(spacing=8, controls=[
-            total_text, meter, detail_text,
+            # The sodium mark, themed, beside the number it labels - chrome,
+            # so an icon and not an emoji. It is the same glyph the meter and
+            # the Settings card use, which is the point of naming it once.
+            ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                   controls=[glyphs.mark(glyphs.ICON_SODIUM, size=20), total_text]),
+            meter, detail_text,
             ft.Row(spacing=8, controls=[target, ft.Container(expand=True)]),
             ft.Row(spacing=8, controls=[when,
                                         ft.FilledButton("Log it", height=34,
                                                         on_click=do_log)]),
         ])),
-        card(ft.Column(spacing=6, controls=[title("Logged", 13), *log_controls])),
+        card(ft.Column(spacing=6, controls=[
+            glyphs.head(glyphs.ICON_LOG, "Logged", 13), *log_controls])),
         w.control,
     ])
 
@@ -735,9 +753,17 @@ def build_bpm(page):
                 sub(str(b.get("ts") or "").replace("T", " "), 10),
                 ft.IconButton(ft.Icons.CLOSE, icon_size=14, icon_color=p["text2"],
                               on_click=w.run(M.bpm_delete, b.get("id")))]),
-            ft.Row(spacing=14, controls=[
-                sub(f'hr {b.get("hr")}' if b.get("hr") else "hr —", 11),
-                sub(f"{na} mg sodium that day" if na else "no intake logged", 11),
+            ft.Row(spacing=14, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                   controls=[
+                ft.Row(spacing=4, tight=True,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                           glyphs.mark(glyphs.ICON_PULSE, size=12, tone="pink"),
+                           sub(f'{b.get("hr")}' if b.get("hr") else "—", 11)]),
+                ft.Row(spacing=4, tight=True,
+                       vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                           glyphs.mark(glyphs.ICON_SODIUM, size=12, tone="text2"),
+                           sub(f"{na} mg that day" if na else "no intake logged",
+                               11)]),
             ]),
             *([sub(b["note"], 10)] if b.get("note") else []),
         ]), pad=10))
@@ -752,6 +778,7 @@ def build_bpm(page):
         key, label = M.bp_category(avg_s, avg_d)
         summary = [card(ft.Row(
             spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+                glyphs.mark(glyphs.ICON_BP, size=26),
                 ft.Text(f"{avg_s}/{avg_d}", size=24, weight=ft.FontWeight.W_700,
                         color=p["text"]),
                 ft.Column(spacing=2, controls=[
@@ -761,7 +788,7 @@ def build_bpm(page):
 
     return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, controls=[
         card(ft.Column(spacing=8, controls=[
-            title("New reading", 14),
+            glyphs.head(glyphs.ICON_BP, "New reading", 14),
             ft.Row(spacing=6, wrap=True, controls=[f_sys, f_dia, f_hr]),
             ft.Row(spacing=6, controls=[f_when, f_note]),
             ft.Row([ft.FilledButton("Add", height=34, on_click=add)]),

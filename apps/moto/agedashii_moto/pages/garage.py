@@ -48,6 +48,8 @@ from agedashii_washi.ui_compat import BRD, PAD, PAL, RAD, S, card, chip, sub, ti
 from agedashii_washi.forms import Writer, rebuilder
 from agedashii_washi.surface import _tabs
 
+from .. import units as U
+
 
 # Which bike and which of its sections you were last looking at. Module level
 # so a write - or any repaint - does not throw you back to the picker.
@@ -205,7 +207,7 @@ def _picker(page, bikes):
     def row(b):
         slug = b.get("name")
         on = slug == _state["bike"]
-        counts = (f"{b.get('mileage_count', 0)} mi · "
+        counts = (f"{b.get('mileage_count', 0)} odo · "
                   f"{b.get('service_count', 0)} svc · "
                   f"{b.get('expense_count', 0)} exp")
         return ft.Container(
@@ -248,14 +250,17 @@ def _stats_strip(slug, stats):
         return card(sub("Could not read this bike's stats from the server.", 11),
                     pad=12)
     tiles = [
-        ("total miles", _int(stats.get("total_miles")) if stats.get("total_miles") else "—"),
+        (f"total {U.distance_unit()}",
+         U.odometer_text(stats.get("total_miles"))
+         if stats.get("total_miles") else "—"),
         ("total spent", _money(stats.get("total_spent"), digits=0)
          if stats.get("total_spent") else "—"),
         ("mpg avg", _dash(stats.get("mpg_avg"))),
-        ("cost / mile", _money(stats.get("cost_per_mile"))
+        (f"cost / {U.distance_unit()}",
+         _money(U.speed(stats.get("cost_per_mile")) and None
+                or _per_unit(stats.get("cost_per_mile")))
          if stats.get("cost_per_mile") is not None else "—"),
-        ("since service", f"{_int(stats.get('miles_since_service'))} mi"
-         if stats.get("miles_since_service") is not None else "—"),
+        ("since service", U.odometer_text(stats.get("miles_since_service"))),
         ("days since svc", f"{stats.get('days_since_service')}d"
          if stats.get("days_since_service") is not None else "—"),
     ]
@@ -364,7 +369,7 @@ def _record_line(p, rtype, r):
     """
     date = _dash(r.get("date"))
     if rtype == "mileage":
-        head = f"{date} · {_int(r.get('odo'))} mi"
+        head = f"{date} · {U.odometer_text(r.get('odo'))}"
         bits = []
         if r.get("gallons") not in (None, ""):
             bits.append(f"{r['gallons']} gal")
@@ -375,7 +380,7 @@ def _record_line(p, rtype, r):
         head = f"{date} · {r.get('type') or 'service'}"
         bits = []
         if r.get("odo") not in (None, ""):
-            bits.append(f"{_int(r['odo'])} mi")
+            bits.append(U.odometer_text(r["odo"]))
         if r.get("parts_cost") not in (None, ""):
             bits.append(f"parts {_money(r['parts_cost'])}")
         if r.get("labor_cost") not in (None, ""):
@@ -818,7 +823,7 @@ def _mechanic(page):
         else:
             bits = []
             if since is not None:
-                bits.append(f"{_int(since)} mi")
+                bits.append(U.odometer_text(since))
             if days is not None:
                 bits.append(f"{days}d")
             service = "since service: " + " · ".join(bits)

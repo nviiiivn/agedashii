@@ -20,6 +20,8 @@ from agedashii_washi.ui_compat import PAD, PAL, RAD, S, card, chip, sub, title
 from . import eatzen
 from agedashii_washi.surface import _tabs
 
+from .. import glyphs
+
 # Which folded-away sections are open. Module level so a tick, a delete or an
 # added item - every one of which repaints the tab - does not shut the
 # catalogue you were halfway down.
@@ -148,6 +150,10 @@ def _grocery(page):
                 ft.Icons.CHECK_BOX if done else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
                 icon_size=17, icon_color=p["green"] if done else p["text2"],
                 on_click=run(M.foodzen_toggle, name, not done)),
+            # The item's own glyph - content, so an emoji. A neutral plate
+            # for anything the table does not know; never a near-miss. See
+            # glyphs.py for the rule and why it matters on a shopping list.
+            ft.Text(glyphs.food_emoji(name), size=14),
             ft.Text(f"{name}{'' if qty in (1, None) else f'  x{qty}'}", size=12,
                     color=p["text2"] if done else p["text"], expand=True,
                     style=ft.TextStyle(
@@ -159,6 +165,7 @@ def _grocery(page):
 
     def simple_row(name, remove_fn, cat=None):
         return ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.Text(glyphs.food_emoji(name), size=14),
             ft.Text(name, size=12, color=p["text"], expand=True),
             chip(cat, p["purple"], small=True) if cat else ft.Container(),
             ft.IconButton(ft.Icons.CLOSE, icon_size=15, icon_color=p["text2"],
@@ -178,18 +185,19 @@ def _grocery(page):
 
     def templates_card():
         return card(ft.Column(spacing=6, controls=[
-            ft.Row([title("List templates", 13), ft.Container(expand=True),
-                    ft.TextButton("save current list",
-                                  on_click=run(M.foodzen_template_save))
-                    if items else ft.Container()]),
+            glyphs.head(glyphs.ICON_TEMPLATES, "List templates", 13,
+                        trailing=ft.TextButton(content="save current list",
+                                               on_click=run(M.foodzen_template_save))
+                        if items else None),
             *([template_row(t) for t in templates] if templates
               else [sub("no templates yet - build a list, then save it as one", 11)]),
         ]))
 
     def list_card():
         return card(ft.Column(spacing=6, controls=[
-            ft.Row([title("Grocery list"), ft.Container(expand=True),
-                    chip(fz.get("list_name") or "new list", p["orange"], small=True)]),
+            glyphs.head(glyphs.ICON_GROCERY, "Grocery list", 16,
+                        trailing=chip(fz.get("list_name") or "new list",
+                                      p["orange"], small=True)),
             *([list_row(i) for i in items] if items
               else [sub("empty - add something below", 11)]),
             add_row("add an item...", M.foodzen_add),
@@ -258,7 +266,10 @@ def _browse(page, run):
         sections.append(ft.Column(spacing=4, controls=[
             sub(section.upper(), 10),
             ft.Row(wrap=True, spacing=4, run_spacing=4, controls=[
-                ft.TextButton(n, on_click=run(M.foodzen_add, n))
+                # The label carries the glyph because a TextButton is a
+                # string and there is nowhere else to put one. `n` itself,
+                # not the label, is what gets added to the list.
+                ft.TextButton(glyphs.food_label(n), on_click=run(M.foodzen_add, n))
                 for n in by_section[section]]),
         ]))
 
@@ -283,6 +294,7 @@ def _meals(page):
         name = x.get("name", "") if isinstance(x, dict) else str(x)
         cat = x.get("cat") if isinstance(x, dict) else None
         return ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+            ft.Text(glyphs.food_emoji(name), size=14),
             ft.Text(name, size=12, color=p["text"], expand=True),
             chip(cat, p["purple"], small=True) if cat else ft.Container(),
             ft.IconButton(ft.Icons.CLOSE, icon_size=15, icon_color=p["text2"],

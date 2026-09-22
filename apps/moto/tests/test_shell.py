@@ -144,17 +144,28 @@ class EverySurfaceRenders(ShellCase):
         self.assertIn("No route yet", said)
         self.assertIn("— mi", said)
 
-    def test_every_surface_registers_a_card_layout_worth_arranging(self):
+    def test_every_card_surface_registers_a_card_layout_worth_arranging(self):
         """`panels.has_surface()` is what puts the Customize button in the
         topbar. A surface that forgot `panels.layout` would get a button
         that does nothing."""
         module = load_main()
-        for key in module.PAGES:
+        for key in module.CARD_PAGES:
             with self.subTest(surface=key):
                 panels.begin_render()
                 module.build_surface(StubPage(), key)
                 self.assertTrue(panels.has_surface(),
                                 f"{key} registered no panel surface")
+
+    def test_settings_and_help_register_none_so_they_get_no_arrange_button(self):
+        """Both are ordinary scrolling columns with nothing to rearrange,
+        and a button that does nothing is worse than no button."""
+        module = load_main()
+        for key in ("settings", "help"):
+            with self.subTest(surface=key):
+                panels.begin_render()
+                module.build_surface(StubPage(), key)
+                self.assertFalse(panels.has_surface(),
+                                 f"{key} offered an Arrange button")
 
     def test_each_surface_is_reachable_through_the_running_shell(self):
         """Not `build_surface` in isolation - the real path, through the
@@ -171,12 +182,26 @@ class EverySurfaceRenders(ShellCase):
 class TheNavReachesEachOne(ShellCase):
     """Every surface has a way in, from both the drawer and the bar."""
 
-    def test_the_three_surfaces_all_have_a_label_and_an_icon(self):
+    def test_every_surface_has_a_label_and_a_pair_of_icons(self):
+        """Four on the bar, Help off it. Every one of the five needs a
+        name and a mark, selected and unselected - a destination missing
+        its filled twin falls back to the outline and stops reading as
+        selected at all."""
         module = load_main()
-        self.assertEqual(module.PAGES, ["trips", "garage", "xnav"])
-        for key in module.PAGES:
-            self.assertIn(key, module.LABELS)
-            self.assertIn(key, module.ICONS)
+        self.assertEqual(module.PAGES, ["trips", "garage", "xnav", "settings"])
+        self.assertEqual(module.EXTRA_PAGES, ["help"])
+        for key in module.PAGES + module.EXTRA_PAGES:
+            with self.subTest(surface=key):
+                self.assertIn(key, module.LABELS)
+                self.assertIn(key, module.ICONS)
+                self.assertIn(key, module.ICONS_SELECTED)
+
+    def test_no_two_surfaces_share_a_mark(self):
+        """MAP for Trips beside NAVIGATION for XNAV was two arrows on two
+        maps at 24px. Distinct marks are the point of the set."""
+        module = load_main()
+        marks = [module.ICONS[k] for k in module.PAGES + module.EXTRA_PAGES]
+        self.assertEqual(len(marks), len(set(marks)))
 
     def test_the_drawer_lists_every_surface(self):
         page = self.build_shell()

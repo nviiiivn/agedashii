@@ -78,6 +78,7 @@ KEY_CRT = NS + "crt"
 # 0-100, meaningless while KEY_CRT is off but always coerced to something
 # valid regardless - a slider next to the switch in Settings > Appearance.
 KEY_CRT_INTENSITY = NS + "crt_intensity"
+KEY_REDUCE_MOTION = NS + "reduce_motion"
 # Which drawer sections (pages with sub-items) she has expanded - "collapse
 # Tools once it has ten rows in it". Stored as "<page>:1"/"<page>:0", the
 # same explicit-flag-per-key shape `panel_width` already uses, rather than
@@ -178,6 +179,7 @@ def _defaults():
         KEY_GLOW: False,
         KEY_CRT: False,
         KEY_CRT_INTENSITY: DEFAULT_CRT_INTENSITY,
+        KEY_REDUCE_MOTION: False,
         # No explicit opens or closes yet - see drawer_section_open() for
         # what a page with no entry here defaults to.
         KEY_DRAWER_OPEN: [],
@@ -807,6 +809,24 @@ def crt_overlay():
     return _as_bool(_V.get(KEY_CRT), False)
 
 
+def reduce_motion():
+    """Whether animation is suppressed everywhere.
+
+    Off by default, meaning the app animates. This is a real accessibility
+    switch rather than a token one: motion is genuinely unpleasant for some
+    people, and every helper in agedashii_washi.motion returns the still
+    version when this is set - the content itself, with no animation
+    wrapper at all, not a zero-length animation.
+    """
+    return _as_bool(_V.get(KEY_REDUCE_MOTION), False)
+
+
+def set_reduce_motion(on):
+    _V[KEY_REDUCE_MOTION] = bool(on)
+    apply_runtime()
+    return True
+
+
 def crt_intensity():
     """How strong the CRT overlay draws, 0-100. Read regardless of whether
     the overlay itself is on - it is meaningless while off, but a value
@@ -986,6 +1006,7 @@ def apply_runtime():
         ui.S.glow = accent_glow()
         ui.S.crt = crt_overlay()
         ui.S.crt_intensity = crt_intensity()
+        ui.S.reduce_motion = reduce_motion()
     except Exception:  # noqa: BLE001 - ditto, and the defaults on S still draw
         pass
 
@@ -1066,6 +1087,7 @@ async def load(prefs):
     _V[KEY_GLOW] = accent_glow()
     _V[KEY_CRT] = crt_overlay()
     _V[KEY_CRT_INTENSITY] = crt_intensity()
+    _V[KEY_REDUCE_MOTION] = reduce_motion()
     # Widths specifically: a store written before width became a 1-60 span
     # can still hold the three old names ("full"/"half"/"third"), which
     # `panel_width()` already translates on every read. Rewriting the
@@ -1137,6 +1159,7 @@ def save_payload():
         KEY_GLOW: accent_glow(),
         KEY_CRT: crt_overlay(),
         KEY_CRT_INTENSITY: crt_intensity(),
+        KEY_REDUCE_MOTION: reduce_motion(),
     }
     defaults = _defaults()
     for key in defaults:
