@@ -1,28 +1,49 @@
 # Agedashii — what is done, what is not
 
-Updated 2026-09-21 late. Branch `app-config`, 758 tests green (app),
-110 green (website).
+Updated 2026-09-22. Branch `split`. **1,110 tests green** — 764 Tofu,
+120 Moto, 115 Watudo, 111 Foodzen.
 
-This replaces the version written before the parity work. Where a claim has
-a number behind it, the number was measured, not estimated.
+Where a claim has a number behind it, the number was measured, not
+estimated. See `BOARD.md` for the split itself and who owns what.
 
 ---
 
-## The app runs from source on the Void laptop
+## There are four apps now
 
-No build step, no CI. Type **`agedashii`** in a terminal, or find
-**Agedashii** in the desktop search.
+| | what it is | on the phone |
+|---|---|---|
+| **Agedashii Tofu** | the whole dashboard, every surface | 222 MB |
+| **Agedashii Moto** | Trips + Garage + XNAV | 222 MB |
+| **Agedashii Watudo** | Wat2Do + Future Finds | 142 MB |
+| **Agedashii Foodzen** | Grocery + EatZen + BPM | 140 MB |
+
+Watudo and Foodzen are a third smaller because they do not carry the
+120 MB offline map they would never open.
+
+Each has its own bundle id, so all four install side by side. Each has its
+own Settings, its own in-app manual, and its own icon.
+
+**Nothing has been removed from Tofu**, and nothing will be until she says
+so. What she has instead is the ability to hide surfaces herself — which
+is reversible and deletes nothing.
+
+## Running them
+
+**On the laptop, from source** — no build step. Search the launcher for
+**Agedashii**; all four are there with their own icons.
 
 - source: `~/agedashii-src` on `192.0.2.254`, synced with rsync
-- venv: `~/venvs/agedashii` (Flet 0.86.5 on Python 3.14)
-- iterate: edit here, rsync, relaunch — about 40 seconds
+- venv: `~/venvs/agedashii` (Flet 0.86.5)
+- entries: `~/.local/share/applications/agedashii-*.desktop`
 
-**GitHub Actions is out of minutes.** The repo is private so builds are
-metered, and the macOS job billed at a 10x multiplier: one macOS run cost
-more than everything else combined. Both jobs now start and die instantly
-with zero steps, which is what exhausting the allowance looks like. The
-macos-ios job is commented out with instructions to restore it. Until the
-allowance resets there is no APK and no IPA.
+**On the phone** — `tofu.alola.lol/apk`, and the same for `moto`,
+`watudo`, `foodzen`.
+
+**Builds happen on Tower now, not GitHub.** Actions minutes are exhausted
+(both jobs die in 3 seconds with zero steps, which is what that looks
+like), so `tools/build_app.sh <app> apk linux` on Tower is the path, using
+the toolchain at `/home/nvii/flet-toolchain`. That removes the CI
+dependency entirely rather than waiting on a quota.
 
 ---
 
@@ -82,10 +103,16 @@ clicks vanished.
 - card layout: reorder, hide and resize per surface, plus a Customize mode
   that does it on the page itself
 
-### On the web, at agedashii.alola.lol
-The PWA is live and answering — "Add to Home Screen" is the no-cost route
-onto the iPhone, since a real iOS install needs a paid Apple Developer
-account. `/apk`, `/ipa` and `/downloads` all answer too.
+### On the web — five hosts now
+`tofu.alola.lol`, `moto.alola.lol`, `watudo.alola.lol`,
+`foodzen.alola.lol`, each with `/apk`, `/ipa`, `/linux-x64`,
+`/linux-arm64` and `/downloads`. `agedashii.alola.lol` is the Qi + Washi
+framework page, generated from the packages themselves so it cannot drift
+from what ships. Every old path 302s to its new home.
+
+**A PWA added to the home screen from `agedashii.alola.lol` is now
+broken** — that origin serves the framework page. Re-add it from
+`tofu.alola.lol`.
 
 ### Elsewhere
 - offline maps and routing: edge snapping (median error 72 m to 6.1 m),
@@ -123,6 +150,35 @@ counted item came back at its smallest size (a banana at 81 g against a
 medium's 118 g). All nine fixed; the phrase battery is now 30 cases with
 controls, and it caught a regression on the way.
 
+### Each app is its own app now
+Settings is a real surface on every one of them — server, all 24 themes
+(persisted, which they never were), radius, glow, CRT and its intensity,
+navigation, and that app's own domain settings. Each has an in-app manual.
+The bottom bar is the primary navigation and the hamburger can be hidden;
+neither can be switched off in a way that strands a surface.
+
+Watudo no longer asks for location. It never used it — every distance came
+from a hardcoded HOME and `future.scan()`'s `centre` had no caller. Rather
+than keep a permission for a feature that did not exist, the argument got
+a real caller: "Measure distances from" in Settings.
+
+### Glyphs
+231 foods to emoji, whole-word and longest-phrase-first, so grapefruit is
+not grapes, eggplant is not an egg, and "chocolate milk" is not "milk
+chocolate". Unknown returns a neutral plate rather than a guess — a wrong
+glyph reads as a claim about the row. Chrome uses themed Material icons
+tinted from the palette, and a test asserts the two sets never mix.
+
+### It moves
+One module owns every duration and curve. Page and tab changes cross-fade
+at 180 ms instead of hard-cutting; cards fade and rise, staggered;
+resizing or reordering a card animates instead of teleporting; skeletons
+stand in for content that has not arrived. Flet's own default for a
+transition is ONE SECOND, which is how an app that uses the defaults ends
+up feeling sluggish. **Reduce motion** is a real switch in Settings, and
+every helper returns the still version rather than a zero-length
+animation.
+
 ## In flight
 
 Nothing. Everything below is either done or listed as not done.
@@ -131,13 +187,14 @@ Nothing. Everything below is either done or listed as not done.
 
 | Work | Note |
 |---|---|
-| APK / IPA | blocked on Actions minutes; the IPA also needs a Mac |
+| IPA | `flutter build ipa` needs macOS. A Sonoma guest under KVM on Tower is proven working; Xcode 16.2 is downloaded. In progress |
 | `1 salmon fillet` matches smoked salmon | that entry is the only one that says "filets". Its alternatives list the rest |
 | `1 cup oatmeal` matches QUAKER | the table has no plain cooked oatmeal to answer with |
-| Forks: FoodZen, Trips+Garage, Wat2Do as separate apps | agreed, not started |
 | Sensors: accelerometer, gyro, lean, g-force | deferred by her |
 | Routing takes no heading | on a divided highway a fix nearer the opposite carriageway starts the route the wrong way |
-| Website layouts live in `localStorage` | per browser; the app cannot see them. Moving them server-side is a decision, not yet taken |
+| Website layouts live in `localStorage` | per browser; the app cannot see them. She has since said layouts SHOULD be local, so this is behaviour, not a gap |
+| A second Caddy is bound to `:8081` | `caddy-dashboards.service` pid 3358134 shares the port with SO_REUSEPORT and serves a two-week-old config to roughly half of local requests. Restarting it rebinds it to `:8083` and loses nothing — **her call, an agent's attempt was denied** |
+| The published web PWA is a pre-rename CI build | its title still says NVII-DASH and its bundle carries README/GAPS, which name the LAN server. A fresh `flet build web` fixes both |
 
 ## Known limits
 

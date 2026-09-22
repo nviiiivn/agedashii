@@ -139,7 +139,25 @@ def drop_shared(m):
 
 s = re.sub(r"dependencies\s*=\s*\[([^\]]*)\]", drop_shared, s, count=1)
 # Remove the whole [tool.flet.dev_packages] table, up to the next table.
-s = re.sub(r"\n\[tool\.flet\.dev_packages\][^\[]*", "\n", s)
+#
+# The cut ends at the next line that STARTS with `[`, not at the next `[`
+# anywhere. `[^\[]*` was the latter, and a `[` inside a prose comment ends
+# it just as well as a real table header does. Watudo's comment explaining
+# why it declares no permissions mentions "an `[tool.flet.android.feature]`
+# table saying GPS hardware is not required" - so the cut stopped in the
+# middle of that sentence and left
+#
+#     [tool.flet.android.feature]` table saying
+#
+# as a line of its own, which is not TOML:
+#
+#     TOMLDecodeError: Expected newline or end of document after a
+#     statement (at line 60, column 28)
+#
+# and watudo failed both targets in half a second while the other three
+# built fine. A comment is prose and is allowed to name a table; the regex
+# is the thing that has to be precise about what a table header looks like.
+s = re.sub(r"\n\[tool\.flet\.dev_packages\].*?(?=\n\[|\Z)", "", s, flags=re.S)
 open(p, "w").write(s)
 print("    deps:  shared packages stripped from the staged pyproject")
 PYEOF
