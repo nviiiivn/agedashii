@@ -141,6 +141,68 @@ class EveryModuleActuallyParses(unittest.TestCase):
         self.assertEqual(bad, [], "\n".join(bad))
 
 
+class NoExpandInsideAWrappingRow(unittest.TestCase):
+    """`expand=True` inside `ft.Row(wrap=True)` is a layout bug, every time.
+
+    A wrapping Row is a Flutter Wrap, and a Wrap hands its children
+    UNBOUNDED main-axis constraints - that is how it decides where to
+    break. An Expanded child of an unbounded box has no width to take a
+    share of.
+
+    It cost EatZen entirely. The food field was
+    `ft.Container(expand=True, content=<filled TextField>)` inside a
+    wrapping Row, so the field painted its grey fill over an effectively
+    infinite rectangle: "What you ate" opened as a grey slab that ran off
+    the bottom of the screen and could not be scrolled past, putting the
+    totals, the sodium meter and the "Log it" button out of reach. Found
+    on a real Android emulator, after the owner had reported it twice.
+
+    Nothing catches this by rendering: the control tree is perfectly
+    valid, the tests pass, and it only looks wrong on a screen.
+    """
+
+    def _offenders(self):
+        out = []
+        for root in ("agedashii_tofu", "apps", "packages"):
+            base = ROOT / root
+            if not base.exists():
+                continue
+            for f in _py_files(base):
+                try:
+                    tree = ast.parse(f.read_text())
+                except SyntaxError:
+                    continue
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    if (getattr(node.func, "attr", None)
+                            or getattr(node.func, "id", None)) != "Row":
+                        continue
+                    if not any(k.arg == "wrap"
+                               and getattr(k.value, "value", False) is True
+                               for k in node.keywords):
+                        continue
+                    for kw in node.keywords:
+                        if kw.arg != "controls" or not isinstance(kw.value, ast.List):
+                            continue
+                        for item in kw.value.elts:
+                            if not isinstance(item, ast.Call):
+                                continue
+                            for k2 in item.keywords:
+                                if (k2.arg == "expand"
+                                        and getattr(k2.value, "value", None) is True):
+                                    out.append(
+                                        f"{f.relative_to(ROOT)}:{item.lineno} "
+                                        f"{getattr(item.func, 'attr', '?')}"
+                                        f"(expand=True) inside Row(wrap=True) "
+                                        f"opened at line {node.lineno}")
+        return out
+
+    def test_no_expanded_child_of_a_wrapping_row(self):
+        bad = self._offenders()
+        self.assertEqual(bad, [], "\n" + "\n".join(bad))
+
+
 class TheRebuilderIsCallable(unittest.TestCase):
     """The specific thing that was broken, checked the specific way.
 

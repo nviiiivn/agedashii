@@ -30,6 +30,15 @@ from agedashii_washi.forms import Writer, offline_banner, rebuilder
 # from being the reason "never block the UI" gets broken.
 PHOTO_MAX_PX = 1280
 
+# The food name field's width. Wide enough to read a real food name in -
+# "chicken breast, meat and skin" - and narrow enough that on a ~411 dp
+# phone the row still breaks sensibly around the four numeric fields
+# (52 + 72 + 96 + 84 plus spacing). It is a fixed number rather than
+# expand=True because this row wraps, and an Expanded child of a Wrap has
+# no bounded width to take a share of; see the comment at `line` below for
+# what that looked like on screen.
+FOOD_FIELD_W = 190
+
 
 def _page_build():
     """The page to rebuild after a write, for a client with no shell of its own.
@@ -255,10 +264,22 @@ def build_eatzen(page):
         # about four lines tall, and "What you ate" opened as a grey slab
         # taller than the screen. wrap=True lets it reflow to two lines on a
         # phone instead of forcing the page sideways.
+        # NOT expand=True. A wrapping Row is a Flutter Wrap, and a Wrap hands
+        # its children UNBOUNDED constraints on the main axis - that is how
+        # it decides where to break. An Expanded child of an unbounded box
+        # has no width to be a fraction of, so the filled TextField painted
+        # its grey fill over an effectively infinite rectangle: "What you
+        # ate" opened as a grey slab that ran off the bottom of the screen
+        # and could not be scrolled past, which put the totals, the sodium
+        # meter and the "Log it" button out of reach. EatZen was unusable.
+        # Confirmed on a real emulator, not reasoned about.
+        #
+        # The previous fix added wrap=True to stop the row standing four
+        # lines tall, and that part was right; it just left the expand in
+        # place, which is what turned one bug into a worse one.
         line = ft.Row(spacing=6, wrap=True,
                       vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
-            ft.Container(expand=True, content=field(row, "food", "food"),
-                         width=None),
+            ft.Container(width=FOOD_FIELD_W, content=field(row, "food", "food")),
             field(row, "qty", "1", width=52),
             field(row, "unit", "unit", width=72),
             field(row, "na", "sodium mg", width=96, numeric=True),

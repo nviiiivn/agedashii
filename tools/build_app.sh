@@ -84,6 +84,38 @@ else
   cp "$SRC/apps/$APP/main.py" "$STAGE/"
   cp -r "$SRC/apps/$APP/agedashii_$APP" "$STAGE/"
   cp "$SRC/apps/$APP/pyproject.toml" "$STAGE/"
+  # Strip the shared packages out of the STAGED pyproject - they are
+  # vendored above as plain directories, so asking pip to fetch them is
+  # asking for something that does not exist:
+  #
+  #   ERROR: No matching distribution found for agedashii-washi==1.0.0
+  #
+  # which is exactly how moto, watudo and foodzen all failed in six
+  # seconds while tofu built fine. Tofu's pyproject deliberately declares
+  # NO dependencies at all, so flet fell through to requirements.txt and
+  # never tried. The apps DO declare them, correctly - that is what makes
+  # `pip install -e apps/moto` work for development - so the declaration
+  # stays in the repo and is removed here, at staging time, where it is
+  # wrong. [tool.flet.dev_packages] goes for the same reason: it points at
+  # ../../packages/, a path that stops existing the moment flet copies the
+  # tree somewhere else.
+  python3 - "$STAGE/pyproject.toml" <<'PYEOF'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+
+def drop_shared(m):
+    inner = m.group(1)
+    kept = [d for d in re.findall(r'"[^"]*"', inner)
+            if not d.strip('"').lower().startswith("agedashii-")]
+    return "dependencies = [" + ", ".join(kept) + "]"
+
+s = re.sub(r"dependencies\s*=\s*\[([^\]]*)\]", drop_shared, s, count=1)
+# Remove the whole [tool.flet.dev_packages] table, up to the next table.
+s = re.sub(r"\n\[tool\.flet\.dev_packages\][^\[]*", "\n", s)
+open(p, "w").write(s)
+print("    deps:  shared packages stripped from the staged pyproject")
+PYEOF
 fi
 
 # flet reads requirements.txt to decide what to install INTO the bundle.

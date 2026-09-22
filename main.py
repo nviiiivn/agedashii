@@ -72,6 +72,11 @@ SUBPAGES = {
 # for reads - one cadence for the whole app rather than two that disagree.
 SYNC_POLL_SECS = 20
 
+# Below this width the topbar drops the machine dots; see topbar(). 600 is
+# comfortably above any phone in portrait and below a tablet in landscape,
+# which is the line this is actually trying to draw.
+TOPBAR_DOTS_MIN_W = 600
+
 
 async def main(page):
     # Without this the window, the taskbar and alt-tab all say "flet" - the
@@ -541,7 +546,19 @@ async def main(page):
             # beside the palette: a row of coloured circles touching a
             # palette icon reads as theme swatches you can tap, and these
             # are neither tappable nor themes.
-            machine_dots(),
+            # Dropped on a narrow screen. Five 26px rings plus spacing is
+            # ~160px, and with the menu, the brand pill, the sync chip, the
+            # palette and the gear the row wanted ~515px on a phone that
+            # gives it 411 - so the LAST control lost, and the settings
+            # gear was sliced in half by the screen edge on every single
+            # page. Seen on an emulator at 1080x2400 @420dpi.
+            #
+            # These go rather than anything else because they are the only
+            # part of the bar that is a nicety: Lab shows the same machines
+            # with room to label them, and the drawer reaches Lab in one
+            # tap. A clipped gear is a broken control; absent dots are just
+            # absent.
+            *( [machine_dots()] if (page.width or 0) >= TOPBAR_DOTS_MIN_W else [] ),
             ft.Container(expand=True),
             sync_chip,
             *arrange,

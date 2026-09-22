@@ -319,7 +319,15 @@ def _feeds(page):
         chips.controls = [
             _pill(p, f"{label} · {counts.get(k, 0)}", _F["kind"] == k, pick(k))
             for k, label in M.feed_types(data["items"])]
-        bits = [f"{len(data['items'])} items"]
+        # Count what is on screen, not what was fetched. Tapping "Local · 3"
+        # narrowed the list to three cards and left this line reading
+        # "76 items", which says the filter did not work. When a filter is
+        # on, both numbers are shown so the total is still there.
+        total = len(data["items"])
+        if _F["kind"] and len(items) != total:
+            bits = [f"{len(items)} of {total} items"]
+        else:
+            bits = [f"{total} items"]
         errs = data.get("errors") or {}
         if errs:
             # The website says how many sources failed and names them. A list
@@ -611,7 +619,12 @@ def _vault(page):
                    vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
                        *[_pill(p, lib, _V["lib"] == lib, switch_lib(lib))
                          for lib in M.VAULT_LIBS],
-                       ft.Container(expand=True), host_pick,
+                       # No expand spacer here: this Row wraps, and a
+                       # Wrap has no fixed line to push anything to the
+                       # far end of - the child just takes unbounded
+                       # width. Same shape as the bug that made EatZen's
+                       # "What you ate" a full-screen grey slab.
+                       host_pick,
                        ft.IconButton(ft.Icons.REFRESH, icon_size=17,
                                      icon_color=p["text2"],
                                      tooltip="Re-read the tree",

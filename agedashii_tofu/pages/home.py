@@ -123,6 +123,15 @@ def _goto(key, tab_path=()):
     return lambda e: jump(key, tab_path)
 
 
+def _today_long():
+    """"Tue, Sep 22" - without relying on a libc extension.
+
+    See the call site: %-d is glibc-only and prints literally on Android.
+    """
+    today = datetime.date.today()
+    return today.strftime("%a, %b ") + str(today.day)
+
+
 def build(page):
     p = PAL()
     live = M.STATUS_LIVE()
@@ -158,7 +167,13 @@ def build(page):
         return ft.Column(spacing=0, controls=[
             ft.Text(f"Good {part}, nvii", size=22, weight=ft.FontWeight.W_700,
                     color=p["text"]),
-            sub(datetime.date.today().strftime("%a, %b %-d") + " · Vulcan Lofts"),
+            # The day is formatted in Python, not by strftime. "%-d" (drop
+            # the leading zero) is a GLIBC EXTENSION: it works on this Pi
+            # and on the laptop, and Android's bionic libc does not
+            # implement it, so on her phone the greeting read
+            # "Tue, Sep -d · Vulcan Lofts". Caught on an emulator - nothing
+            # about it is visible in development.
+            sub(_today_long() + " · Vulcan Lofts"),
         ])
 
     # ----------------------------------------------------------- stat strip
