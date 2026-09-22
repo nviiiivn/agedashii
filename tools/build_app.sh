@@ -16,8 +16,14 @@
 # show, and two builds cannot interfere with each other.
 #
 # Usage, on Tower:
-#   tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux]
+#   tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux] [web]
 # Defaults to apk if no target is given.
+#
+# `web` is the PWA - what tofu.alola.lol serves, and the only route onto an
+# iPhone that costs nothing. It is also the target that OOM-kills a CI
+# runner, which is why the old workflow built it LAST and uploaded
+# everything else first. Tower has 62 GB, so it is safe here; build it last
+# anyway, so a failure cannot take the other artifacts with it.
 #
 # IPA is deliberately NOT a target here. Building one needs macOS, because
 # `flutter build ipa` shells out to xcodebuild. That is being solved
@@ -33,7 +39,7 @@ TARGETS=("$@")
 
 case "$APP" in
   tofu|moto|watudo|foodzen) ;;
-  *) echo "usage: $0 <tofu|moto|watudo|foodzen> [apk] [linux]" >&2; exit 2 ;;
+  *) echo "usage: $0 <tofu|moto|watudo|foodzen> [apk] [linux] [web]" >&2; exit 2 ;;
 esac
 
 TC="${TC:-/home/nvii/flet-toolchain}"
@@ -211,7 +217,14 @@ for T in "${TARGETS[@]}"; do
   # bundle. Inspecting an early 402 MB AppImage found the entire .git
   # directory inside it, which hands over the full history of a private
   # repo to anyone who downloads the app.
-  time flet build "$T" --yes -o "dist/$T" --exclude .git dist build .venv
+  #
+  # The web target additionally drops assets/maps. A browser build must not
+  # be a 120 MB download - on the web the app talks to the server for
+  # routing and tiles anyway, so the offline pack is dead weight there, and
+  # baking it in is what used to OOM the CI runner.
+  EXTRA=""
+  [ "$T" = web ] && EXTRA="assets/maps"
+  time flet build "$T" --yes -o "dist/$T" --exclude .git dist build .venv $EXTRA
   rc=$?
   if [ $rc -ne 0 ]; then
     echo "!!! $APP $T FAILED rc=$rc"
@@ -221,6 +234,9 @@ for T in "${TARGETS[@]}"; do
   case "$T" in
     apk)   find "dist/$T" -name '*.apk' -exec cp {} "$OUT/agedashii-$APP.apk" \; ;;
     linux) tar -C "dist/$T" -czf "$OUT/agedashii-$APP-linux-x64.tar.gz" . ;;
+    # The web build is a directory of files to serve, not one artifact, so
+    # it is tarred whole and unpacked at the far end.
+    web)   tar -C "dist/$T" -czf "$OUT/agedashii-$APP-web.tar.gz" . ;;
   esac
 done
 
