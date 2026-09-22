@@ -376,8 +376,13 @@ def _sync_chip(page):
     return find(page.controls[0],
                 lambda c: isinstance(c, ft.Container)
                 and isinstance(getattr(c, "content", None), ft.Row)
+                # `.icon`, not `.name`. This helper used to read `.name`,
+                # which matched only because the shell was SETTING `.name` -
+                # a stray attribute ft.Icon does not have. The test agreed
+                # with the bug, so both passed. Reading the real attribute
+                # is what makes the fix provable.
                 and any(isinstance(x, ft.Icon)
-                        and x.name in (ft.Icons.CLOUD_UPLOAD, ft.Icons.CLOUD_OFF)
+                        and x.icon in (ft.Icons.CLOUD_UPLOAD, ft.Icons.CLOUD_OFF)
                         for x in (c.content.controls or [])))
 
 

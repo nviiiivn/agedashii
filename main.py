@@ -226,7 +226,12 @@ async def main(page):
         sync_text.value = label
         sync_text.color = p["pink"] if stuck else p["text2"]
         sync_icon.color = p["pink"] if stuck else p["text2"]
-        sync_icon.name = ft.Icons.CLOUD_OFF if stuck else ft.Icons.CLOUD_UPLOAD
+        # `.icon`, not `.name`. ft.Icon has no `name` in Flet 0.86 and the
+        # class is not slotted, so `sync_icon.name = ...` bound a brand new
+        # attribute, raised nothing, and left the glyph exactly as it was:
+        # the chip has never once shown CLOUD_OFF. Found by an agent
+        # building Watudo, which had inherited the same line from here.
+        sync_icon.icon = ft.Icons.CLOUD_OFF if stuck else ft.Icons.CLOUD_UPLOAD
         sync_chip.bgcolor = p["bg2"]
         sync_chip.border = BRD(p["pink"] if stuck else p["border"], 1)
         sync_chip.tooltip = (f"{label} - tap to try again" if label else "")
