@@ -1,4 +1,4 @@
-"""Per-surface panel layout: order, visibility and width.
+"""Per-surface panel layout: order, visibility, width and height.
 
 The app could already reorder and hide the six panels on Home, and set a
 width on machine widgets. Nothing else could be touched - "there's no way to
@@ -18,23 +18,117 @@ preferences; `layout()` applies them at build time. A page hands over a dict
 of builders keyed the same way and gets a laid-out control back, without
 knowing anything about preferences.
 
-Widths are responsive by design. A third-width card at 400px is unreadable,
-so a width only takes effect from tablet size up (`md`); on a phone
-everything is full width whatever is set. That is why these are Flet column
-spans rather than pixels.
+Widths are responsive by design. A narrow card at 400px is unreadable, so
+a width only takes effect from tablet size up (`md`); on a phone
+everything is full width whatever is set. That is why these are Flet
+column spans rather than pixels or a percentage.
 
-There are two ways to edit that: Settings > Card layout, a list with
-arrows and width buttons, and - since she asked to "take any page and
-resize the component boxes/frames and organize them and then save that
-view" - an edit mode on the page itself, below. Both write the same
-preferences.
+Heights are not responsive that way - they apply at every width, phone
+included, because a fixed height with its own scroll costs nothing a
+narrow screen cannot afford, unlike two cards trying to share one row.
+See `_sized()` for the full reasoning.
+
+There are two ways to edit either: Settings > Card layout, a list with
+arrows and a width/height slider each, and - since she asked to "take any
+page and resize the component boxes/frames and organize them and then
+save that view" - an edit mode on the page itself, below. Both write the
+same preferences.
+
+Width is a genuinely custom choice, not a menu of three presets: "are you
+saying i can't just set a custom length?" - no. See the COLUMNS block
+below for why 60 columns and not the ResponsiveRow default of 12, or a
+flat 100 (percent).
 """
+import math
 
-# Column spans out of 12, the Flet ResponsiveRow convention.
-WIDTHS = {"full": 12, "half": 6, "third": 4}
-WIDTH_ORDER = ("full", "half", "third")
-WIDTH_LABELS = {"full": "Full", "half": "1/2", "third": "1/3"}
-DEFAULT_WIDTH = "full"
+# Column spans, the Flet ResponsiveRow convention - 60 of them, not the
+# usual 12. A width is meant to be an actually custom choice, which a grid
+# of three presets never was; 60 rather than a literal percentage (100)
+# because 60 divides evenly by 2, 3, 4, 5, 6, 10, 12, 15, 20 and 30, so
+# every common fraction lands on a whole number of columns - half is 30, a
+# third is 20, three of them fill the row exactly. 100 does not have that
+# property: a third of 100 is 33, and three of them leave a column spare.
+# That class of off-by-one is exactly what makes a "custom" layout feel
+# broken instead of deliberate, and it is why 60 - not 12, not 100 - is
+# the grid, while still giving just under 1.7% resolution per column,
+# finer than anyone drags a slider by hand.
+COLUMNS = 60
+MIN_WIDTH, MAX_WIDTH = 1, COLUMNS
+DEFAULT_WIDTH = COLUMNS
+
+# The common fractions, in columns - every one of them a whole number,
+# which is the point of 60. These are snap points for the settings slider
+# and the fast taps on the resize grip, never the only reachable widths:
+# the slider's own range and the grip's drag both reach every column
+# between them.
+COMMON_WIDTHS = (COLUMNS, COLUMNS * 3 // 4, COLUMNS * 2 // 3, COLUMNS // 2,
+                 COLUMNS // 3, COLUMNS // 4, COLUMNS // 5, COLUMNS // 6)
+# = (60, 45, 40, 30, 20, 15, 12, 10) = full, 3/4, 2/3, 1/2, 1/3, 1/4, 1/5, 1/6
+
+# How close a slider release has to land to a common fraction to snap
+# there - assistance, not a constraint. She has to be able to stop
+# *between* the stops, so this is a small fraction of the 60-wide track,
+# never `divisions` set to the stop count, which would pull *every*
+# position on the track to its nearest stop and remove the custom part.
+WIDTH_SNAP_TOLERANCE = 2
+
+# What `panel_width` used to store, before it held a plain span: a layout
+# saved by an older build named one of three widths instead of a number.
+# Read once on the way in, in `prefs.panel_width`, and mapped to the span
+# it meant, so nothing already saved is lost.
+LEGACY_WIDTH_NAMES = {"full": COLUMNS, "half": COLUMNS // 2, "third": COLUMNS // 3}
+
+
+def width_label(span):
+    """'Full - 100%', or 'N% - a/b' with the fraction reduced to its lowest terms."""
+    span = max(MIN_WIDTH, min(MAX_WIDTH, int(span)))
+    pct = round(span / COLUMNS * 100)
+    if span == COLUMNS:
+        return "Full - 100%"
+    g = math.gcd(span, COLUMNS)
+    return f"{pct}% - {span // g}/{COLUMNS // g}"
+
+
+def snap_width(span):
+    """`span` pulled to the nearest common fraction, if it is close enough.
+
+    Call this once, at the end of a gesture - a slider's `on_change_end`,
+    a drag's `on_grip_end` - never while a drag or slider is still moving,
+    so the motion itself feels continuous and only the landing spot gets
+    pulled the last couple of columns onto a tidy fraction. Anything
+    further than `WIDTH_SNAP_TOLERANCE` from every stop is left exactly
+    where she put it.
+    """
+    span = max(MIN_WIDTH, min(MAX_WIDTH, int(span)))
+    nearest = min(COMMON_WIDTHS, key=lambda s: abs(s - span))
+    return nearest if abs(nearest - span) <= WIDTH_SNAP_TOLERANCE else span
+
+
+# A card's height, alongside its width - "stack things and make them
+# longer or shorter... so I could stack smaller components closer
+# together and larger components on certain sides". Also a real range she
+# sets, not a handful of named steps, for the same reason width is.
+# `auto` is 0, a real value at the bottom of the range rather than a
+# separate hidden default bolted on beside it, so a card she has not
+# touched behaves exactly as it always did.
+#
+# The unit is a 100px cell because that is what her website's GridStack
+# layout already calls `h` - the mental model she already has. Not a
+# percentage the way width is, because a page has no fixed "100% of
+# height" for a fraction to be relative to - height is measured in cells,
+# width in columns, because those are the two units each one actually has.
+HEIGHT_CELL_PX = 100
+MIN_HEIGHT, MAX_HEIGHT = 0, 8
+DEFAULT_HEIGHT = 0
+
+
+def height_label(cells):
+    """'Auto' at the floor, else 'NNNpx - N cells'."""
+    cells = max(MIN_HEIGHT, min(MAX_HEIGHT, int(cells)))
+    if cells <= 0:
+        return "Auto"
+    return f"{cells * HEIGHT_CELL_PX}px - {cells} cell{'' if cells == 1 else 's'}"
+
 
 # surface key -> [(panel key, label), ...] in shipped order.
 SURFACES = {
@@ -152,7 +246,12 @@ def panel_labels(surface):
 # topbar, which is rebuilt once per page render while a tab switch rebuilds
 # only the body: a per-surface flag would go stale the moment she changed
 # tab, and she would be editing a stack she is no longer looking at.
-EDIT = {"on": False, "surface": None, "dragging": None}
+#
+# No "dragging" slot any more. That used to track which card a hand-rolled
+# Draggable had picked up, for a DragTarget elsewhere to read back on drop.
+# ReorderableListView keeps that state itself - Flutter's, not ours - and
+# only ever hands `layout()` a finished (old_index, new_index) pair.
+EDIT = {"on": False, "surface": None}
 
 
 def editing():
@@ -162,8 +261,6 @@ def editing():
 
 def set_editing(on):
     EDIT["on"] = bool(on)
-    if not EDIT["on"]:
-        EDIT["dragging"] = None
     return EDIT["on"]
 
 
@@ -188,15 +285,32 @@ def layout(surface, builders, empty_hint=None):
     builder is skipped rather than raising: a preference saved by an older
     build naming a panel since removed must not take the page down.
 
-    Returns a scrollable ResponsiveRow, so a half-width panel sits beside
-    its neighbour on a wide screen and stacks on a phone.
+    Out of edit mode this returns a scrollable ResponsiveRow, so a
+    half-width panel sits beside its neighbour on a wide screen and stacks
+    on a phone - unchanged from every build before this one: not one
+    control is added, the tree is exactly what it always was, counted and
+    compared against the previous build. That matters because these pages
+    were only just cut from ~1900 controls to ~240, and a page that takes a
+    second to build is a page whose buttons "do nothing".
 
-    In edit mode each cell is wrapped in drag-and-drop and a width grip.
-    Out of edit mode - the default, and every build before this one - not
-    one control is added: the tree is exactly what it always was, counted
-    and compared against the previous build. That matters because these
-    pages were only just cut from ~1900 controls to ~240, and a page that
-    takes a second to build is a page whose buttons "do nothing".
+    In edit mode it returns a `ReorderableListView` instead - Flutter's own
+    reorderable list, so a dragged card visibly lifts, the others slide to
+    make room, and it settles, rather than the old hand-rolled
+    Draggable/DragTarget pair that simply jumped a card to its new index
+    with no motion in between.
+
+    That is a real trade, not a free upgrade: `ReorderableListView` is a
+    single-column `ListView` under the hood - "in the cross axis, the
+    children are required to fill" it, per Flet's own docs - so it cannot
+    seat a half- or third-width card beside a neighbour the way
+    ResponsiveRow does. Widths are not dropped, though: `prefs.panel_width`
+    still drives the resize grip and is still saved and still applies the
+    moment she leaves edit mode, which is when ResponsiveRow comes back.
+    While *arranging*, every card stacks one to a row - which is already
+    exactly what she sees at phone width in the ordinary layout, width
+    setting or not, since a column span only takes effect from tablet size
+    up. Rearranging one card at a time down a single column is also, if
+    anything, an easier drag target than reaching across a two-up grid.
     """
     import flet as ft
 
@@ -205,19 +319,27 @@ def layout(surface, builders, empty_hint=None):
     EDIT["surface"] = surface
     edit = editing()
 
-    cells = []
     order = prefs.panels(surface)
     labels = panel_labels(surface)
+    cells = []
     for key in order:
         make = builders.get(key)
         if make is None:
             continue
         width = prefs.panel_width(surface, key)
-        content = make()
+        height = prefs.panel_height(surface, key)
+        content = _sized(height, make())
         if edit:
-            content = _editable(surface, key, labels.get(key, key), width, content)
-        cells.append(ft.Container(col={"xs": 12, "md": WIDTHS.get(width, 12)},
-                                  content=content))
+            cells.append(_editable(surface, key, labels.get(key, key),
+                                   width, height, content))
+        else:
+            # "xs" (below the `md` breakpoint - a phone) is always the full
+            # 60 columns, whatever `width` is set to: a width only takes
+            # effect from tablet size up, the same rule it always was, just
+            # expressed in the new 60-column grid instead of the old 12.
+            cells.append(ft.Container(
+                col={"xs": COLUMNS, "md": max(MIN_WIDTH, min(MAX_WIDTH, width))},
+                content=content))
 
     if not cells:
         from .ui import sub
@@ -226,15 +348,90 @@ def layout(surface, builders, empty_hint=None):
             sub(empty_hint or f"Every panel is hidden. Settings > Layout > {label}.",
                 11)])
 
+    if edit:
+        return ft.Column(spacing=10, expand=True, controls=[
+            ft.ReorderableListView(
+                spacing=10, expand=True, show_default_drag_handles=False,
+                on_reorder=_on_reorder(surface), controls=cells)])
+
     return ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO, controls=[
-        ft.ResponsiveRow(columns=12, spacing=10, run_spacing=10, controls=cells)])
+        ft.ResponsiveRow(columns=COLUMNS, spacing=10, run_spacing=10, controls=cells)])
 
 
-# How far the width grip has to travel before a card steps to the next
-# width. Fixed pixels rather than a fraction of the card, because the card
+def _sized(height, content):
+    """`content` at its stored height, or untouched if that height is 'auto'.
+
+    'auto' - the default, and every card before this - returns `content`
+    exactly as given: no wrapper, no control added, same as width's own
+    "nothing costs anything until she asks" rule.
+
+    Unlike width, a fixed height applies at *every* screen size, phone
+    included. Width only takes effect from tablet size up because seating
+    two half-width cards side by side on a 400px screen is a genuine
+    impossibility - there is no room. A fixed height has no equivalent
+    wall: a short card with its own scroll costs nothing structurally on
+    a phone, and "stack smaller components closer together" is a request
+    that matters most on the screen with the least vertical room to begin
+    with.
+
+    The wrapper is a fixed-height Container around a scrolling Column,
+    never a clip. A height that hid whatever overflowed it - a machine
+    list that grew, a checklist that filled in - would lose content with
+    nothing on screen to say a row was missing; a height that scrolls
+    loses nothing, only ever one swipe further down.
+    """
+    import flet as ft
+
+    cells = max(MIN_HEIGHT, min(MAX_HEIGHT, int(height or 0)))
+    if not cells:
+        return content
+    return ft.Container(height=cells * HEIGHT_CELL_PX, content=ft.Column(
+        expand=True, scroll=ft.ScrollMode.AUTO, controls=[content]))
+
+
+def _on_reorder(surface):
+    """An `on_reorder` handler bound to `surface`.
+
+    `OnReorderEvent` carries `old_index`/`new_index` into the list
+    `ReorderableListView` actually drew - the *visible* panels, in
+    render order - matching Flet's own documented handler, which pops the
+    moved item from `old_index` and re-inserts it at `new_index` with no
+    further adjustment. Doing the same over a plain list of panel keys and
+    handing the result to `prefs.reorder_visible_panels` keeps that exact
+    contract while translating it back into the full, hidden-included
+    order the store keeps.
+
+    Guarded the way every other handler in this module is guarded: Flet
+    0.86's own example trusts `e.old_index`/`e.new_index` are always both
+    present ints, but a raise inside a gesture handler is invisible - the
+    list simply stops responding - so a build that hands back something
+    this code does not understand is a no-op instead of a dead drag.
+    """
+    from . import prefs
+
+    def handler(e):
+        visible = prefs.panels(surface)
+        old_index = getattr(e, "old_index", None)
+        new_index = getattr(e, "new_index", None)
+        if not isinstance(old_index, int) or not (0 <= old_index < len(visible)):
+            return
+        if not isinstance(new_index, int):
+            return
+        moved = visible.pop(old_index)
+        visible.insert(max(0, min(len(visible), new_index)), moved)
+        if prefs.reorder_visible_panels(surface, visible):
+            _apply()
+
+    return handler
+
+
+# How far the width grip has to travel before a card steps one column (of
+# 60). Fixed pixels rather than a fraction of the card, because the card
 # does not know how wide it was drawn and a fraction would need a layout
-# pass to compute. 48 is roughly a thumb's width of deliberate movement.
-WIDTH_STEP_PX = 48
+# pass to compute. 8 means the full 1-60 range - the same range the
+# settings slider covers - is one deliberate sweep across a card, not a
+# gesture that bottoms out after the first few columns.
+WIDTH_STEP_PX = 8
 
 
 def _apply():
@@ -269,37 +466,45 @@ def _apply():
         return False
 
 
-def _editable(surface, key, label, width, content):
-    """One card, wrapped for edit mode: drag to reorder, grip to resize.
+def _editable(surface, key, label, width, height, content):
+    """One card, wrapped for edit mode: handle to reorder, pills to resize.
 
-    Every card is a DragTarget, so any card can be dropped on any other,
-    but only the little grip icon in its header is the Draggable. That
-    split is not cosmetic: Flutter's Draggable competes with the enclosing
-    scrollable for the same vertical drag and wins it, so a card that was
-    draggable edge to edge would make the surface unscrollable in edit
-    mode - and she would be unable to reach the cards she wanted to move.
-    A handle the size of an icon leaves every other pixel to the scroll.
+    Reordering goes through `ReorderableDragHandle`, not a hand-rolled
+    Draggable/DragTarget pair - the list itself (`layout()`'s
+    ReorderableListView) does the picking-up, sliding and dropping; this
+    only has to say *which* part of the card may start that gesture. That
+    split still matters exactly as much as it did under the old
+    mechanism: `ReorderableDragHandle` wraps only the grip icon, not the
+    card, because a full-card drag region competes with the enclosing
+    scrollable for the same vertical gesture and wins it - the surface
+    would stop scrolling in edit mode, and on a phone with eight cards
+    most of them would be out of reach.
 
-    Which card is moving is kept in `EDIT["dragging"]` rather than looked
-    up from the event's `src_id`: `page.get_control()` needs a real page,
-    and this has to build under the stub pages the tests use.
-
-    Resizing is one control answering to two gestures, because only one of
-    them is certain. `on_horizontal_drag_*` is a single-axis recognizer, so
+    Resizing is unchanged by any of this - it was never part of the
+    reorder mechanism, only living in the same header. Width is one
+    control answering to two gestures, because only one of them is
+    certain. `on_horizontal_drag_*` is a single-axis recognizer, so
     Flutter's arena hands it the horizontal drag without ever contending
-    with the vertical scroll this stack sits in; `on_pan_*` would contend,
-    and on a diagonal the scroll wins. A tap cycles full -> 1/2 -> 1/3 ->
-    full, so the width is reachable with no drag at all - on a phone, and
-    on any build where the drag turns out not to arrive.
+    with the vertical scroll (or, now, the vertical reorder drag) this
+    stack sits in; `on_pan_*` would contend, and on a diagonal the other
+    gesture wins. A drag reaches every column from 1 to 60; a tap instead
+    cycles through the common fractions - full, 3/4, 2/3, half, ... - so a
+    usual width is reachable with no drag at all, on a phone, and on any
+    build where the drag turns out not to arrive. Height is tap-only for
+    the same contention reason, one axis further: there is no direction a
+    height drag could use that would not collide with either the list's
+    scroll or its own reorder drag, both already vertical.
 
-    The drag is measured from *positions*, never by summing deltas, and it
-    commits once at the end. Two reasons, both structural rather than
-    stylistic: Flet 0.86 documents `DragUpdateEvent.local_delta` as the
-    movement "since the start of the drag" while calling the payload
+    The width drag is measured from *positions*, never by summing deltas,
+    and it commits once at the end. Two reasons, both structural rather
+    than stylistic: Flet 0.86 documents `DragUpdateEvent.local_delta` as
+    the movement "since the start of the drag" while calling the payload
     incremental, so summing it would be wrong under one of those two
     readings; and a width change rebuilds the page, which destroys this
     very control, so a gesture that tried to step live would be cancelled
-    by its own first step.
+    by its own first step. The landing column is passed through
+    `snap_width` before it is saved, so a drag that stops close to a
+    common fraction settles there instead of one column short or long.
     """
     import flet as ft
 
@@ -307,16 +512,6 @@ def _editable(surface, key, label, width, content):
     from .ui import PAL, PAD, RAD, BRD
 
     p = PAL()
-    group = f"panels:{surface}"
-
-    def on_drag_start(e):
-        EDIT["dragging"] = key
-
-    def on_accept(e):
-        src = EDIT["dragging"]
-        EDIT["dragging"] = None
-        if src and prefs.move_panel_onto(surface, src, key):
-            _apply()
 
     # Where the grip was picked up and where it is now, in whatever
     # coordinate space the event offers.
@@ -341,14 +536,28 @@ def _editable(surface, key, label, width, content):
         steps = int((end - start) / WIDTH_STEP_PX)
         if not steps:
             return
-        # Rightwards is wider. WIDTH_ORDER runs full -> half -> third, so
-        # "wider" is backwards through it. No wrapping on a drag: dragging
-        # hard right should stop at full, not come out at a third.
-        if prefs.cycle_panel_width(surface, key, -steps, wrap=False):
+        # Rightwards is wider: a larger span is now a larger number of
+        # columns directly (unlike the old three-name scheme, there is no
+        # index to walk backwards through), so the sign of the drag is the
+        # sign of the delta, unchanged. No wrapping on a drag: dragging
+        # hard right should stop at 60/60 (full), not come out the other
+        # side back down near 1/60.
+        target = prefs.cycle_panel_width(surface, key, steps, wrap=False)
+        if target is not None:
+            # Snap the *landing* column to a common fraction if it is close
+            # enough, then save that instead - the drag itself already
+            # moved continuously; only the release gets pulled tidy.
+            snapped = snap_width(target)
+            if snapped != target:
+                prefs.set_panel_width(surface, key, snapped)
             _apply()
 
     def on_grip_tap(e):
-        if prefs.cycle_panel_width(surface, key, 1):
+        if prefs.cycle_panel_width_preset(surface, key, 1):
+            _apply()
+
+    def on_height_tap(e):
+        if prefs.cycle_panel_height(surface, key, 1):
             _apply()
 
     grip = ft.GestureDetector(
@@ -360,30 +569,36 @@ def _editable(surface, key, label, width, content):
         content=ft.Container(
             padding=PAD(8, 3), border_radius=RAD(6), ink=True,
             bgcolor=ft.Colors.with_opacity(0.16, p["accent"]),
-            tooltip=f"{WIDTH_LABELS.get(width, width)} width - "
-                    f"drag sideways, or tap to cycle",
-            content=ft.Text(WIDTH_LABELS.get(width, width), size=11,
-                            color=p["accent"])))
+            tooltip=f"{width_label(width)} - drag sideways for any width, "
+                    f"or tap to jump to a common one",
+            content=ft.Text(width_label(width), size=11, color=p["accent"])))
 
-    handle = ft.Draggable(
-        group=group, on_drag_start=on_drag_start,
+    height_pill = ft.GestureDetector(
+        on_tap=on_height_tap,
+        content=ft.Container(
+            padding=PAD(8, 3), border_radius=RAD(6), ink=True,
+            bgcolor=ft.Colors.with_opacity(0.16, p["accent"]),
+            tooltip=f"{height_label(height)} height - tap to cycle",
+            content=ft.Text(height_label(height), size=11, color=p["accent"])))
+
+    handle = ft.ReorderableDragHandle(
+        mouse_cursor=ft.MouseCursor.GRAB,
         content=ft.Icon(ft.Icons.DRAG_INDICATOR, size=18, color=p["accent"],
-                        tooltip=f"Drag {label} onto another card to move it"))
+                        tooltip=f"Drag {label} to move it"))
 
     header = ft.Row(spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[
                         handle,
                         ft.Text(label, size=11, color=p["text3"], max_lines=1,
                                 overflow=ft.TextOverflow.ELLIPSIS, expand=True),
+                        height_pill,
                         grip,
                     ])
 
-    return ft.DragTarget(
-        group=group, on_accept=on_accept,
-        content=ft.Container(
-            padding=PAD(6, 6), border_radius=RAD(10),
-            border=BRD(ft.Colors.with_opacity(0.55, p["accent"]), 1),
-            content=ft.Column(spacing=6, controls=[header, content])))
+    return ft.Container(
+        padding=PAD(6, 6), border_radius=RAD(10),
+        border=BRD(ft.Colors.with_opacity(0.55, p["accent"]), 1),
+        content=ft.Column(spacing=6, controls=[header, content]))
 
 
 def _x(e):

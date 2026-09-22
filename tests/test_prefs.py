@@ -15,6 +15,7 @@ already broken on a phone:
 """
 import asyncio
 import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -524,6 +525,83 @@ class BottomBarEnabled(unittest.TestCase):
         self.assertEqual(set(prefs.drawer_pages()), set(prefs.visible_pages()))
 
 
+class DrawerSectionsCollapse(unittest.TestCase):
+    """Chevrons on the drawer's Lab/Tools/... rows: collapse or expand,
+    remembered, and persisted - "home, lab, tools, trips, garage,
+    wat2do... it would be nice to be able to collapse or prolapse it".
+    """
+
+    def setUp(self):
+        prefs._V = prefs._defaults()
+
+    def test_untouched_defaults_to_open_only_when_current(self):
+        """Sensible default: the page she is standing on shows its own
+        tabs; everywhere else starts collapsed rather than the ten rows
+        Tools alone used to always add."""
+        self.assertTrue(prefs.drawer_section_open("garage", "garage"))
+        self.assertFalse(prefs.drawer_section_open("garage", "home"))
+        self.assertFalse(prefs.drawer_section_open("tools", "lab"))
+
+    def test_an_explicit_choice_overrides_the_current_page_default(self):
+        prefs.set_drawer_open("tools", True)
+        # Stays open even standing somewhere else...
+        self.assertTrue(prefs.drawer_section_open("tools", "home"))
+        prefs.set_drawer_open("garage", False)
+        # ...and stays closed even while standing on it.
+        self.assertFalse(prefs.drawer_section_open("garage", "garage"))
+
+    def test_an_unknown_page_is_refused(self):
+        self.assertFalse(prefs.set_drawer_open("not-a-page", True))
+
+    def test_survives_a_round_trip_through_stringy_storage(self):
+        """The same footgun `bottom_bar_enabled` guards against: storage
+        can hand a value back as text, and `bool("false")` is True. This
+        key never stores a raw bool at all - only the literal "1"/"0"
+        suffix counts as explicit - so prove a stray "true"/"false" (what
+        a *different* key would come back as) does not read as an
+        explicit choice here either, and degrades to the untouched
+        default instead of an arbitrary one.
+        """
+        # current_key="lab" throughout, so the untouched default for
+        # "tools" is always False - anything that is not a real "1"/"0"
+        # entry must fall through to that, not read as an explicit True.
+        cases = {"tools:1": True, "tools:0": False, "tools:true": False,
+                 "tools:false": False, "tools:": False, "tools:garbage": False}
+        for stored, expected in cases.items():
+            with self.subTest(stored=stored):
+                prefs._V[prefs.KEY_DRAWER_OPEN] = [stored]
+                self.assertIs(prefs.drawer_section_open("tools", "lab"), expected)
+
+    def test_persists_through_save_and_load(self):
+        """The save function once listed its keys by hand and silently
+        dropped a whole feature; KEY_DRAWER_OPEN rides `_defaults()` into
+        `save_payload()`'s generic loop instead, which this proves end to
+        end rather than trusting the mechanism by inspection."""
+        prefs.set_drawer_open("tools", True)
+        prefs.set_drawer_open("garage", False)
+        store = FakePrefs()
+        self.assertTrue(asyncio.run(prefs.save(store)))
+
+        prefs._V = prefs._defaults()
+        self.assertFalse(prefs.drawer_section_open("tools", "home"))  # gone
+
+        asyncio.run(prefs.load(store))
+        self.assertTrue(prefs.drawer_section_open("tools", "home"))
+        self.assertFalse(prefs.drawer_section_open("garage", "garage"))
+
+    def test_a_page_with_no_subpages_has_nothing_to_toggle(self):
+        """home and settings never call set_drawer_open in the real UI
+        (no chevron is drawn for them at all - see main.py's page_row),
+        but the store-level function itself stays honest either way: a
+        page with no sub-items is never "current and expanded" in any
+        way that matters, since nothing would ever be drawn under it."""
+        self.assertFalse(prefs.drawer_section_open("home", "lab"))
+        # Still legal to set (prefs doesn't know which pages have tabs -
+        # main.SUBPAGES does), it is simply never read for a chevron that
+        # is never drawn.
+        self.assertTrue(prefs.set_drawer_open("home", True))
+
+
 class DrawerSubpagesMatchTheRealTabs(unittest.TestCase):
     """main.SUBPAGES hardcodes tab indices; this fails if they drift.
 
@@ -585,31 +663,92 @@ class PanelLayout(unittest.TestCase):
         keys = self.panels.panel_keys(self.SURFACE)
         self.assertEqual(prefs.panels(self.SURFACE), keys)
         for k in keys:
-            self.assertEqual(prefs.panel_width(self.SURFACE, k), "full")
+            self.assertEqual(prefs.panel_width(self.SURFACE, k), 60)
+            self.assertEqual(prefs.panel_height(self.SURFACE, k), 0)
 
     def test_width_round_trip(self):
-        self.assertTrue(prefs.set_panel_width(self.SURFACE, "machines", "half"))
-        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), "half")
+        self.assertTrue(prefs.set_panel_width(self.SURFACE, "machines", 30))
+        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), 30)
         # Others are untouched.
-        self.assertEqual(prefs.panel_width(self.SURFACE, "weather"), "full")
+        self.assertEqual(prefs.panel_width(self.SURFACE, "weather"), 60)
+
+    def test_width_is_a_genuinely_custom_span_not_a_preset(self):
+        """"are you just making things fit defaults?" - no: any of the 60
+        columns is a real, storable, renderable width, not only the three
+        that used to be the whole menu."""
+        for span in (1, 7, 17, 29, 41, 53, 59, 60):
+            with self.subTest(span=span):
+                self.assertTrue(prefs.set_panel_width(self.SURFACE, "machines", span))
+                self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), span)
 
     def test_a_width_back_to_full_is_not_stored(self):
         # Keeps the stored list to the panels actually customised, so a
         # renamed panel leaves no junk behind.
-        prefs.set_panel_width(self.SURFACE, "machines", "half")
-        prefs.set_panel_width(self.SURFACE, "machines", "full")
+        prefs.set_panel_width(self.SURFACE, "machines", 30)
+        prefs.set_panel_width(self.SURFACE, "machines", 60)
         self.assertEqual(prefs._V[prefs._pkey(self.SURFACE, "width")], [])
 
     def test_unknown_width_or_panel_is_refused(self):
         self.assertFalse(prefs.set_panel_width(self.SURFACE, "machines", "huge"))
-        self.assertFalse(prefs.set_panel_width(self.SURFACE, "nope", "half"))
+        self.assertFalse(prefs.set_panel_width(self.SURFACE, "machines", 0))
+        self.assertFalse(prefs.set_panel_width(self.SURFACE, "machines", 61))
+        self.assertFalse(prefs.set_panel_width(self.SURFACE, "nope", 30))
         self.assertFalse(prefs.set_panel_hidden(self.SURFACE, "nope", True))
 
     def test_a_corrupt_width_reads_as_full_rather_than_raising(self):
         # Losing a layout is an annoyance; a page that will not build is not.
         prefs._V[prefs._pkey(self.SURFACE, "width")] = [
-            "machines:garbage", "not-a-pair", 42, None]
-        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), "full")
+            "machines:garbage", "machines:99", "not-a-pair", 42, None]
+        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), 60)
+
+    def test_the_old_three_named_widths_still_read_back(self):
+        """A layout saved before width became a range stored "full",
+        "half" or "third" - never a number. Those must still come back at
+        the span they meant, not silently reset to full."""
+        prefs._V[prefs._pkey(self.SURFACE, "width")] = [
+            "machines:half", "actions:third", "links:full"]
+        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), 30)
+        self.assertEqual(prefs.panel_width(self.SURFACE, "actions"), 20)
+        # "full" was never actually written by an old build (it was the
+        # unstored default), but is still mapped correctly if it is found.
+        self.assertEqual(prefs.panel_width(self.SURFACE, "links"), 60)
+
+    def test_a_legacy_store_round_trips_through_load_and_save(self):
+        """The actual upgrade path: an old install's SharedPreferences
+        handed back "half"/"third" strings, load() must accept them, and
+        the very next save() must write the numbers instead - not the
+        names straight back."""
+        store = FakePrefs({
+            prefs._pkey(self.SURFACE, "width"): ["machines:half", "actions:third"],
+            prefs.KEY_LAYOUT_SCHEME: prefs.LAYOUT_SCHEME,
+        })
+        asyncio.run(prefs.load(store))
+        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), 30)
+        self.assertEqual(prefs.panel_width(self.SURFACE, "actions"), 20)
+        asyncio.run(prefs.save(store))
+        self.assertEqual(sorted(store.store[prefs._pkey(self.SURFACE, "width")]),
+                         ["actions:20", "machines:30"])
+
+    def test_height_round_trip(self):
+        self.assertEqual(prefs.panel_height(self.SURFACE, "machines"), 0)
+        self.assertTrue(prefs.set_panel_height(self.SURFACE, "machines", 4))
+        self.assertEqual(prefs.panel_height(self.SURFACE, "machines"), 4)
+        self.assertEqual(prefs.panel_height(self.SURFACE, "weather"), 0)
+
+    def test_auto_height_is_not_stored(self):
+        prefs.set_panel_height(self.SURFACE, "machines", 5)
+        prefs.set_panel_height(self.SURFACE, "machines", 0)
+        self.assertEqual(prefs._V[prefs._pkey(self.SURFACE, "height")], [])
+
+    def test_unknown_height_or_panel_is_refused(self):
+        self.assertFalse(prefs.set_panel_height(self.SURFACE, "machines", -1))
+        self.assertFalse(prefs.set_panel_height(self.SURFACE, "machines", 9))
+        self.assertFalse(prefs.set_panel_height(self.SURFACE, "nope", 3))
+
+    def test_a_corrupt_height_reads_as_auto_rather_than_raising(self):
+        prefs._V[prefs._pkey(self.SURFACE, "height")] = [
+            "machines:garbage", "machines:99", "not-a-pair", 42, None]
+        self.assertEqual(prefs.panel_height(self.SURFACE, "machines"), 0)
 
     def test_hide_and_reorder(self):
         prefs.set_panel_hidden(self.SURFACE, "nowplaying", True)
@@ -624,13 +763,15 @@ class PanelLayout(unittest.TestCase):
         self.assertEqual(prefs.panel_order(self.SURFACE)[was - 3], "wat2do")
 
     def test_reset_puts_everything_back(self):
-        prefs.set_panel_width(self.SURFACE, "machines", "third")
+        prefs.set_panel_width(self.SURFACE, "machines", 20)
+        prefs.set_panel_height(self.SURFACE, "machines", 3)
         prefs.set_panel_hidden(self.SURFACE, "weather", True)
         prefs.move_panel(self.SURFACE, "wat2do", -4)
         prefs.reset_panels(self.SURFACE)
         self.assertEqual(prefs.panels(self.SURFACE),
                          self.panels.panel_keys(self.SURFACE))
-        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), "full")
+        self.assertEqual(prefs.panel_width(self.SURFACE, "machines"), 60)
+        self.assertEqual(prefs.panel_height(self.SURFACE, "machines"), 0)
 
     def test_every_surface_declares_unique_keys(self):
         for surface, entries in self.panels.SURFACES.items():
@@ -640,8 +781,8 @@ class PanelLayout(unittest.TestCase):
                 self.assertIn(surface, self.panels.SURFACE_LABELS)
 
     def test_surfaces_are_independent(self):
-        prefs.set_panel_width("home", "machines", "half")
-        self.assertEqual(prefs.panel_width("weather", "hero"), "full")
+        prefs.set_panel_width("home", "machines", 30)
+        self.assertEqual(prefs.panel_width("weather", "hero"), 60)
         prefs.set_panel_hidden("weather", "hero", True)
         self.assertIn("machines", prefs.panels("home"))
 
@@ -701,15 +842,16 @@ class PanelLayoutReachesTheScreen(unittest.TestCase):
     def test_default_is_every_home_card_at_full_width(self):
         from flet_app import panels
         self.assertEqual(self._spans(self._home()),
-                         [12] * len(panels.panel_keys("home")))
+                         [panels.COLUMNS] * len(panels.panel_keys("home")))
 
-    def test_half_width_and_hidden_show_up_in_the_render(self):
+    def test_a_custom_width_shows_up_in_the_render(self):
+        """Any span, not just the old three presets, reaches the tree."""
         from flet_app import panels
         keys = panels.panel_keys("home")
-        prefs.set_panel_width("home", "machines", "half")
-        prefs.set_panel_width("home", "actions", "half")
+        prefs.set_panel_width("home", "machines", 30)
+        prefs.set_panel_width("home", "actions", 17)
         prefs.set_panel_hidden("home", "nowplaying", True)
-        want = [6 if k in ("machines", "actions") else 12
+        want = [{"machines": 30, "actions": 17}.get(k, panels.COLUMNS)
                 for k in keys if k != "nowplaying"]
         self.assertEqual(self._spans(self._home()), want)
 
@@ -745,7 +887,7 @@ class PanelLayoutSurvivesARestart(unittest.TestCase):
         import asyncio
         from flet_app import panels
 
-        prefs.set_panel_width("home", "machines", "half")
+        prefs.set_panel_width("home", "machines", 30)
         prefs.set_panel_hidden("home", "nowplaying", True)
         prefs.move_panel("home", "wat2do", -3)
         before = (prefs.panels("home"), prefs.panel_width("home", "machines"))
@@ -768,7 +910,7 @@ class PanelLayoutSurvivesARestart(unittest.TestCase):
         store = self.FakeStore()
         asyncio.run(prefs.save(store))
         for surface in panels.SURFACES:
-            for part in ("order", "hidden", "width"):
+            for part in ("order", "hidden", "width", "height"):
                 with self.subTest(surface=surface, part=part):
                     self.assertIn(prefs._pkey(surface, part), store.data)
 
@@ -1374,6 +1516,77 @@ class BottomBarToggleDoesNotCrash(unittest.TestCase):
         unknown = {fn.name: u for fn in top if (u := check(fn))}
         self.assertEqual(unknown, {}, f"names used but never bound: {unknown}")
 
+    def test_no_undefined_names_in_main(self):
+        """The same bug class, in the file where it would matter most.
+
+        main.py is one giant `async def main(page):` with every handler -
+        the drawer, its new chevrons, the render loop - nested inside it
+        as closures, so this walks that single top-level function exactly
+        the way the settings.py version walks each of its top-level ones:
+        a name used but never bound anywhere in reach (not a parameter,
+        not an assignment, not a nested def, not an import, not a
+        builtin) is exactly the class of typo that imports clean and only
+        crashes the first time the line actually runs - which for a
+        chevron nobody had tapped yet could have sat unnoticed for a
+        while.
+        """
+        import ast
+        import builtins
+        import os
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "main.py")
+        tree = ast.parse(open(path).read())
+        module_level = {n.name for n in ast.walk(tree)
+                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for a in node.names:
+                    module_level.add((a.asname or a.name).split(".")[0])
+            elif isinstance(node, ast.Assign):
+                # Not just `if isinstance(t, ast.Name)`: main.py's own
+                # `ORANGE, PINK, CYAN = "...", "...", "..."` is a tuple
+                # target, whose Name nodes only show up one level down.
+                for t in node.targets:
+                    for sub in ast.walk(t):
+                        if isinstance(sub, ast.Name):
+                            module_level.add(sub.id)
+
+        def check(fn):
+            local = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+            if fn.args.vararg:
+                local.add(fn.args.vararg.arg)
+            if fn.args.kwarg:
+                local.add(fn.args.kwarg.arg)
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Assign):
+                    for t in ast.walk(n):
+                        if isinstance(t, ast.Name):
+                            local.add(t.id)
+                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    # main.py nests keyword-only-argument handlers (e.g.
+                    # `def drain(*, force=False):`), which `args.args`
+                    # alone misses - the settings.py version of this test
+                    # never needed kwonlyargs/vararg/kwarg here because
+                    # settings.py happens not to nest one.
+                    local.add(n.name)
+                    local |= {a.arg for a in n.args.args} | {a.arg for a in n.args.kwonlyargs}
+                    if n.args.vararg:
+                        local.add(n.args.vararg.arg)
+                    if n.args.kwarg:
+                        local.add(n.args.kwarg.arg)
+                elif isinstance(n, (ast.For, ast.comprehension, ast.With, ast.ExceptHandler)):
+                    for t in ast.walk(n):
+                        if isinstance(t, ast.Name):
+                            local.add(t.id)
+            known = local | module_level | set(dir(builtins))
+            return [n.id for n in ast.walk(fn)
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                    and n.id not in known]
+
+        top = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        unknown = {fn.name: u for fn in top if (u := check(fn))}
+        self.assertEqual(unknown, {}, f"names used but never bound: {unknown}")
+
 
 # ===================================================================
 # Arrange the cards on the page itself
@@ -1457,6 +1670,12 @@ class CardEditMode(unittest.TestCase):
                 return [getattr(x, "col", {}).get("md") for x in c.controls]
         return []
 
+    def _reorderable(self, tree):
+        for c in _walk(tree):
+            if type(c).__name__ == "ReorderableListView":
+                return c
+        return None
+
     def _card_labels(self):
         """The edit-mode header label of each card, in rendered order.
 
@@ -1465,14 +1684,12 @@ class CardEditMode(unittest.TestCase):
         breaks whenever the chrome is rearranged.
         """
         out = []
-        for target in _of_type(self._home(), "DragTarget"):
-            for c in _walk(target):
-                if type(c).__name__ != "Row":
-                    continue
-                kids = list(getattr(c, "controls", []) or [])
-                if kids and type(kids[0]).__name__ == "Draggable":
-                    out.append(kids[1].value)
-                    break
+        for c in _walk(self._home()):
+            if type(c).__name__ != "Row":
+                continue
+            kids = list(getattr(c, "controls", []) or [])
+            if kids and type(kids[0]).__name__ == "ReorderableDragHandle":
+                out.append(kids[1].value)
         return out
 
     # ---------------------------------------------------------- off
@@ -1485,10 +1702,13 @@ class CardEditMode(unittest.TestCase):
         A wrapper per card, drawn whether or not she is arranging
         anything, would start giving that back - and a page that takes a
         second to build is a page whose buttons "do nothing", because
-        Flet holds the old frame while the handler runs.
+        Flet holds the old frame while the handler runs. Checks both the
+        old hand-rolled mechanism (must never come back) and the new one
+        (must never leak into the mode that never asked for it).
         """
         tree = self._home()
-        for name in ("DragTarget", "Draggable", "GestureDetector"):
+        for name in ("DragTarget", "Draggable", "GestureDetector",
+                     "ReorderableListView", "ReorderableDragHandle"):
             self.assertEqual(_of_type(tree, name), [], name)
 
     def test_edit_mode_is_the_only_thing_that_costs_controls(self):
@@ -1496,23 +1716,23 @@ class CardEditMode(unittest.TestCase):
         self.panels.set_editing(True)
         edit = len(list(_walk(self._home())))
         cards = len(prefs.panels(self.SURFACE))
-        self.assertEqual(len(_of_type(self._home(), "DragTarget")), cards)
+        self.assertEqual(len(_of_type(self._home(), "ReorderableDragHandle")), cards)
         self.assertEqual((edit - plain) % cards, 0)
         self.assertLess((edit - plain) / cards, 12,
-                        "a card's edit chrome is a header and a grip, not a page")
+                        "a card's edit chrome is a header and two pills, not a page")
 
     # ---------------------------------------------------------- drag
     def test_dragging_one_card_onto_another_reorders_the_page(self):
+        """Simulated the way Flet's own on_reorder contract works: pop the
+        moved item from old_index, insert it at new_index, no further
+        adjustment - see panels._on_reorder."""
         self.panels.set_editing(True)
         before = prefs.panels(self.SURFACE)
         tree = self._home()
-        targets = _of_type(tree, "DragTarget")
-        self.assertEqual(len(targets), len(before))
+        rlv = self._reorderable(tree)
+        self.assertEqual(len(rlv.controls), len(before))
 
-        # Drag the last card onto the first: start on its Draggable, drop
-        # on the first card's DragTarget, exactly as Flet fires them.
-        _of_type(targets[-1], "Draggable")[0].on_drag_start(None)
-        targets[0].on_accept(None)
+        rlv.on_reorder(types.SimpleNamespace(old_index=len(before) - 1, new_index=0))
 
         want = [before[-1]] + before[:-1]
         self.assertEqual(prefs.panels(self.SURFACE), want)
@@ -1523,39 +1743,67 @@ class CardEditMode(unittest.TestCase):
     def test_a_drop_on_itself_changes_nothing(self):
         self.panels.set_editing(True)
         before = prefs.panels(self.SURFACE)
-        targets = _of_type(self._home(), "DragTarget")
-        _of_type(targets[2], "Draggable")[0].on_drag_start(None)
-        targets[2].on_accept(None)
+        rlv = self._reorderable(self._home())
+        rlv.on_reorder(types.SimpleNamespace(old_index=2, new_index=2))
         self.assertEqual(prefs.panels(self.SURFACE), before)
 
-    def test_a_drop_with_nothing_picked_up_changes_nothing(self):
-        """Flet can deliver an accept for a drag this build never saw."""
+    def test_a_malformed_reorder_event_changes_nothing(self):
+        """A raise inside a gesture handler is invisible - the list simply
+        stops responding - so an event shaped differently than Flet's own
+        contract must be a no-op, not a crash."""
         self.panels.set_editing(True)
         before = prefs.panels(self.SURFACE)
-        self.panels.EDIT["dragging"] = None
-        _of_type(self._home(), "DragTarget")[0].on_accept(None)
+        rlv = self._reorderable(self._home())
+        rlv.on_reorder(types.SimpleNamespace(old_index=None, new_index=None))
+        self.assertEqual(prefs.panels(self.SURFACE), before)
+        rlv.on_reorder(types.SimpleNamespace())
         self.assertEqual(prefs.panels(self.SURFACE), before)
 
     # ---------------------------------------------------------- width
+    def _grips(self, tree):
+        """Every width grip - not the height pill, which is also a bare
+        GestureDetector but never sets a horizontal-drag handler."""
+        return [g for g in _of_type(tree, "GestureDetector")
+                if getattr(g, "on_horizontal_drag_start", None) is not None]
+
     def _grip(self, index=0):
         tree = self._home()
-        return _of_type(tree, "GestureDetector")[index], tree
+        return self._grips(tree)[index], tree
 
-    def test_tapping_the_width_pill_cycles_full_half_third(self):
+    def _grip_label(self, index=0):
+        grip, _ = self._grip(index)
+        for c in _walk(grip):
+            if type(c).__name__ == "Text":
+                return c.value
+        return None
+
+    def test_tapping_the_width_pill_cycles_the_common_fractions(self):
+        """Full -> 3/4 -> 2/3 -> 1/2 -> ..., wrapping - the fast path to a
+        usual width, not the only reachable one (that is the drag, below).
+        """
         self.panels.set_editing(True)
         first = prefs.panels(self.SURFACE)[0]
         got = []
         for _ in range(3):
             self._grip()[0].on_tap(None)
             got.append(prefs.panel_width(self.SURFACE, first))
-        self.assertEqual(got, ["half", "third", "full"])
+        self.assertEqual(got, list(self.panels.COMMON_WIDTHS[1:4]))
 
     def test_the_new_width_reaches_the_rendered_tree(self):
+        """Edit mode stacks one card per row (see panels.layout's
+        docstring for why a ReorderableListView cannot seat two side by
+        side), so what "reaches the tree" here is the grip's own label,
+        not a ResponsiveRow column span - that still applies the moment
+        she leaves edit mode, covered by PanelLayoutReachesTheScreen.
+        """
         self.panels.set_editing(True)
+        first = prefs.panels(self.SURFACE)[0]
         self._grip()[0].on_tap(None)
-        self.assertEqual(self._spans(self._home())[0], 6)
+        self.assertEqual(self._grip_label(),
+                         self.panels.width_label(prefs.panel_width(self.SURFACE, first)))
         self._grip()[0].on_tap(None)
-        self.assertEqual(self._spans(self._home())[0], 4)
+        self.assertEqual(self._grip_label(),
+                         self.panels.width_label(prefs.panel_width(self.SURFACE, first)))
 
     def _at(self, x):
         """A drag event at horizontal position `x`."""
@@ -1572,54 +1820,75 @@ class CardEditMode(unittest.TestCase):
     def test_dragging_the_grip_sideways_resizes(self):
         """`on_horizontal_drag_*`, not `on_pan_*`, on purpose.
 
-        These cards live in a vertically scrolling Column. A pan
-        recognizer and the scrollable's own vertical drag recognizer both
-        enter Flutter's gesture arena, and whichever crosses its slop
-        first wins - so a diagonal drag scrolls the page instead of
-        resizing the card. A horizontal-only recognizer never contends
-        with a vertical one.
+        These cards live in a vertically scrolling ReorderableListView. A
+        pan recognizer would contend with both the list's own scroll and
+        its own reorder drag - both vertical - for the same gesture arena,
+        so a diagonal drag would win one of those instead of resizing the
+        card. A horizontal-only recognizer never contends with either.
         """
         self.panels.set_editing(True)
         first = prefs.panels(self.SURFACE)[0]
-        self._sweep(self._grip()[0], 200, 180, 140)      # 60px left
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), "half",
-                         "leftwards is narrower")
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), self.panels.COLUMNS)
+        self._sweep(self._grip()[0], 200, 120)           # 80px left = 10 columns
+        narrower = prefs.panel_width(self.SURFACE, first)
+        self.assertEqual(narrower, 50, "leftwards is narrower")
         self._sweep(self._grip()[0], 100, 170)           # 70px right
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), "full")
+        self.assertGreater(prefs.panel_width(self.SURFACE, first), narrower,
+                           "rightwards is wider")
 
-    def test_a_long_drag_moves_more_than_one_step(self):
+    def test_a_long_drag_moves_further_than_a_short_one(self):
         self.panels.set_editing(True)
         first = prefs.panels(self.SURFACE)[0]
-        self._sweep(self._grip()[0], 300, 180)           # 120px left, 2 steps
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), "third")
+        self._sweep(self._grip()[0], 300, 260)           # 40px left = 5 columns
+        short_move = self.panels.COLUMNS - prefs.panel_width(self.SURFACE, first)
+        prefs.reset_panels(self.SURFACE)
+        self._sweep(self._grip()[0], 300, 140)           # 160px left = 20 columns
+        long_move = self.panels.COLUMNS - prefs.panel_width(self.SURFACE, first)
+        self.assertGreater(long_move, short_move)
+        # 160px is exactly 20 columns with no snap tolerance to absorb -
+        # 60 - 20 = 40, which also happens to be the 2/3 stop, so this is
+        # a real regression check, not only a direction check.
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), 40)
 
     def test_the_drag_clamps_instead_of_wrapping(self):
-        """Hard right means "as wide as it goes", not back round to 1/3."""
+        """Hard right means "as wide as it goes", not back round to 1/60."""
         self.panels.set_editing(True)
         first = prefs.panels(self.SURFACE)[0]
         self._sweep(self._grip()[0], 600, 0)             # far left
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), "third")
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), self.panels.MIN_WIDTH)
         self._sweep(self._grip()[0], 0, 600)             # far right
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), "full")
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), self.panels.COLUMNS)
 
     def test_a_twitch_is_not_a_resize(self):
         self.panels.set_editing(True)
         first = prefs.panels(self.SURFACE)[0]
-        self._sweep(self._grip()[0], 200, 197, 195)
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), "full")
+        self._sweep(self._grip()[0], 200, 197, 195)      # 5px, under one column
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), self.panels.COLUMNS)
+
+    def test_a_drag_that_lands_near_a_stop_snaps_there(self):
+        """Assistance, not a constraint: close to a common fraction settles
+        exactly on it; far from every one is left exactly where she put it
+        (covered by test_a_long_drag_moves_further_than_a_short_one, which
+        lands on 40 with room to spare on both sides)."""
+        self.panels.set_editing(True)
+        first = prefs.panels(self.SURFACE)[0]
+        # 60 - 18 columns = 42, one column short of the 40 stop - within
+        # WIDTH_SNAP_TOLERANCE (2) of it.
+        self._sweep(self._grip()[0], 300, 156)           # 144px left = 18 columns
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), 40)
 
     def test_an_event_shaped_differently_costs_the_drag_not_the_app(self):
         """A gesture handler that raises is invisible; the card just dies."""
-        import types
         self.panels.set_editing(True)
         first = prefs.panels(self.SURFACE)[0]
         grip = self._grip()[0]
         grip.on_horizontal_drag_start(types.SimpleNamespace())
         grip.on_horizontal_drag_update(types.SimpleNamespace())
         grip.on_horizontal_drag_end(types.SimpleNamespace())
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), "full")
+        self.assertEqual(prefs.panel_width(self.SURFACE, first), self.panels.COLUMNS)
         self._grip()[0].on_tap(None)          # ...and the tap still works
-        self.assertEqual(prefs.panel_width(self.SURFACE, first), "half")
+        self.assertEqual(prefs.panel_width(self.SURFACE, first),
+                         self.panels.COMMON_WIDTHS[1])
 
     # ---------------------------------------------------------- persistence
     def test_an_arrangement_made_on_the_page_survives_a_restart(self):
@@ -1631,9 +1900,9 @@ class CardEditMode(unittest.TestCase):
         have made the same mistake inside one app.
         """
         self.panels.set_editing(True)
-        targets = _of_type(self._home(), "DragTarget")
-        _of_type(targets[-1], "Draggable")[0].on_drag_start(None)
-        targets[0].on_accept(None)
+        before = prefs.panels(self.SURFACE)
+        rlv = self._reorderable(self._home())
+        rlv.on_reorder(types.SimpleNamespace(old_index=len(before) - 1, new_index=0))
         self._grip()[0].on_tap(None)
         want = (prefs.panels(self.SURFACE),
                 [prefs.panel_width(self.SURFACE, k)
@@ -1653,23 +1922,27 @@ class CardEditMode(unittest.TestCase):
     def test_only_the_handle_is_draggable_not_the_whole_card(self):
         """Otherwise the surface cannot be scrolled while arranging it.
 
-        Flutter's Draggable and the enclosing scrollable compete for the
-        same vertical drag and the Draggable wins, so a card draggable
-        edge to edge would pin the page in place in edit mode - on a
-        phone, with eight cards, most of them out of reach.
+        `ReorderableDragHandle` wraps only the grip icon, not the card, for
+        the same reason the old Draggable did: it competes with the
+        enclosing scrollable (now also the list's own reorder drag) for
+        the same vertical gesture and wins it, so a card draggable edge to
+        edge would pin the page in place in edit mode - on a phone, with
+        eight cards, most of them out of reach.
         """
         self.panels.set_editing(True)
-        for target in _of_type(self._home(), "DragTarget"):
-            with self.subTest(card=type(target).__name__):
-                handles = _of_type(target, "Draggable")
-                self.assertEqual(len(handles), 1)
-                self.assertEqual(type(handles[0].content).__name__, "Icon")
+        cards = len(prefs.panels(self.SURFACE))
+        handles = _of_type(self._home(), "ReorderableDragHandle")
+        self.assertEqual(len(handles), cards)
+        for h in handles:
+            with self.subTest():
+                self.assertEqual(type(h.content).__name__, "Icon")
 
     def test_leaving_edit_mode_gives_the_plain_page_back(self):
         self.panels.set_editing(True)
-        self.assertTrue(_of_type(self._home(), "DragTarget"))
+        self.assertTrue(_of_type(self._home(), "ReorderableListView"))
         self.panels.set_editing(False)
-        self.assertEqual(_of_type(self._home(), "DragTarget"), [])
+        self.assertEqual(_of_type(self._home(), "ReorderableListView"), [])
+        self.assertEqual(_of_type(self._home(), "ReorderableDragHandle"), [])
 
     # ---------------------------------------------------------- affordance
     def test_a_page_with_a_card_stack_says_so(self):
@@ -1770,10 +2043,53 @@ class PanelReorderByDrop(PrefsTestCase):
         self.assertFalse(prefs.move_panel_onto("home", "greeting", "nope"))
 
     def test_cycling_a_width_wraps(self):
-        self.assertEqual(prefs.cycle_panel_width("home", "weather"), "half")
-        self.assertEqual(prefs.cycle_panel_width("home", "weather"), "third")
-        self.assertEqual(prefs.cycle_panel_width("home", "weather"), "full")
-        self.assertEqual(prefs.cycle_panel_width("home", "weather", -1), "third")
+        """One column (of 60) at a time, wrapping at the ends - the
+        resize grip's drag, which calls this once per column crossed."""
+        from flet_app import panels
+        self.assertEqual(prefs.cycle_panel_width("home", "weather", -1), 59)
+        prefs.reset_panels("home")
+        # Already at full (the default); one more step wraps past the top
+        # of the range down to the bottom, not to 61.
+        self.assertEqual(prefs.cycle_panel_width("home", "weather", 1),
+                         panels.MIN_WIDTH, "wrapping past full")
+
+    def test_cycling_a_width_can_clamp_instead(self):
+        """`wrap=False`, for the resize grip's drag: overshooting the top
+        of the range stops at full rather than coming out the other side
+        near 1/60. Already-at-the-limit correctly reports "nothing
+        changed" (None) rather than re-announcing the same span."""
+        from flet_app import panels
+        prefs.set_panel_width("home", "weather", panels.MAX_WIDTH - 2)
+        self.assertEqual(
+            prefs.cycle_panel_width("home", "weather", 5, wrap=False),
+            panels.MAX_WIDTH)
+        self.assertIsNone(
+            prefs.cycle_panel_width("home", "weather", 5, wrap=False),
+            "already at the limit - nothing changed")
 
     def test_cycling_an_unknown_panel_is_refused(self):
         self.assertIsNone(prefs.cycle_panel_width("home", "nope"))
+        self.assertIsNone(prefs.cycle_panel_width_preset("home", "nope"))
+        self.assertIsNone(prefs.cycle_panel_height("home", "nope"))
+
+    def test_cycling_the_width_presets_wraps_through_the_common_fractions(self):
+        """The tap shortcut: full -> 3/4 -> 2/3 -> ... -> 1/6 -> full."""
+        from flet_app import panels
+        got = [prefs.cycle_panel_width_preset("home", "weather")
+               for _ in range(len(panels.COMMON_WIDTHS))]
+        self.assertEqual(got, list(panels.COMMON_WIDTHS[1:]) + [panels.COMMON_WIDTHS[0]])
+
+    def test_a_custom_width_snaps_to_the_nearest_preset_on_tap(self):
+        """A tap from a width that is not one of the stops at all - reached
+        by a drag or the settings slider - moves to the nearest stop, not
+        to whichever one shares its position in the list."""
+        prefs.set_panel_width("home", "weather", 37)  # between 40 and 30
+        self.assertEqual(prefs.cycle_panel_width_preset("home", "weather"), 40)
+
+    def test_cycling_a_height_wraps(self):
+        """One cell at a time, 0 (auto) through 8, wrapping."""
+        from flet_app import panels
+        self.assertEqual(prefs.cycle_panel_height("home", "weather", -1),
+                         panels.MAX_HEIGHT, "wrapping down from auto")
+        prefs.reset_panels("home")
+        self.assertEqual(prefs.cycle_panel_height("home", "weather", 3), 3)
