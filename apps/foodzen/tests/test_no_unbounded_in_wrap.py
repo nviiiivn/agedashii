@@ -8,24 +8,30 @@ ran off the bottom of the screen and could not be scrolled past, putting
 the totals, the sodium meter and the "Log it" button out of reach. The
 page was unusable. Reported by the owner twice before it was believed.
 
-Why it survived two fixes:
+Why it survived three fixes, and what it actually was
+-----------------------------------------------------
+It was never about width. A Flutter ``Wrap`` hands its children unbounded
+constraints on BOTH axes - the cross axis too, because it sizes each run
+to its tallest child - and a Material ``TextField`` with ``filled=True``
+and no height expands to fill whatever it is given. That is the bug, in
+one sentence, and all three attempts reasoned about the wrong axis:
 
-1. The first fix added ``wrap=True`` to stop the row standing four lines
-   tall. Correct, but it left ``expand=True`` on the food field - and a
-   wrapping Row is a Flutter ``Wrap``, which hands its children UNBOUNDED
-   main-axis constraints. An Expanded child of an unbounded box has no
-   width to take a share of, so the ``filled=True`` TextField painted its
-   grey over an effectively infinite rectangle.
+1. Added ``wrap=True`` to stop the row standing four lines tall. Correct,
+   and it left ``expand=True`` in place.
+2. Removed the ``expand``. Also correct, also not the cause.
+3. Wrapped the field in ``ft.Container(width=190, ...)``. Did nothing
+   twice over: a Container is not a Flex so it does not consume
+   ``expand``, and a width does not constrain a height.
 
-2. The second fix wrapped the field in ``ft.Container(width=190, ...)``.
-   That looked right and did nothing: a Container is not a Flex, so it
-   does not consume ``expand``, and ``field()`` sets
-   ``expand = width is None`` - so calling it without a width left the
-   TextField Expanded regardless of what was wrapped around it.
+What settled it was an isolating probe built on a real emulator: a
+wrapping Row of plain Texts renders fine, the same Row with ONE filled
+TextField in it produces the slab. No amount of reading the tree would
+have shown that, because the tree was correct every time.
 
-A source-level check does not catch case 2, because no ``expand=True``
-appears at the call site at all; it arrives through a default argument.
-Only the constructed tree shows it. Hence this test.
+The lesson the tests encode: ``test_nothing_expands_inside_a_wrapping_row``
+keeps the shape clean, but
+``test_every_filled_field_in_a_wrap_has_a_height`` is the one that guards
+the actual defect.
 """
 import unittest
 from unittest.mock import patch
@@ -90,6 +96,44 @@ class TheEatZenRowIsBounded(unittest.TestCase):
             "an Expanded child of a Wrap has unbounded width; a filled "
             "TextField there paints grey over the whole screen: "
             + ", ".join(offenders))
+
+    def test_every_filled_field_in_a_wrap_has_a_height(self):
+        """The actual cause, and the one both earlier fixes missed.
+
+        A Wrap hands its children unbounded constraints on BOTH axes - the
+        cross axis too, because it sizes each run to its tallest child. A
+        Material TextField with filled=True and no height expands to fill
+        that, and paints its grey fill past the bottom of the screen.
+
+        Both previous fixes reasoned about WIDTH: one removed expand=True,
+        the other wrapped the field in a fixed-width Container. Neither
+        constrains a height, so the slab survived both and shipped twice.
+        An isolating probe on a real emulator is what settled it - a
+        wrapping Row of plain Texts renders fine; the same Row with one
+        filled TextField in it produces the slab.
+        """
+        unbounded = []
+        seen = set()
+
+        def walk(control, in_wrap):
+            if id(control) in seen:
+                return
+            seen.add(id(control))
+            if (in_wrap and isinstance(control, ft.TextField)
+                    and getattr(control, "filled", False)
+                    and not getattr(control, "height", None)):
+                unbounded.append(
+                    f"TextField(hint={control.hint_text!r}) has no height")
+            wraps = in_wrap or (isinstance(control, ft.Row)
+                                and getattr(control, "wrap", False))
+            for child in (getattr(control, "controls", None) or []):
+                walk(child, wraps)
+            content = getattr(control, "content", None)
+            if content is not None and "flet" in type(content).__module__:
+                walk(content, wraps)
+
+        walk(self._build(), False)
+        self.assertEqual(unbounded, [], "\n".join(unbounded))
 
     def test_the_food_field_has_a_real_width(self):
         """The specific control that caused it, checked specifically.

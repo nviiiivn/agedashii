@@ -48,6 +48,28 @@ EMOJI_SLOT_W = 22
 # what that looked like on screen.
 FOOD_FIELD_W = 190
 
+# Every field in the wrapping row needs an explicit HEIGHT, and this is
+# the whole of the grey-box bug.
+#
+# A wrapping Row is a Flutter Wrap, and a Wrap hands its children
+# unbounded constraints on BOTH axes - the cross axis included, because it
+# sizes each run to its tallest child. A Material TextField with
+# filled=True given unbounded height expands to fill it, so its grey fill
+# painted down past the bottom of the screen: "What you ate" became a slab
+# that could not be scrolled past, and the totals, the sodium meter and
+# the Log it button were unreachable.
+#
+# Two earlier fixes missed this because both were about WIDTH. Removing
+# expand=True was right and not enough; wrapping the field in a
+# fixed-width Container was neither, since a Container is not a Flex and a
+# width does not constrain a height. An isolating probe on a real emulator
+# settled it: a wrapping Row of plain Texts renders fine, and the same Row
+# with ONE filled TextField in it produces the slab.
+#
+# 40 is the height a dense Material text field actually wants; anything
+# smaller clips the hint text.
+FIELD_H = 40
+
 
 def _page_build():
     """The page to rebuild after a write, for a client with no shell of its own.
@@ -243,7 +265,10 @@ def build_eatzen(page):
             page.update()
         return ft.TextField(
             value=str(row[key]), hint_text=hint, dense=True, filled=True, text_size=12,
-            width=width, expand=width is None, on_change=on_change,
+            # height is NOT optional here - see FIELD_H. This row wraps, and
+            # an unconstrained filled field paints grey to the bottom of the
+            # screen.
+            width=width, height=FIELD_H, expand=width is None, on_change=on_change,
             keyboard_type=ft.KeyboardType.NUMBER if numeric else None,
             border_color=p["border"], focused_border_color=p["accent"], color=p["text"])
 
