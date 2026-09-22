@@ -1646,6 +1646,46 @@ def eatzen_parse(text, llm=False, model="", machine=""):
     return _post("/api/eatzen/parse", payload, timeout=90 if llm else 20)
 
 
+def eatzen_photo(image_b64, machine="", model=""):
+    """A meal photo -> EatZen rows. (data, error) - the server's own words.
+
+    Live only, like ai_say: there is no photo left to retry once this call
+    returns one way or the other, so a dropped connection is a refusal with
+    the reason, not a queued write. `data` still carries `items`/`totals`
+    even when the vision step partly failed for one fragment - only a
+    complete failure (no plate recognized at all) is `error`-only.
+    """
+    payload = {"image": image_b64}
+    if machine:
+        payload["machine"] = machine
+    if model:
+        payload["model"] = model
+    return _live_post("/api/eatzen/photo", json_body=payload, timeout=200)
+
+
+def eatzen_label(image_b64, machine="", model=""):
+    """A nutrition-label photo -> its printed numbers. (data, error).
+
+    Lowest-priority of the photo features: she can type a label herself.
+    Unlike eatzen_photo, the model IS allowed to report figures here - it is
+    transcribing print, not recalling an average from memory.
+    """
+    payload = {"image": image_b64}
+    if machine:
+        payload["machine"] = machine
+    if model:
+        payload["model"] = model
+    return _live_post("/api/eatzen/label", json_body=payload, timeout=200)
+
+
+def eatzen_photo_url(photo_id, thumb=True):
+    """URL for a stored EatZen photo, or None. Same origin as the server."""
+    if not photo_id:
+        return None
+    q = urllib.parse.urlencode({"id": photo_id, **({"thumb": "1"} if thumb else {})})
+    return config.SERVER_URL + "/api/eatzen/photo?" + q
+
+
 def eatzen_entries():
     st = foodzen_state(force=False)
     return [] if st is None else (st.get("eatzen") or [])
