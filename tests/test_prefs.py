@@ -1093,3 +1093,79 @@ class CrtOverlayDoesNotEatTaps(unittest.TestCase):
         self.assertIsNotNone(under.on_click)
         under.on_click(None)
         self.assertEqual(fired, [True])
+
+
+class BottomBarToggleDoesNotCrash(unittest.TestCase):
+    """Hiding a bottom-bar row took the whole app down.
+
+    settings._bump took a parameter called `on_layout` and its body said
+    `callback`. Python resolves a global only when the line runs, so the
+    module imported fine and every test that did not toggle a row passed -
+    and the first time she hid one, the app died with "name 'callback' is
+    not defined" and had to be quit.
+    """
+
+    def test_bump_calls_what_it_was_given(self):
+        from flet_app.pages import settings
+        seen = []
+        settings._bump(lambda: seen.append(1))
+        self.assertEqual(seen, [1])
+
+    def test_bump_with_no_callback_is_a_no_op(self):
+        from flet_app.pages import settings
+        settings._bump(None)          # must not raise
+
+    def test_bump_swallows_a_failing_repaint(self):
+        # A repaint that throws must not lose the edit that triggered it.
+        from flet_app.pages import settings
+
+        def boom():
+            raise RuntimeError("repaint failed")
+
+        settings._bump(boom)
+
+    def test_no_undefined_names_in_settings(self):
+        """Catch the whole bug class, not just this one instance."""
+        import ast
+        import builtins
+        import os
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "flet_app", "pages", "settings.py")
+        tree = ast.parse(open(path).read())
+        module_level = {n.name for n in ast.walk(tree)
+                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for a in node.names:
+                    module_level.add((a.asname or a.name).split(".")[0])
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name):
+                        module_level.add(t.id)
+
+        def check(fn):
+            local = {a.arg for a in fn.args.args} | {a.arg for a in fn.args.kwonlyargs}
+            if fn.args.vararg:
+                local.add(fn.args.vararg.arg)
+            if fn.args.kwarg:
+                local.add(fn.args.kwarg.arg)
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Assign):
+                    for t in ast.walk(n):
+                        if isinstance(t, ast.Name):
+                            local.add(t.id)
+                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    local.add(n.name)
+                    local |= {a.arg for a in n.args.args}
+                elif isinstance(n, (ast.For, ast.comprehension, ast.With, ast.ExceptHandler)):
+                    for t in ast.walk(n):
+                        if isinstance(t, ast.Name):
+                            local.add(t.id)
+            known = local | module_level | set(dir(builtins))
+            return [n.id for n in ast.walk(fn)
+                    if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                    and n.id not in known]
+
+        top = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        unknown = {fn.name: u for fn in top if (u := check(fn))}
+        self.assertEqual(unknown, {}, f"names used but never bound: {unknown}")

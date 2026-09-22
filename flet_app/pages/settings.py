@@ -570,9 +570,13 @@ def _bump(on_layout):
     a worse trade than a bottom bar that catches up on the next navigation.
     Whoever teaches main.py to read prefs decides.
     """
-    if callback:
+    # The parameter is on_layout; this said `callback`, which is not a name
+    # in any enclosing scope. Python only resolves it when the line runs, so
+    # it imported fine, passed every test that did not toggle a bottom-bar
+    # row, and crashed the whole app the first time she hid one.
+    if on_layout:
         try:
-            callback()
+            on_layout()
         except Exception:  # noqa: BLE001 - a repaint must not lose the edit
             pass
 
