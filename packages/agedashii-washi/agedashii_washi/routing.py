@@ -102,6 +102,16 @@ SERVER_ROUTE_PATH = "/api/valhalla/route"
 #: enough". 2 km is further than any legitimate gap between a GPS fix and a
 #: drivable road, and well inside the distance to the edge of an extract.
 MAX_SNAP_M = 2000.0
+#: How far past the nearest road a heading-aware snap keeps looking, and how
+#: far a candidate may be behind the leader and still be considered. Wide
+#: enough for a divided highway (18-30 m between carriageways on I-880 and
+#: I-80 in the shipped graph), narrow enough that a road on the next block
+#: is never in the running.
+HEADING_BAND_M = 45.0
+#: What being completely reversed costs, in metres of equivalent distance.
+#: Larger than any carriageway gap, smaller than the distance to a different
+#: road - so a heading re-orders a tie and never overrides a clear winner.
+HEADING_PENALTY_M = 60.0
 
 CLASSES = ["motorway", "motorway_link", "trunk", "trunk_link", "primary",
            "primary_link", "secondary", "secondary_link", "tertiary",
@@ -480,13 +490,30 @@ class Graph:
                         bestd, best = d, nd
         return best
 
-    def snap_edge(self, lat, lon, max_m=MAX_SNAP_M):
+    def snap_edge(self, lat, lon, max_m=MAX_SNAP_M, heading=None):
         """Nearest point on a *road*, not nearest junction. A Snap, or None.
 
         The segment grid buckets every segment into every cell its geometry
         crosses, so expanding rings until the ring distance exceeds the best
         hit so far is exact - unlike growing a junction search, which can
         never prove it has not missed a long edge running past the door.
+
+        `heading`, when given, is the direction of travel in compass degrees
+        and breaks the one tie distance cannot. On a divided highway the two
+        carriageways are separate one-way segments 18-30 m apart (measured
+        on I-880 and I-80 in the shipped graph), so a fix landing between
+        them picks whichever is nearer by centimetres - and half the time
+        that is the one going the other way, which starts the route in the
+        wrong direction until the next exit.
+
+        Costed in metres so it stays comparable with distance: being fully
+        reversed is worth HEADING_PENALTY_M, which clears a carriageway gap
+        and does not clear a genuinely nearer road. A two-way segment can be
+        driven either way, so it takes the smaller of the two errors and is
+        effectively never penalised - ordinary streets behave as before.
+
+        With `heading=None` this is the original function, unchanged, so
+        every existing caller keeps its behaviour.
 
         Returns None on an RGRAPH01 graph (no segment grid), on an empty
         graph, or when nothing lies within `max_m`. Callers fall back to
@@ -505,6 +532,10 @@ class Graph:
         add = seen.add
         best = None
         bestd = 1e30
+        # Only collected when a heading was given: on the hot path this dict
+        # would be one more allocation and one more write per segment tested,
+        # for nothing.
+        cands = {} if heading is not None else None
         r = 0
         rmax = int(max_m / cell) + 2
         while r <= rmax:
@@ -544,13 +575,64 @@ class Graph:
                             if d < bestd:
                                 bestd = d
                                 best = (sid, i2 - a, t)
+                            if cands is not None:
+                                prev = cands.get(sid)
+                                if prev is None or d < prev[0]:
+                                    cands[sid] = (d, i2 - a, t)
                             px, py = qx, qy
-            if best is not None and r * cell > math.sqrt(bestd):
+            # With a heading, keep going a little past the nearest road: the
+            # other carriageway is the whole point and it is 18-30 m further
+            # out, so stopping the moment the first one is proven closest
+            # would never see it.
+            reach = math.sqrt(bestd) + (HEADING_BAND_M if cands is not None else 0.0)
+            if best is not None and r * cell > reach:
                 break
             r += 1
         if best is None:
             return None
+        if cands:
+            best = self._pick_by_heading(cands, bestd, heading) or best
+            bestd = cands[best[0]][0]
         return self._snap_detail(best, math.sqrt(bestd))
+
+    def _pick_by_heading(self, cands, bestd, heading):
+        """Choose among near-tie candidates using the direction of travel.
+
+        Returns a (sid, i, t) triple, or None to leave the choice alone.
+        Only candidates within HEADING_BAND_M of the nearest are considered,
+        so this re-orders a tie and never reaches past a road that is simply
+        closer by a clear margin.
+        """
+        limit = math.sqrt(bestd) + HEADING_BAND_M
+        best_key = None
+        best_cost = None
+        for sid, (d2, i, t) in cands.items():
+            dist = math.sqrt(d2)
+            if dist > limit:
+                continue
+            snap = self._snap_detail((sid, i, t), dist)
+            if snap is None:
+                continue
+            a = self.seg_off[sid]
+            run = bearing(
+                (self.geom[2 * (a + i)] / 1e7, self.geom[2 * (a + i) + 1] / 1e7),
+                (self.geom[2 * (a + i + 1)] / 1e7,
+                 self.geom[2 * (a + i + 1) + 1] / 1e7))
+            # Which ways this segment may actually be driven. fwd/bwd are
+            # -1 when that direction does not exist, which is exactly what
+            # makes a one-way carriageway distinguishable from a street.
+            ways = []
+            if snap.fwd >= 0:
+                ways.append(run)
+            if snap.bwd >= 0:
+                ways.append((run + 180.0) % 360.0)
+            if not ways:
+                continue
+            err = min(abs((heading - w + 180) % 360 - 180) for w in ways)
+            cost = dist + (err / 180.0) * HEADING_PENALTY_M
+            if best_cost is None or cost < best_cost:
+                best_cost, best_key = cost, (sid, i, t)
+        return best_key
 
     def _snap_detail(self, best, dist_m):
         """Turn (segment, point index, parameter) into a full Snap."""
@@ -1218,9 +1300,15 @@ def remaining(route, position):
 
 # ----------------------------------------------------------- offline route
 
-def _anchor(g, lat, lon):
-    """Snap a point, preferring an edge and falling back to a junction."""
-    s = g.snap_edge(lat, lon)
+def _anchor(g, lat, lon, heading=None):
+    """Snap a point, preferring an edge and falling back to a junction.
+
+    `heading` is only ever passed for the START: it is where the rider is
+    pointing now, and the destination has no direction of travel to speak
+    of. Passing it to both would pick the destination's carriageway by the
+    direction you happen to be facing at the other end of the trip.
+    """
+    s = g.snap_edge(lat, lon, heading=heading)
     if s is not None:
         return s
     node, d = g.snap(lat, lon)
@@ -1290,10 +1378,10 @@ def _targets_for(g, s):
     return out, legs
 
 
-def _route_offline(g, frm, to):
+def _route_offline(g, frm, to, heading=None):
     t0 = time.perf_counter()
     with _SEARCH_LOCK:
-        a = _anchor(g, *frm)
+        a = _anchor(g, *frm, heading=heading)
         b = _anchor(g, *to)
         if a is None or b is None:
             which = "start" if a is None else "destination"
@@ -1531,13 +1619,21 @@ def parse_latlon(text):
         return None
 
 
-def route(frm, to, *, allow_server=True, timeout=25.0, graph_timeout=None):
+def route(frm, to, *, allow_server=True, timeout=25.0, graph_timeout=None,
+          heading=None):
     """Route from one (lat, lon) to another. Always returns a Route.
 
     Blocking: the search is ~150 ms for 40 km and the server fallback is a
     network round trip, so call this off the UI thread (or use
     `route_async`). Never raises for a routing failure - the failure is the
     Route, with the reason in it.
+
+    `heading` is the rider's current direction of travel in compass degrees,
+    if it is known. It only affects where the START snaps: between the two
+    carriageways of a divided road, distance alone picks one at random and
+    half the time that is the one going the other way. Omit it and nothing
+    changes - the server path ignores it either way, since Valhalla is
+    asked for a point and not a bearing here.
     """
     try:
         frm = _latlon(frm)
@@ -1547,7 +1643,7 @@ def route(frm, to, *, allow_server=True, timeout=25.0, graph_timeout=None):
 
     g = graph(timeout=graph_timeout)
     if g is not None:
-        out = _route_offline(g, frm, to)
+        out = _route_offline(g, frm, to, heading=heading)
         if out.ok:
             return out
         why = out.reason

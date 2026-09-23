@@ -1213,6 +1213,66 @@ class TestOfflineRestrictions(RoutingTestCase):
         self.assertGreater(junction_m, 100.0)
 
 
+@NEEDS_GRAPH
+class TestHeadingAwareSnap(RoutingTestCase):
+    """The divided-carriageway case, which distance alone cannot decide.
+
+    Both fixtures are real places in the shipped Bay Area graph, found by
+    sampling for two one-way segments running within 150 degrees of
+    opposite and less than 90 m apart - which is what a divided highway
+    looks like in the data. The point tested is the midpoint between them,
+    where a GPS fix is genuinely ambiguous and the snap previously picked
+    whichever was nearer by centimetres.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.g = R.Graph(GRAPH)
+
+    # (where, heading -> the segment you are actually on)
+    CARRIAGEWAYS = [
+        ("I-880 Oakland", 37.794887, -122.277091, {29: 679736, 201: 377550}),
+        ("I-80 Emeryville", 37.837115, -122.302650, {86: 310933, 270: 490354}),
+    ]
+
+    def test_heading_picks_the_carriageway_you_are_on(self):
+        for label, lat, lon, expected in self.CARRIAGEWAYS:
+            for heading, want in expected.items():
+                with self.subTest(place=label, heading=heading):
+                    snap = self.g.snap_edge(lat, lon, heading=heading)
+                    self.assertIsNotNone(snap)
+                    self.assertEqual(snap.seg, want)
+
+    def test_without_a_heading_nothing_changes(self):
+        """The whole point of the default: existing callers are untouched.
+
+        Every caller but the live navigator passes no heading, so the old
+        path has to stay byte-identical rather than merely similar.
+        """
+        for label, lat, lon, _ in self.CARRIAGEWAYS:
+            with self.subTest(place=label):
+                a = self.g.snap_edge(lat, lon)
+                b = self.g.snap_edge(lat, lon, heading=None)
+                self.assertEqual((a.seg, a.i, a.t, a.dist_m),
+                                 (b.seg, b.i, b.t, b.dist_m))
+
+    def test_a_heading_never_reaches_past_a_clearly_nearer_road(self):
+        """It re-orders a tie; it does not go shopping.
+
+        The penalty is deliberately smaller than the distance to a
+        different road, so even the worst possible heading may only move
+        the answer by about the width of a junction - not onto the next
+        street over.
+        """
+        for lat, lon in [OAKLAND, (37.7749, -122.4194)]:
+            base = self.g.snap_edge(lat, lon)
+            for heading in (0, 90, 180, 270):
+                with self.subTest(at=(lat, lon), heading=heading):
+                    got = self.g.snap_edge(lat, lon, heading=heading)
+                    self.assertLess(got.dist_m - base.dist_m,
+                                    R.HEADING_BAND_M)
+
+
 def _tail_node(g, k):
     """Which node directed edge k leaves from (binary search in the CSR)."""
     lo, hi = 0, g.n
