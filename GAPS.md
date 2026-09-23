@@ -1,7 +1,7 @@
 # Agedashii — what is done, what is not
 
-Updated 2026-09-22. Branch `split`. **1,110 tests green** — 764 Tofu,
-120 Moto, 115 Watudo, 111 Foodzen.
+Updated 2026-09-23. **1,114 tests green** — 767 Tofu, 120 Moto,
+115 Watudo, 112 Foodzen — plus 111 on the server side.
 
 Where a claim has a number behind it, the number was measured, not
 estimated. See `BOARD.md` for the split itself and who owns what.
@@ -105,7 +105,7 @@ clicks vanished.
 
 ### On the web — five hosts now
 `tofu.alola.lol`, `moto.alola.lol`, `watudo.alola.lol`,
-`foodzen.alola.lol`, each with `/apk`, `/ipa`, `/linux-x64`,
+`foodzen.alola.lol`, each with `/apk`, `/linux-x64`,
 `/linux-arm64` and `/downloads`. `agedashii.alola.lol` is the Qi + Washi
 framework page, generated from the packages themselves so it cannot drift
 from what ships. Every old path 302s to its new home.
@@ -183,18 +183,63 @@ animation.
 
 Nothing. Everything below is either done or listed as not done.
 
+## Fixed on 2026-09-23
+
+Each of these was on the "not done" list below the day before.
+
+**The web apps were blank in Firefox.** `flet build web` emits
+`loadPyodide({stdout, stderr})` with no `indexURL`, so Pyodide has to
+derive its own base path from the module it was imported from — which is
+cross-origin (`cdn.jsdelivr.net`). Chromium allows that; Firefox does not,
+and the worker dies with *"Could not extract indexURL path"*. Python never
+starts, nothing is drawn, and the page goes blank the moment the loading
+overlay clears. This was reported working repeatedly because the browser
+automation used to check it is Chromium-only — the one browser that hides
+the bug. Patched post-build in `agedashii-splash.py`; all four now reach
+`Python worker initialized` **and paint a real surface** in Firefox, which
+is checked by pixel count because a screenshot taken the instant Python
+starts is still white and passed a console-only check.
+
+**Five EatZen answers were wrong**, not the two listed here before:
+
+| Phrase | Was | Why |
+|---|---|---|
+| `1 salmon fillet` | smoked sockeye | a cut is a *portion*. Every plain salmon row **offers** a fillet; only the smoked one spells "filets" in its name, so it alone covered both words |
+| `1 cup oatmeal` | a QUAKER cereal, no weight | the right row never says "oatmeal" — USDA files it under oats |
+| `3 strips bacon` | no weight at all | USDA calls that portion "slice cooked" |
+| `1 apple` | peeled | "without skin" tied with the whole fruit and won on being the shorter name |
+| `2 slices of bread` | a pita, no weight | the unit is stripped before the name reaches the ranker, so it could not know a slice was wanted |
+
+The bread one was found by a **new** test, not by reading the code: the
+battery asserted the food's *name* and never that the row weighed
+anything, so bacon passed while returning `grams=None` and 0 mg sodium.
+
+**Routing now takes a heading.** Sampling the shipped graph for opposed
+one-way segments finds I-880's carriageways 18 m apart and I-80's 29 m
+apart; at the midpoint the snap was choosing between them on centimetres.
+`snap_edge()` costs heading disagreement in metres so it stays comparable
+with distance — fully reversed is worth 60 m, which clears a carriageway
+gap and not a genuinely nearer road — and only considers candidates within
+45 m of the leader, so it re-orders a tie rather than going shopping.
+`heading=None` is asserted byte-identical to the old function. Trips
+passes the fix's own course when you route from "start here"; XNAV does
+not route, it follows what Trips planned.
+
+**The duplicate Caddy, and its actual cause.** Four cron lines
+(`ss -tlnp | grep -q 8081 || nohup caddy run …`) raced the systemd units,
+which already restart Caddy on their own. A port check is not a lock:
+`SO_REUSEPORT` lets a second Caddy bind a port that is already listening,
+so a cron tick could spawn a duplicate serving half the requests from a
+stale config. That is the mechanism behind both the `:8081` orphan and a
+second one found on `:8083`. Cron lines disabled, orphan killed.
+
 ## Not done
 
 | Work | Note |
 |---|---|
-| IPA | `flutter build ipa` needs macOS. A Sonoma guest under KVM on Tower is proven working; Xcode 16.2 is downloaded. In progress |
-| `1 salmon fillet` matches smoked salmon | that entry is the only one that says "filets". Its alternatives list the rest |
-| `1 cup oatmeal` matches QUAKER | the table has no plain cooked oatmeal to answer with |
 | Sensors: accelerometer, gyro, lean, g-force | deferred by her |
-| Routing takes no heading | on a divided highway a fix nearer the opposite carriageway starts the route the wrong way |
+| The dashboards site answers 502 at `/` | `***REMOVED***` proxies `/` to `localhost:6902`, which has no systemd unit and is not listening. The config has not been touched since June; Caddy itself is healthy (`/dash1` returns 401). Nothing has been guessed about what belongs there |
 | Website layouts live in `localStorage` | per browser; the app cannot see them. She has since said layouts SHOULD be local, so this is behaviour, not a gap |
-| A second Caddy is bound to `:8081` | `caddy-dashboards.service` pid 3358134 shares the port with SO_REUSEPORT and serves a two-week-old config to roughly half of local requests. Restarting it rebinds it to `:8083` and loses nothing — **her call, an agent's attempt was denied** |
-| The published web PWA is a pre-rename CI build | its title still says NVII-DASH and its bundle carries README/GAPS, which name the LAN server. A fresh `flet build web` fixes both |
 
 ## Known limits
 
