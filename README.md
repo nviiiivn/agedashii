@@ -26,12 +26,12 @@ The split apps are additive until each has been used and confirmed; what
 exists meanwhile is the ability to *hide* a surface, which is reversible
 and deletes nothing.
 
-| | web | Android | Linux x64 |
-|---|---|---|---|
-| Tofu | [tofu.alola.lol](https://tofu.alola.lol) | 212 MB | 108 MB |
-| Moto | [moto.alola.lol](https://moto.alola.lol) | 212 MB | 108 MB |
-| Watudo | [watudo.alola.lol](https://watudo.alola.lol) | 135 MB | 32 MB |
-| Foodzen | [foodzen.alola.lol](https://foodzen.alola.lol) | 134 MB | 32 MB |
+| | web | Android | Linux x64 | Linux arm64 |
+|---|---|---|---|---|
+| Tofu | [tofu.alola.lol](https://tofu.alola.lol) | 212 MB | 108 MB | 107 MB |
+| Moto | [moto.alola.lol](https://moto.alola.lol) | 212 MB | 108 MB | 106 MB |
+| Watudo | [watudo.alola.lol](https://watudo.alola.lol) | 135 MB | 32 MB | 30 MB |
+| Foodzen | [foodzen.alola.lol](https://foodzen.alola.lol) | 134 MB | 32 MB | 30 MB |
 
 Watudo and Foodzen are a third the size because they do not carry the
 120 MB offline map they would never open.
@@ -91,7 +91,16 @@ On the Void laptop all four are in the desktop launcher as
 tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux] [web]
 ```
 
-Runs on Tower against the toolchain at `/home/nvii/flet-toolchain`. It
+Runs on Tower for x86-64 and Android, against the toolchain at
+`/home/nvii/flet-toolchain`; the arm64 Linux target is built on the Pi
+itself, because a cross-compile is not on offer. Note that Flutter ships
+**no linux-arm64 tarball** - `releases_linux.json` reports
+`dart_sdk_arch: x64` for every stable release - so arm64 means cloning
+the repo at the tag and letting `flutter precache --linux` fetch the real
+arm64 engine.
+
+The script itself is architecture-agnostic and was not modified for
+either; it
 stages each app into its own directory with the shared packages vendored
 in, because a relative path dependency does not survive `flet build`
 copying the tree; it strips `agedashii-*` out of the staged pyproject,
