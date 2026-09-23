@@ -23,6 +23,7 @@ Candidates are tried in order and the first that answers wins; the winner is
 remembered so the next launch starts there.
 """
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -139,6 +140,29 @@ def probe(url, timeout=3.0):
         return False, _describe(e)
 
 
+# A browser cannot do this, and trying is what hung the web build.
+#
+# Two separate reasons, either of which is fatal:
+#   * Flet's web target runs under Pyodide, where sys.platform is
+#     "emscripten" and there are no sockets, so urllib's probe does not
+#     fail fast - it can block and never come back.
+#   * The hosted app is served over HTTPS, and a request from an https
+#     page to http://192.0.2.21:6900 is mixed content, which every
+#     browser blocks outright. Even on her own LAN it could never succeed.
+#
+# main() awaits config.load() BEFORE the first paint, so a probe that does
+# not return means an app that never draws anything: moto.alola.lol came
+# up to its loading screen, initialised Python in 12 s, and then sat there
+# forever with nothing in the console.
+#
+# So on the web the probe is skipped and the status says plainly why,
+# rather than being left to look like a server that is merely down.
+ON_THE_WEB = sys.platform == "emscripten"
+
+WEB_DETAIL = ("a browser cannot reach a LAN address from an https page - "
+              "use the installed app for server features")
+
+
 def select(candidates=None, timeout=2.0):
     """Probe each candidate in order; adopt the first that answers.
 
@@ -147,6 +171,11 @@ def select(candidates=None, timeout=2.0):
     """
     global SERVER_URL
     results = []
+    if ON_THE_WEB:
+        first = (candidates or CANDIDATES or [""])[0]
+        _remember(first, False, WEB_DETAIL)
+        return [(u, False, WEB_DETAIL)
+                for u in (candidates if candidates is not None else CANDIDATES)]
     for url in (candidates if candidates is not None else CANDIDATES):
         ok, detail = probe(url, timeout=timeout)
         results.append((url, ok, detail))
