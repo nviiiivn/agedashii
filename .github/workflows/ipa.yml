@@ -1,0 +1,109 @@
+name: ipa
+
+# iOS only. macOS desktop is deliberately not built - "what if we just say
+# FUCK the ios and mac version for now how about them apples" was about the
+# cost of the macOS *desktop* target and the VM chase around it; the iPhone
+# build is the part she still wants, and it is the only thing here.
+#
+# Separate from build.yml rather than a job inside it, for two reasons:
+#   * macOS runners bill at a 10x multiplier. Keeping them off the push
+#     trigger means an ordinary commit to main can never spend that quota by
+#     accident - this workflow only ever starts because someone asked.
+#   * build.yml's Linux job and this one fail for completely different
+#     reasons, and a red X on one should not hide the other's result.
+#
+# Every build is UNSIGNED. With no provisioning profile, flet passes
+# --no-codesign through to flutter, which is exactly what AltStore and
+# Sideloadly want: they re-sign with a free Apple ID on the way in. The $99
+# Developer Program is not involved.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # flet 0.86.5 requires this exact Flutter version; bump both together.
+  FLUTTER_VERSION: "3.44.8"
+  PYTHON_VERSION: "3.12"
+  FLET_VERSION: "0.86.5"
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    # One job per app rather than one job building four. A matrix gives each
+    # app its own runner, its own log and its own artifact, so Foodzen
+    # failing does not cost Moto's build - which matters when the runner is
+    # metered and a rerun of "everything" is the expensive way to retry one.
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [tofu, moto, watudo, foodzen]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Install flet
+        run: pip install "flet==${FLET_VERSION}" "flet-cli==${FLET_VERSION}"
+
+      # Reuse the same staging the Android and Linux builds go through, so an
+      # iPhone build cannot quietly differ from the APK. The script vendors
+      # the two shared packages, strips them out of the staged pyproject
+      # (they are directories here, not something pip can fetch), renames the
+      # per-app icon masters into the names flet looks for, and drops the
+      # 120 MB map pack for the apps that never open one.
+      #
+      # TC is where it stages and collects. On Tower that is the toolchain
+      # directory; here it has to be somewhere the runner can write.
+      - name: Build the IPA
+        env:
+          TC: ${{ runner.temp }}/tc
+        run: bash tools/build_app.sh ${{ matrix.app }} ipa
+
+      - name: Show what was produced
+        if: always()
+        env:
+          TC: ${{ runner.temp }}/tc
+        run: |
+          echo "--- out ---"; ls -la "$TC/out/${{ matrix.app }}" || true
+          echo "--- dist tree ---"
+          find "$TC/stage/${{ matrix.app }}/dist" -maxdepth 4 | head -40 || true
+
+      # An .ipa is a zip; a truncated or empty one uploads just as happily as
+      # a real one. Open it and require the Payload/ directory an iPhone
+      # actually installs from, so a green run means a file that can be
+      # sideloaded rather than a file that merely exists.
+      - name: Check it is a real bundle
+        env:
+          TC: ${{ runner.temp }}/tc
+        run: |
+          python3 - "$TC/out/${{ matrix.app }}/agedashii-${{ matrix.app }}.ipa" <<'PY'
+          import os, sys, zipfile
+          path = sys.argv[1]
+          names = zipfile.ZipFile(path).namelist()
+          payload = [n for n in names if n.startswith("Payload/")]
+          if not payload:
+              sys.exit(f"{path} has no Payload/ - not an installable ipa")
+          if not [n for n in payload if n.endswith(".app/Info.plist")]:
+              sys.exit(f"{path} has no app Info.plist under Payload/")
+          bundles = sorted({n.split("/")[1] for n in payload if n.count("/") > 1})
+          print(f"ok: {os.path.getsize(path):,} bytes, "
+                f"{len(names)} entries, bundle {bundles[:1]}")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agedashii-${{ matrix.app }}-ipa
+          path: ${{ runner.temp }}/tc/out/${{ matrix.app }}/*.ipa
+          if-no-files-found: error
