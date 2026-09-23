@@ -42,10 +42,11 @@ NS = "agedashii.foodzen."
 KEY_THEME = NS + "theme"
 KEY_HAMBURGER = NS + "hamburger"
 
-# Bottom-nav-first means the bar is the primary way around, not that the
-# drawer is hidden: "i want the ability to show / hide the hamburger menu
-# trigger" asked for a switch, and a switch that starts off reads as a
-# missing feature. Both are on out of the box; hiding it is hers to do.
+# On out of the box. Her ask was "i want the ability to show / hide the
+# hamburger menu trigger" - a switch, and a switch that starts off reads as
+# a missing feature rather than a preference. That the bar "works better"
+# than the drawer here is about which one you reach for, not about taking
+# the other one away. Hiding it is hers to do.
 DEFAULT_HAMBURGER = True
 
 

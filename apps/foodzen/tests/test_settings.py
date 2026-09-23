@@ -495,10 +495,11 @@ class TheNavigationCard(SettingsCase):
     def test_the_menu_trigger_is_there_out_of_the_box(self):
         """"how come its not on by default" - it is now.
 
-        Bottom-nav-first settled which navigation is *primary*, not whether
-        the drawer exists: the ask was "the ability to show / hide the
-        hamburger menu trigger", and a trigger you have to go find a setting
-        to summon reads as a missing feature rather than a preference.
+        That the bar "works better" than the hamburger here settled which
+        one you reach for, not whether the other exists: the ask was "the
+        ability to show / hide the hamburger menu trigger", and a trigger you
+        have to go find a setting to summon reads as a missing feature
+        rather than a preference.
         """
         self.assertTrue(prefs_local.DEFAULT_HAMBURGER)
         self.assertTrue(prefs_local.hamburger_enabled())

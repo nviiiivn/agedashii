@@ -27,8 +27,8 @@ Settings and How this works are surfaces of the shell's own. They have no
 tab bar to read back, so `_HERE` remembers which is showing - and forgets
 again the moment either tab page is.
 
-Bottom bar first
-----------------
+Two ways around, and the bar is the one you reach for
+-----------------------------------------------------
 Her words: "Each of these smaller apps (not tofu) work better with the
 bottom navigation bar and less with the hamburger menu so... i want the
 ability to show / hide the hamburger menu trigger as wel please." So the
