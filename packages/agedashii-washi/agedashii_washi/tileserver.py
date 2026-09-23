@@ -21,6 +21,7 @@ top. Getting that flip wrong yields a map that looks plausible but is
 mirrored north-south, so it is done in exactly one place, below.
 """
 import sqlite3
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -121,6 +122,21 @@ def _handler_for(archive):
     return Handler
 
 
+# A browser has no sockets. Flet's web target runs the app under Pyodide,
+# where sys.platform is "emscripten" and binding a listening socket is not
+# merely slow, it is impossible - the call never returns, and because it
+# happens while the first surface is being built, the app paints nothing
+# at all. That is exactly how moto.alola.lol hung: the Python worker came
+# up in 13 s, Trips called this on its way to drawing a map, and the page
+# sat on its loading screen forever with no error anywhere.
+#
+# Nothing is lost by refusing. On the web the offline archive is not
+# shipped anyway (build_app.sh drops assets/maps from the web target,
+# because a browser build must not be a 120 MB download), so the caller
+# was always going to fall back to online tiles here.
+ON_THE_WEB = sys.platform == "emscripten"
+
+
 def start(mbtiles_path, port=0):
     """Start serving `mbtiles_path`. Returns a url_template, or None.
 
@@ -130,7 +146,7 @@ def start(mbtiles_path, port=0):
     """
     # No archive installed is the normal case before maps are downloaded,
     # not an error: the caller falls back to online tiles.
-    if not mbtiles_path:
+    if ON_THE_WEB or not mbtiles_path:
         return None
     path = Path(mbtiles_path)
     with _lock:
