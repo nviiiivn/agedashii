@@ -1,1 +1,4 @@
 flet==0.86.5
+flet-map==0.86.5
+flet-geolocator==0.86.5
+flet-permission-handler==0.86.5

@@ -1,0 +1,77 @@
+# What the built app calls itself, on every platform.
+#
+# Without this file `flet build` invents all of it from the directory name:
+# the last build derived "dashbored-flet" from a directory that has since
+# been renamed twice, and would now derive "nvii-dash" and the bundle id
+# "com.flet.nvii-dash". That made the product name a side effect of what the
+# checkout happened to be called, which is how the old name survived a
+# rename of everything else. It is written down here instead.
+#
+# Deliberately NO [project.dependencies] and no [tool.poetry.dependencies]:
+# flet uses the TOML dependency list when it is non-empty and falls back to
+# requirements.txt otherwise (flet_cli/commands/build_base.py). requirements.txt
+# is the list that is kept current - and the one that deliberately omits
+# flet-cli so it is not bundled into the app - so this file must not start
+# a competing one.
+
+[project]
+name = "agedashii"
+version = "1.0.0"
+description = "Agedashii Tofu - the whole dashboard, every surface on one home"
+requires-python = ">=3.12"
+
+[tool.flet]
+# Display name: window title, .desktop entry, macOS product, app launcher,
+# and the label Android shows in the launcher and the multitasking view.
+#
+# Tofu is the base dish, and this is the base dashboard - the one that has
+# everything on it. Moto, Watudo and Foodzen are the pieces taken off it;
+# Qi and Washi are what they are all made of. "Agedashii" on its own is the
+# family, not this app.
+product = "Agedashii Tofu"
+org = "online.iamprettyfamous"
+# Pinned rather than left to be composed from org + project name, so the
+# identity the OS installs under can never drift with a directory rename.
+# This is the Android applicationId and the iOS/macOS bundle identifier, and
+# it matches the user_agent_package_name the map and geolocation plugins
+# report to OSM services.
+bundle_id = "online.iamprettyfamous.agedashii"
+company = "nvii"
+copyright = "Copyright (c) 2026 nvii"
+
+# Permissions. Without these the plugin is present, the code runs, and the
+# feature fails at the point of use with a message about the manifest -
+# which is exactly what XNAV did: "Record" produced "location permissions
+# are not declared in the platform manifest". Declaring the plugin in
+# requirements.txt does NOT declare its permissions; flet writes
+# AndroidManifest.xml and Info.plist from these tables and nothing else.
+#
+# LOCATION is for XNAV: live position, track recording, route-from-here.
+# BACKGROUND and FOREGROUND_SERVICE_LOCATION are what keep a ride recording
+# while the screen is off, which is the normal way a ride is recorded.
+[tool.flet.android.permission]
+"android.permission.ACCESS_FINE_LOCATION" = true
+"android.permission.ACCESS_COARSE_LOCATION" = true
+"android.permission.ACCESS_BACKGROUND_LOCATION" = true
+"android.permission.FOREGROUND_SERVICE_LOCATION" = true
+# CAMERA is for the EatZen photo feature. FilePicker's image source offers
+# the camera as well as the gallery, and the camera half fails the same way
+# as GPS did without this.
+"android.permission.CAMERA" = true
+"android.permission.READ_MEDIA_IMAGES" = true
+
+# Declared as NOT required so the Play listing and sideload do not refuse a
+# device that lacks GPS hardware - the app degrades to network location
+# rather than being uninstallable.
+[tool.flet.android.feature]
+"android.hardware.location.gps" = false
+"android.hardware.location.network" = false
+"android.hardware.camera" = false
+
+# iOS wants a sentence per permission, shown verbatim in the system prompt,
+# and the App Store rejects a build that uses the API without one.
+[tool.flet.ios.info]
+NSLocationWhenInUseUsageDescription = "Agedashii uses your location to show where you are on the map and to record a ride."
+NSLocationAlwaysAndWhenInUseUsageDescription = "Agedashii keeps reading your location while a ride is recording, including when the screen is off."
+NSCameraUsageDescription = "Agedashii uses the camera to photograph a meal or a nutrition label."
+NSPhotoLibraryUsageDescription = "Agedashii reads a photo you choose of a meal or a nutrition label."

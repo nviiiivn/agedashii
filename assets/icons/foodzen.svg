@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Agedashii Foodzen - groceries, EatZen logging, blood pressure.
+
+  A bowl with a pulse rising off it. The bowl is what agedashi tofu is
+  actually served in, so this is the piece of the family that kept the
+  dish rather than the cubes; it covers groceries and EatZen without
+  needing a list, which would have collided with Watudo. The line above it
+  is steam and a heartbeat at the same time - sodium, sugar and blood
+  pressure are the reason this app exists, and they are all the same
+  question about what the food does to you afterwards.
+
+  Bottom-heavy on purpose: a wide mass low in the frame with a light mark
+  above it is the opposite weight to Watudo's hourglass and reads
+  instantly in greyscale.
+
+  Geometry: rim 424x48 at y=580, bowl bottoms out at y=840 (328px from
+  centre), pulse spans x=318..706 on a 48px stroke. The pulse started at
+  42px and sat 30px clear of the rim; at 48px output that is a pixel and a
+  half of air and the two merged into one smudge, so the stroke went up and
+  the bowl went down. Everything stays inside the 338px adaptive-mask
+  circle.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="brand" gradientUnits="userSpaceOnUse" x1="300" y1="512" x2="724" y2="512">
+      <stop offset="0" stop-color="#ffb020"/>
+      <stop offset="0.5" stop-color="#ff5e8a"/>
+      <stop offset="1" stop-color="#39d0ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="#0d1117"/>
+  <path d="M 318 452 L 430 452 L 486 348 L 552 508 L 602 452 L 706 452"
+        fill="none" stroke="url(#brand)" stroke-width="48"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="url(#brand)">
+    <rect x="300" y="580" width="424" height="48" rx="24"/>
+    <path d="M 336 624 L 688 624 C 688 786 610 840 512 840 C 414 840 336 786 336 624 Z"/>
+  </g>
+</svg>

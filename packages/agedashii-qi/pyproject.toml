@@ -1,0 +1,19 @@
+# Agedashii Qi - the look, on its own.
+#
+# Separate from the framework because a palette has no opinion about cards,
+# and because the website wants the same twenty-four themes without any of
+# the Flet machinery. flet is the only dependency, and only because
+# apply_theme() hands Material a ft.Theme.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agedashii-qi"
+version = "1.0.0"
+description = "Agedashii Qi - twenty-four themes, corner radius, accent glow and the CRT overlay"
+requires-python = ">=3.12"
+dependencies = ["flet>=0.86,<0.87"]
+
+[tool.setuptools.packages.find]
+include = ["agedashii_qi*"]

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Agedashii Tofu - the base dashboard, every surface on one home.
+
+  Three blocks: one tall one holding the left, two stacked beside it. It is
+  the dish plated (agedashi tofu arrives as blocks, not as one slab) and it
+  is the dashboard layout at the same time - the big surface you live on,
+  and the pieces sitting next to it that became Moto, Watudo and Foodzen.
+
+  This started as an even 2x2 of equal squares. At 48px that is a very
+  famous four-square logo and nothing else, so it went. The uneven split
+  is not decoration, it is what stops the icon borrowing someone's mark.
+
+  One gradient runs across the whole group rather than one per block, so
+  the three read as a single object: the tall block comes out warm, the
+  pair cool, exactly the way main.py's brand_chip() pill does.
+
+  Geometry: 472px overall, 214px module, 44px gutter, centred. The
+  half-diagonal is 334px, inside the 338px radius of the centre-66% circle
+  that Android's adaptive mask respects.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="brand" gradientUnits="userSpaceOnUse" x1="276" y1="512" x2="748" y2="512">
+      <stop offset="0" stop-color="#ffb020"/>
+      <stop offset="0.5" stop-color="#ff5e8a"/>
+      <stop offset="1" stop-color="#39d0ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="#0d1117"/>
+  <g fill="url(#brand)">
+    <rect x="276" y="276" width="214" height="472" rx="40"/>
+    <rect x="534" y="276" width="214" height="214" rx="40"/>
+    <rect x="534" y="534" width="214" height="214" rx="40"/>
+  </g>
+</svg>

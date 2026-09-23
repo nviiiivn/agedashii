@@ -1,0 +1,321 @@
+"""The pure logic behind Lab and Extras.
+
+Every fixture in here is a verbatim slice of what the live dashbored server
+answered on 2026-09-21, not an invented shape. Where a value looks odd -
+``"45C"`` for a temperature, ``{"error": "unreachable"}`` for a whole widget,
+docker publishing the same port twice - that is what the server really sends,
+and it is exactly the sort of thing that has shipped broken here before.
+"""
+import unittest
+
+from agedashii_tofu import api
+from agedashii_tofu.pages import extras, lab
+
+
+# What /api/dashboard answered, trimmed to the fields under test.
+DASH = {
+    "blavksaba": {
+        "display": "Tower", "color": "#58a6ff",
+        "widgets": {
+            "system": {"cpu": "24", "mem_used": "16587", "mem_total": "64215",
+                       "disk": "1.7T/1.9T (89%)", "temp": "45C",
+                       "gpu": "NVIDIA GeForce RTX 3080, 14381 MiB, 20480 MiB, 22 %",
+                       "uptime": "1d 3h 54m", "hostname": "blavksaba",
+                       "greeting": ("OS: CachyOS x86_64\nKernel: Linux 6.18.40-1-cachyos-lts\n"
+                                    "Shell: bash 5.3.15"),
+                       "cpu_percent": 24, "memory_percent": 26,
+                       "disk_percent": 89, "gpu_percent": 22},
+            "ollama": {"models": [{"name": "hermes3:latest"},
+                                  {"name": "granite4:3b"}],
+                       "running": ["granite4:3b"]},
+            "terminal": {"ready": True},
+        },
+    },
+    # SP3 is genuinely down and answers this for every widget it has.
+    "sp3": {
+        "display": "SP3", "color": "#f85149",
+        "widgets": {"system": {"error": "unreachable"},
+                    "services": {"services": []},
+                    "dotfiles": {"error": "unreachable"},
+                    "network": {"error": "unreachable"},
+                    "processes": {"error": "unreachable"},
+                    "terminal": {"ready": True}},
+    },
+}
+
+
+class UnreachableIsNotAlive(unittest.TestCase):
+    """The one-line bug that showed SP3 green while it was down.
+
+    Every widget on an unreachable machine is ``{"error": "unreachable"}``,
+    which is a non-empty dict - so ``bool(widget)`` says yes. This is the
+    same trap already fixed once in ``api.machines()``; everything in Lab now
+    asks ``widget_alive`` instead.
+    """
+
+    def test_a_widget_with_data_is_alive(self):
+        self.assertTrue(api.widget_alive(api.machine_widget(DASH, "blavksaba", "system")))
+
+    def test_a_widget_carrying_only_an_error_is_not(self):
+        w = api.machine_widget(DASH, "sp3", "system")
+        self.assertTrue(w, "the fixture really is a non-empty dict")
+        self.assertFalse(api.widget_alive(w))
+
+    def test_a_missing_widget_is_not_alive_and_does_not_raise(self):
+        self.assertEqual(api.machine_widget(DASH, "sp3", "ollama"), {})
+        self.assertFalse(api.widget_alive(api.machine_widget(DASH, "nope", "system")))
+        self.assertFalse(api.widget_alive(api.machine_widget(None, "sp3", "system")))
+
+    def test_a_machine_whose_entry_is_not_a_dict_is_survivable(self):
+        self.assertEqual(api.machine_widget({"x": "broken"}, "x", "system"), {})
+
+
+class OllamaModels(unittest.TestCase):
+    def test_names_come_back_in_order(self):
+        self.assertEqual(api.ollama_models(DASH, "blavksaba"),
+                         ["hermes3:latest", "granite4:3b"])
+
+    def test_a_down_machine_lists_nothing_rather_than_raising(self):
+        self.assertEqual(api.ollama_models(DASH, "sp3"), [])
+
+
+class DockerPorts(unittest.TestCase):
+    """docker ps sends one string, and publishes IPv4 and IPv6 separately.
+
+    The website ran Object.entries() over that string, walking its
+    characters, so its PORTS column read "0, 1, 2, 3...". Folding the
+    duplicate mapping away is the whole job here.
+    """
+
+    def test_the_same_mapping_published_twice_is_shown_once(self):
+        self.assertEqual(
+            api.docker_ports("0.0.0.0:6999->6999/tcp, [::]:6999->6999/tcp"),
+            "6999->6999/tcp")
+        self.assertEqual(
+            api.docker_ports("0.0.0.0:8002->8002/tcp, :::8002->8002/tcp"),
+            "8002->8002/tcp")
+
+    def test_unpublished_ports_survive_alongside_published_ones(self):
+        self.assertEqual(
+            api.docker_ports("22/tcp, 9000-9009/tcp, 0.0.0.0:5080->80/tcp, "
+                             "[::]:5080->80/tcp"),
+            "22/tcp, 9000-9009/tcp, 5080->80/tcp")
+
+    def test_a_loopback_bind_keeps_its_own_mapping(self):
+        self.assertEqual(api.docker_ports("3890/tcp, 127.0.0.1:3001->3000/tcp"),
+                         "3890/tcp, 3001->3000/tcp")
+
+    def test_nothing_published_is_empty_not_the_word_none(self):
+        self.assertEqual(api.docker_ports(""), "")
+        self.assertEqual(api.docker_ports(None), "")
+
+
+class RepoOwner(unittest.TestCase):
+    """Gitea has two repos called the same thing under different owners."""
+
+    def test_full_name_is_split(self):
+        self.assertEqual(api.repo_owner_name({"full_name": "umbreality/alexandria",
+                                              "name": "alexandria"}),
+                         ("umbreality", "alexandria"))
+
+    def test_owner_login_is_the_fallback(self):
+        self.assertEqual(api.repo_owner_name({"name": "listarr",
+                                              "owner": {"login": "media"}}),
+                         ("media", "listarr"))
+
+    def test_a_row_with_neither_does_not_raise(self):
+        self.assertEqual(api.repo_owner_name({}), ("", ""))
+
+
+class MachineCardFormatting(unittest.TestCase):
+    def test_a_temperature_gets_one_unit_not_two(self):
+        # The old card printed f"{m['temp']}°C" over the server's "45C".
+        self.assertEqual(lab._temp("45C"), "45 °C")
+        self.assertEqual(lab._temp("58C"), "58 °C")
+        self.assertEqual(lab._temp(""), "", "no reading means no row, not 0 °C")
+        self.assertEqual(lab._temp(None), "")
+
+    def test_the_os_line_is_one_line(self):
+        # The old code split the greeting on "·", which is not in it, so
+        # Tower's OS read "CachyOS x86_64\nKernel: Linux".
+        greeting = DASH["blavksaba"]["widgets"]["system"]["greeting"]
+        self.assertEqual(lab._os_line(greeting), "CachyOS x86_64")
+
+    def test_an_escaped_newline_is_handled_too(self):
+        # lil-faegola's greeting arrives with literal backslash-n in it.
+        self.assertEqual(lab._os_line("OS: GNU/Linux 6.12.56\\nHost: lil-faegola"),
+                         "GNU/Linux 6.12.56")
+
+    def test_a_greeting_with_no_os_line_falls_back_to_its_first_line(self):
+        self.assertEqual(lab._os_line("Host: void\nKernel: 6.18"), "Host: void")
+        self.assertEqual(lab._os_line(""), "")
+
+    def test_the_gpu_name_drops_the_memory_and_load_columns(self):
+        self.assertEqual(lab._gpu_name(DASH["blavksaba"]["widgets"]["system"]["gpu"]),
+                         "NVIDIA GeForce RTX 3080")
+        self.assertEqual(lab._gpu_name(""), "")
+
+    def test_ps_percentages_are_strings_and_must_be_cast(self):
+        # A raw .toFixed on these took the website's whole machine grid down.
+        self.assertEqual(lab._num("89.2"), 89.2)
+        self.assertIsNone(lab._num("not a number"))
+        self.assertIsNone(lab._num(None))
+
+
+class ContainerOrder(unittest.TestCase):
+    def test_running_first_then_by_name(self):
+        rows = [{"name": "zebra", "state": "running"},
+                {"name": "alpha", "state": "exited"},
+                {"name": "beta", "state": "running"},
+                {"name": "gamma", "state": "created"}]
+        self.assertEqual([c["name"] for c in sorted(rows, key=lab._ct_sort)],
+                         ["beta", "zebra", "gamma", "alpha"])
+
+    def test_a_state_docker_has_never_heard_of_sorts_last(self):
+        rows = [{"name": "weird", "state": "quantum"},
+                {"name": "gone", "state": "exited"}]
+        self.assertEqual([c["name"] for c in sorted(rows, key=lab._ct_sort)],
+                         ["gone", "weird"])
+
+
+class RepoFileTree(unittest.TestCase):
+    """Gitea's recursive tree, grouped the way the detail view draws it.
+
+    The rows are a verbatim slice of umbreality/alexandria, which has 31
+    entries of which 27 are files.
+    """
+
+    TREE = [
+        {"path": "Grimoire", "type": "tree", "size": 0},
+        {"path": "Grimoire/Rites.md", "type": "blob", "size": 6400},
+        {"path": "README.md", "type": "blob", "size": 35},
+        {"path": "System", "type": "tree", "size": 0},
+        {"path": "System/Index.md", "type": "blob", "size": 2500},
+    ]
+
+    def test_directories_are_not_counted_as_files(self):
+        groups, count = extras._tree_groups(self.TREE)
+        self.assertEqual(count, 3, "three blobs, two of the five rows are trees")
+
+    def test_files_are_grouped_under_their_directory(self):
+        groups, _ = extras._tree_groups(self.TREE)
+        self.assertEqual([d for d, _ in groups], ["", "Grimoire", "System"])
+        self.assertEqual([t["path"] for t in dict(groups)["Grimoire"]],
+                         ["Grimoire/Rites.md"])
+
+    def test_an_empty_or_missing_tree_is_not_a_crash(self):
+        self.assertEqual(extras._tree_groups([]), ([], 0))
+        self.assertEqual(extras._tree_groups(None), ([], 0))
+
+
+class CommitLines(unittest.TestCase):
+    COMMIT = {"sha": "6e2d0be47b1c0f5a2d3e", "commit": {
+        "message": "Mythos expansion + geography\n\nlonger body nobody wants here",
+        "author": {"name": "nvii", "date": "2026-06-10T20:55:30Z"}}}
+
+    def test_only_the_subject_line_and_a_short_sha(self):
+        sha, msg, date, who = extras._commit_line(self.COMMIT)
+        self.assertEqual(sha, "6e2d0be")
+        self.assertEqual(msg, "Mythos expansion + geography")
+        self.assertEqual((date, who), ("2026-06-10", "nvii"))
+
+    def test_a_commit_with_no_message_says_so_rather_than_blank(self):
+        sha, msg, date, who = extras._commit_line({"sha": "abc"})
+        self.assertEqual((sha, msg, date, who), ("abc", "(no message)", "", ""))
+
+
+class ModelLabels(unittest.TestCase):
+    def test_the_provider_prefix_and_free_suffix_come_off(self):
+        self.assertEqual(extras._model_label("nvidia/nemotron-3-ultra-550b-a55b:free"),
+                         "nemotron-3-ultra-550b-a55b")
+        self.assertEqual(extras._model_label("nemotron-3-ultra-free"),
+                         "nemotron-3-ultra")
+
+    def test_an_ollama_tag_is_left_alone(self):
+        self.assertEqual(extras._model_label("hermes3:latest"), "hermes3:latest")
+
+    def test_nothing_in_gives_nothing_out_rather_than_none(self):
+        self.assertEqual(extras._model_label(""), "")
+
+
+class ByteSizes(unittest.TestCase):
+    def test_the_three_bands(self):
+        self.assertEqual(extras._fmt_bytes(35), "35 B")
+        self.assertEqual(extras._fmt_bytes(6400), "6.2 KB")
+        self.assertEqual(extras._fmt_bytes(2 * 1048576), "2.0 MB")
+
+    def test_a_missing_size_is_blank_not_zero(self):
+        self.assertEqual(extras._fmt_bytes(None), "")
+        self.assertEqual(extras._fmt_bytes("nope"), "")
+
+
+class CuratedLists(unittest.TestCase):
+    """The six hand-kept lists /api/future/curated ships.
+
+    The rows below are verbatim from the live payload. Counts that day:
+    backroads 12, redwoods 17, weirdseed 10, ebt 178, movies 1362,
+    events 46 - and 103 of the EBT rows have no coordinates at all.
+    """
+
+    CURATED = {
+        "weirdseed": [
+            {"name": "Winchester Mystery House",
+             "note": "Staircases to nowhere, doors to walls",
+             "lat": 37.318293, "lon": -121.950989},
+            {"name": "Albany Bulb", "note": "Landfill turned art park",
+             "lat": 37.889, "lon": -122.323},
+        ],
+        "ebt": [
+            {"name": "Chabot Space & Science Center", "city": "Oakland, CA",
+             "lat": 37.8188, "lon": -122.1808},
+            {"name": "The African American Firefighter Museum",
+             "city": "Los Angeles, CA", "lat": None, "lon": None},
+            {"name": "A museum with no city at all", "lat": None, "lon": None},
+        ],
+        "events_stale_h": 7.4,
+    }
+
+    def test_placeable_rows_come_back_sorted_by_distance_from_home(self):
+        from agedashii_tofu.pages import future
+        spots, nameless = future.curated_spots(self.CURATED, "weirdseed")
+        self.assertEqual([s["name"] for s in spots],
+                         ["Albany Bulb", "Winchester Mystery House"])
+        self.assertEqual(nameless, [])
+        self.assertLess(spots[0]["dist_m"], spots[1]["dist_m"])
+
+    def test_rows_with_no_coordinates_are_named_not_dropped(self):
+        from agedashii_tofu.pages import future
+        spots, nameless = future.curated_spots(self.CURATED, "ebt")
+        self.assertEqual([s["name"] for s in spots],
+                         ["Chabot Space & Science Center"])
+        self.assertEqual(nameless,
+                         ["The African American Firefighter Museum (Los Angeles, CA)",
+                          "A museum with no city at all"])
+
+    def test_an_unknown_list_is_empty_rather_than_an_exception(self):
+        from agedashii_tofu.pages import future
+        self.assertEqual(future.curated_spots(self.CURATED, "nope"), ([], []))
+        self.assertEqual(future.curated_spots(None, "ebt"), ([], []))
+        self.assertEqual(future.curated_spots(self.CURATED, "events_stale_h"),
+                         ([], []), "the float sitting among the lists is not a list")
+
+    def test_the_list_is_capped_the_way_the_website_caps_it(self):
+        from agedashii_tofu.pages import future
+        many = {"movies": [{"name": f"loc {i}", "lat": 37.8 + i / 10000,
+                            "lon": -122.2} for i in range(400)]}
+        spots, _ = future.curated_spots(many, "movies")
+        self.assertEqual(len(spots), future.MAX_CURATED)
+
+    def test_the_scrape_age_is_stated_so_stale_events_cannot_read_as_tonight(self):
+        from agedashii_tofu.pages import future
+        self.assertEqual(future._events_age(self.CURATED), "events scraped 7h ago")
+        self.assertEqual(future._events_age({"events_stale_h": 0.4}),
+                         "events scraped under an hour ago")
+        self.assertEqual(future._events_age({"events_stale_h": 72}),
+                         "events scraped 3 days ago")
+        self.assertEqual(future._events_age({}), "")
+        self.assertEqual(future._events_age(None), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

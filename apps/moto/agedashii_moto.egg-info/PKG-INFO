@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: agedashii-moto
+Version: 1.0.0
+Requires-Python: >=3.12
+Requires-Dist: flet<0.87,>=0.86
+Requires-Dist: agedashii-washi==1.0.0

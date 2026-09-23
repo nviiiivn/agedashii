@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: agedashii-washi
+Version: 1.0.0
+Summary: Agedashii Washi - the offline-first app framework behind Agedashii
+Requires-Python: >=3.12
+Requires-Dist: flet<0.87,>=0.86
+Requires-Dist: agedashii-qi==1.0.0

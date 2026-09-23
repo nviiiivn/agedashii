@@ -1,61 +1,153 @@
-# NVII-DASH
+# Agedashii
 
-Mobile companion app for [dashbored](https://git.alola.lol) — nvii's single-file homelab dashboard. Built with [Flet](https://flet.dev) (Python → Flutter). Same codebase compiles to Android APK, Linux desktop, and runs as a web preview.
+Four offline-first apps built on two shared packages. Written in
+[Flet](https://flet.dev) (Python → Flutter); one codebase builds an Android
+APK, a Linux desktop app and a browser PWA.
 
-## What's live vs sample
+```
+packages/
+  agedashii-qi        the look     24 themes, corner radius, accent glow, CRT
+  agedashii-washi     the system   store, api, panels, prefs, surface,
+                                   widgets, forms, motion, routing, tileserver
+apps/
+  moto                Trips + Garage + XNAV
+  watudo              Wat2Do + Future Finds
+  foodzen             Grocery + EatZen + BPM
+agedashii_tofu/       Tofu — the whole dashboard, every surface on one home
+```
 
-The app talks to a running dashbored server on your LAN (`http://192.0.2.21:6900` by default — edit `BASE` in `flet_app/api.py`). If the server is unreachable, pages fall back to bundled mock data so the UI never blanks.
+Qi does not import Washi: a theme has no opinion about cards, and a card
+cannot be drawn without a theme, so the arrow points one way. The three
+apps do not import each other, and none of them imports Tofu. Both rules
+are enforced by `tests/test_package_boundaries.py` rather than remembered.
 
-| Page | Live from server | Sample / placeholder |
+**Nothing has been removed from Tofu.** It still shows all nine surfaces.
+The split apps are additive until each has been used and confirmed; what
+exists meanwhile is the ability to *hide* a surface, which is reversible
+and deletes nothing.
+
+| | web | Android | Linux x64 | Linux arm64 |
+|---|---|---|---|---|
+| Tofu | [tofu.alola.lol](https://tofu.alola.lol) | 212 MB | 108 MB | 107 MB |
+| Moto | [moto.alola.lol](https://moto.alola.lol) | 212 MB | 108 MB | 106 MB |
+| Watudo | [watudo.alola.lol](https://watudo.alola.lol) | 135 MB | 32 MB | 30 MB |
+| Foodzen | [foodzen.alola.lol](https://foodzen.alola.lol) | 134 MB | 32 MB | 30 MB |
+
+Watudo and Foodzen are a third the size because they do not carry the
+120 MB offline map they would never open.
+
+[agedashii.alola.lol](https://agedashii.alola.lol) documents Qi and Washi,
+and `/tofu`, `/moto`, `/watudo`, `/foodzen` there are the per-app pages.
+The app subdomains serve the running app and nothing else.
+
+## Local first, and meant literally
+
+`agedashii_washi.store` is the only module in the system that talks to a
+network, and it is built to be told no: writes queue offline, an
+unreachable server burns no retry attempt, failures park rather than
+vanish, and the outbox drains on resume.
+
+Everything else is local and works with the radio off — themes, layouts,
+preferences, the 86 MB routing graph, the 39 MB tile pack, the
+7,709-food nutrition table.
+
+Two deliberate exceptions, both because there is nothing to replay later:
+EatZen's photo analysis needs the vision model live, and Valhalla /
+Overpass / elevation refuse with a reason rather than queueing.
+
+## Pointing it at a server
+
+The app is a client. Set the address in **Settings → Server**; it is saved
+on the device and reused next launch, no rebuild. On startup it tries each
+known address and adopts the first that answers, so a stale saved address
+falls back to the defaults in
+`packages/agedashii-washi/agedashii_washi/config.py` rather than hanging.
+
+| Where you are | Works | How |
 |---|---|---|
-| Home | weather, Wat2Do checklist + progress, machine dots | now-playing (mock), quick actions (not wired) |
-| Lab → Machines | machines, uptime, CPU/RAM/temp, online dots | Things (soon), Services (demo), Qbit (sample) |
-| Tools | feeds, journal, FoodZen lists/needs/pantry | Vault (static preview), fixation radar (mock) |
-| Trips | trip list, ride files | ride stats columns (pending GPX parse) |
-| Weather | current + 4-day forecast | Explore map (soon) |
-| Garage | bikes, specs, mileage/service stats | Flipper deals (sample), Mechanic (soon) |
-| Wat2Do | full checklist — **toggles and sliders save to the server** | date chevrons (not wired yet) |
-| Extras | projects, **AI chat (real replies via OpenRouter)** | XNAV (soon), obligations (mock) |
-| Settings | all 21 themes from the dashboard, exact CSS colors | theme applies live (per-session) |
+| On the LAN | yes | the LAN address, direct |
+| On WireGuard | yes | same address, through the tunnel |
+| Anywhere else | no | the public hostname is behind a login the app cannot pass |
+| In a browser | no | an https page cannot fetch an http LAN address — mixed content |
 
-## Quick start (web preview)
+The web builds say so plainly rather than looking like a server that is
+merely down.
 
-Python 3.10+:
+## Running from source
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # flet==0.86.5
-.venv/bin/python main.py                    # serves on :8550
+```sh
+pip install -e packages/agedashii-qi -e packages/agedashii-washi \
+            -e apps/moto -e apps/watudo -e apps/foodzen
+python main.py                 # Tofu
+python apps/moto/main.py       # Moto, Watudo, Foodzen likewise
 ```
 
-**Raspberry Pi note:** the piwheels mirror ships a broken `flet-web` wheel (code only, no browser runtime). Fix by force-installing the real wheel:
-
-```bash
-.venv/bin/pip install --force-reinstall --no-deps --index-url https://pypi.org/simple flet-web==0.86.5
-```
+On the Void laptop all four are in the desktop launcher as
+**Agedashii Tofu / Moto / Watudo / Foodzen**, run from `~/agedashii-src`.
 
 ## Building
 
-**Android (on the Pi / arm64):** Google ships no arm64-host `gen_snapshot` or `aapt2` for Linux, so a release-AOT build needs two workarounds this repo has already applied on the build machine:
+```sh
+tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux] [web]
+```
 
-- debug build via `flet build apk --flutter-build-args=--debug` (skips AOT), and
-- `android.aapt2FromMavenOverride=<arm64 aapt2>` in `build/flutter/android/gradle.properties` (Debian's arm64 aapt).
+Runs on Tower for x86-64 and Android, against the toolchain at
+`/home/nvii/flet-toolchain`; the arm64 Linux target is built on the Pi
+itself, because a cross-compile is not on offer. Note that Flutter ships
+**no linux-arm64 tarball** - `releases_linux.json` reports
+`dart_sdk_arch: x64` for every stable release - so arm64 means cloning
+the repo at the tag and letting `flutter precache --linux` fetch the real
+arm64 engine.
 
-The committed CI (`.github/workflows/build.yml`) builds a **release APK on GitHub's x86 runners** plus macOS `.app` and unsigned iOS `.ipa` on macos runners — use that for the optimized APK. Installing the iOS build additionally requires an Apple Developer account ($99/yr).
+The script itself is architecture-agnostic and was not modified for
+either; it
+stages each app into its own directory with the shared packages vendored
+in, because a relative path dependency does not survive `flet build`
+copying the tree; it strips `agedashii-*` out of the staged pyproject,
+because pip would otherwise try to fetch them from PyPI where they do not
+exist; and it drops `assets/maps` from the web target, because a browser
+build must not be a 120 MB download.
 
-**Linux desktop:** `flet build linux` (needs clang/cmake/GTK dev packages on the build machine; CI covers it).
+GitHub Actions is not used — the minutes are exhausted and a macOS runner
+bills at 10x. `.github/workflows/build.yml` is kept for reference.
 
-## Code map
+iOS is not built. `flutter build ipa` needs macOS, and while a Sonoma
+guest under KVM on Tower does work, Xcode itself is behind an Apple ID.
+The free route onto an iPhone is Safari → Share → Add to Home Screen from
+`tofu.alola.lol`.
 
-- `main.py` — nav shell: topbar (drawer, brand, dots), bottom bar, page router
-- `flet_app/api.py` — the client: per-endpoint adapters reshaping server JSON, 30s TTL cache, mock fallback, AI chat
-- `flet_app/mock.py` — mock data, same shapes as the adapters (+ no-op stubs so a full mock-swap runs)
-- `flet_app/theme_data.py` — 21 themes extracted 1:1 from the dashboard's CSS by `tools/gen-themes.py`
-- `flet_app/ui.py` — theme state, card/chip/dot helpers, `apply_theme`
-- `flet_app/pages/` — one module per page; tabbed pages share `lab._tabs`
+## Tests
 
-Architecture: pages read only the `M` interface — `from .. import api as M`. Swap `api` for `mock` and the app renders fully offline (writes degrade to no-ops).
+```sh
+python -m unittest discover -s tests                       # 764, Tofu
+python -m unittest discover -s apps/moto/tests -t .        # 120
+python -m unittest discover -s apps/watudo/tests -t .      # 115
+python -m unittest discover -s apps/foodzen/tests -t .     # 112
+```
 
-## Review
+`tests/test_package_boundaries.py` holds the rules the split depends on:
+no relative import escaping its package, Qi never importing Washi, no app
+importing another, every module parsing, and no `expand=True` inside a
+wrapping Row.
 
-Full 8-axis code-ultrareview on this repo: verdict **Needs work** (8 red / 24 orange). The reds (drawer crash, stale-data pinning, progress-bar crashes, shape drift) were fixed in commits `d7b6ad9` and the second round; remaining oranges are tracked (threading, lazy tabs, honest-demo labels landed). Report: see review artifacts in the build history.
+## Flet 0.86.5 traps, all of which shipped broken here first
+
+Each of these is valid Python, valid in a control tree, and wrong only on
+a real device.
+
+- `expand=True` inside `ft.Row(wrap=True)` — a `Wrap` hands children
+  **unbounded constraints on both axes**, so a `filled=True` TextField
+  with no height paints grey to the bottom of the screen
+- `ft.Icon` exposes `.icon`, not `.name`, and is not slotted — assigning
+  to `.name` binds a stray attribute and silently does nothing
+- `animate_position` outside a `Stack` makes Flutter refuse to draw the
+  control at all
+- `Dropdown.on_select`, not `on_change`; `FilledButton.content`, not
+  `.text`; `page.show_dialog`/`pop_dialog`, not `open`/`close`
+- `Page.padding` defaults to `Padding.all(10)`, outside `SafeArea` and any
+  overlay
+- `strftime("%-d")` is a glibc extension and prints literally on Android
+- a slow synchronous handler on Flet's event loop **drops taps**, and a
+  CPU-bound worker thread starves the UI anyway because of the GIL
+- under Pyodide there are no sockets: a loopback tile server and a urllib
+  probe both hang forever

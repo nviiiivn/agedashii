@@ -1,0 +1,124 @@
+# Agedashii Moto - Trips + Garage, as an app of its own.
+#
+# Two jobs in one file. The [project] half is the Python package, which is
+# what `pip install -e apps/moto` reads. The [tool.flet] half is what
+# `flet build` reads, and it is the difference between an app that calls
+# itself "Agedashii Moto" and one that calls itself "moto" with the bundle
+# id "com.flet.moto" - because without these blocks flet invents all of it
+# from the directory name.
+#
+# The dependency list here is the one `flet build` uses. That is not
+# obvious and it is worth writing down: flet reads the TOML list when it is
+# non-empty and only falls back to requirements.txt when it is empty
+# (flet_cli/commands/build_base.py, `_install_python_packages`). The
+# repo-root pyproject.toml therefore declares none, so the root build reads
+# the root requirements.txt. This file, split out as its own app, already
+# had a list - so this list is what gets installed into the bundle, and
+# anything missing from it is missing from the app.
+#
+# Which is why flet-map and flet-geolocator are spelled out below. They are
+# imported behind a try/except (see pages/xnav.py), so leaving them out does
+# not fail the build - it ships an app whose XNAV screen says "Map
+# unavailable" and whose Trips planner has no map. Pinned to the same 0.86.x
+# as flet itself, because a plugin from a different minor talks to a Flutter
+# side that is not there.
+#
+# flet-permission-handler is deliberately NOT here. It is in the repo-root
+# requirements.txt but nothing in this repo imports it; flet-geolocator asks
+# for the location permission itself, through its own Dart side.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agedashii-moto"
+version = "1.0.0"
+description = "Trips, Garage and XNAV - the motorcycle half of Agedashii"
+requires-python = ">=3.12"
+dependencies = [
+    "flet>=0.86,<0.87",
+    "flet-map>=0.86,<0.87",
+    "flet-geolocator>=0.86,<0.87",
+    "agedashii-washi==1.0.0",
+    # Named as well as agedashii-washi, which already requires it, so that
+    # the dev_packages table below can point it at this checkout too. Left
+    # implicit, pip would go looking for it on PyPI, where it is not.
+    "agedashii-qi==1.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["agedashii_moto*"]
+
+[tool.flet]
+# Display name: window title, .desktop entry, macOS product, app launcher,
+# and the label Android shows in the launcher and the multitasking view.
+# "Agedashii Moto" in full rather than "Moto": three Agedashii apps can be
+# installed side by side, and three launcher icons all reading "Agedashii"
+# are three icons you cannot tell apart. The topbar pill inside the app
+# says just "Moto", because there the mark is already on screen.
+product = "Agedashii Moto"
+org = "online.iamprettyfamous"
+# Pinned rather than left to be composed from org + project name, so the
+# identity the OS installs under can never drift with a directory rename.
+# This is the Android applicationId and the iOS/macOS bundle identifier. It
+# extends the dashboard's `online.iamprettyfamous.agedashii` with one
+# segment, which is what keeps Moto installable alongside it rather than
+# upgrading over the top of it.
+bundle_id = "online.iamprettyfamous.agedashii.moto"
+company = "nvii"
+copyright = "Copyright (c) 2026 nvii"
+
+# Qi and Washi are in this repo, not on PyPI, so a build would otherwise
+# stop at `No matching distribution found for agedashii-washi`. flet turns
+# each entry here into `name @ file:///abs/path` before handing the list to
+# pip, resolving a relative path against this app's own directory - which
+# is what makes the bundle carry the working copy of the shared packages
+# rather than a published release that does not exist.
+[tool.flet.dev_packages]
+agedashii-qi = "../../packages/agedashii-qi"
+agedashii-washi = "../../packages/agedashii-washi"
+
+# Permissions. Without these the plugin is present, the code runs, and the
+# feature fails at the point of use with a message about the manifest -
+# which is exactly what XNAV did before the dashboard declared them:
+# "Record" produced "location permissions are not declared in the platform
+# manifest". Listing flet-geolocator in requirements.txt does NOT declare
+# its permissions; flet writes AndroidManifest.xml and Info.plist from
+# these tables and nothing else.
+#
+# Moto is the app that actually needs them. FINE and COARSE are XNAV's live
+# position, its track recorder and route-from-here. BACKGROUND and
+# FOREGROUND_SERVICE_LOCATION are what keep a ride recording while the
+# screen is off, which is the normal way a ride gets recorded - a phone in
+# a tank bag with the display asleep. Without those two the track stops the
+# moment the screen locks and the recording is a stub of the first minute.
+#
+# No CAMERA and no READ_MEDIA_IMAGES: those belong to FoodZen's photo
+# feature, which is not in this app. An app that asks for the camera and
+# never opens it is an app that has taught its owner to ignore the prompt.
+[tool.flet.android.permission]
+"android.permission.ACCESS_FINE_LOCATION" = true
+"android.permission.ACCESS_COARSE_LOCATION" = true
+"android.permission.ACCESS_BACKGROUND_LOCATION" = true
+"android.permission.FOREGROUND_SERVICE_LOCATION" = true
+
+# Declared as NOT required so the Play listing and a sideload do not refuse
+# a device that lacks GPS hardware - the app degrades to network location,
+# and the rest of it (the trip library, the garage, the offline router over
+# a tapped point) does not need a fix at all.
+[tool.flet.android.feature]
+"android.hardware.location.gps" = false
+"android.hardware.location.network" = false
+
+# iOS wants a sentence per permission, shown verbatim in the system prompt,
+# and the App Store rejects a build that uses the API without one. Written
+# in Moto's own name rather than the dashboard's, because that is the name
+# on the prompt she will be reading.
+#
+# There is no NSLocationAlwaysUsageDescription: that key is for iOS 10 and
+# earlier, and shipping it alongside the combined key below only widens
+# what the prompt appears to ask for.
+[tool.flet.ios.info]
+NSLocationWhenInUseUsageDescription = "Agedashii Moto uses your location to show where you are on the map and to record a ride."
+NSLocationAlwaysAndWhenInUseUsageDescription = "Agedashii Moto keeps reading your location while a ride is recording, including when the screen is off."

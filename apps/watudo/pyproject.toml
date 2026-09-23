@@ -1,0 +1,110 @@
+# Agedashii Watudo - Wat2Do and Future Finds, as an app of their own.
+#
+# Two halves. The [project] block is what pip installs, so the pages can be
+# imported by the dashboard as well as by this app's own main.py. The
+# [tool.flet] blocks below are what `flet build` reads to write
+# AndroidManifest.xml, Info.plist, the .desktop entry and the macOS product -
+# none of which flet invents correctly on its own. Left out, it derives the
+# product name and the bundle id from whatever the directory happens to be
+# called, which is how an old name survives a rename of everything else.
+#
+# The dependency list below is also the one `flet build` installs into the
+# bundle. That is not obvious and is worth writing down: flet reads the TOML
+# list when it is non-empty and only falls back to requirements.txt when it
+# is empty (flet_cli/commands/build_base.py, `_install_python_packages`).
+# The repo-root pyproject.toml declares none, which is why the root build
+# reads the root requirements.txt. This file has a list, so this list is
+# what ships - and anything missing from it is missing from the app.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agedashii-watudo"
+version = "1.0.0"
+description = "Agedashii Watudo - what to do today, and where to go someday"
+requires-python = ">=3.12"
+dependencies = [
+    "flet>=0.86,<0.87",
+    # Wat2Do's Present tab draws a map: home, the scanned spots, and the
+    # route to the one the mission picked. It is imported behind a
+    # try/except (pages/wat2do.py, MAPS_AVAILABLE), so leaving it out does
+    # not fail the build - it ships an app whose map card is simply absent
+    # and whose "route to here" has nowhere to draw. Pinned to the same
+    # 0.86.x as flet itself, because a plugin from a different minor talks
+    # to a Flutter side that is not there.
+    "flet-map>=0.86,<0.87",
+    "agedashii-washi==1.0.0",
+    # Named as well as agedashii-washi, which already requires it, so that
+    # the dev_packages table below can point it at this checkout too. Left
+    # implicit, pip would go looking for it on PyPI, where it is not.
+    "agedashii-qi==1.0.0",
+    # flet-geolocator is deliberately absent: nothing in this app asks the
+    # device where it is. See the permission block below, which says what
+    # that means for the manifest.
+]
+
+
+[tool.setuptools.packages.find]
+include = ["agedashii_watudo*"]
+
+[tool.flet]
+# Display name: window title, .desktop entry, macOS product, app launcher,
+# and the label Android shows in the launcher and the multitasking view.
+# Two words, because it is two things - the day planner and the someday
+# list - and she names it "Agedashi-Watudo - What 2 DO".
+product = "Agedashii Watudo"
+org = "online.iamprettyfamous"
+# Pinned rather than composed from org + project name, so the identity the
+# OS installs under can never drift with a directory rename. This is the
+# Android applicationId and the iOS/macOS bundle identifier.
+#
+# It sits *under* the dashboard's `online.iamprettyfamous.agedashii` rather
+# than beside it: same family, distinct app. Distinct matters - each bundle
+# id gets its own SharedPreferences store and its own app-private data
+# directory, so this app keeps its own server address, its own layout and
+# its own outbox, and installing it cannot disturb the dashboard's.
+bundle_id = "online.iamprettyfamous.agedashii.watudo"
+company = "nvii"
+copyright = "Copyright (c) 2026 nvii"
+
+# Qi and Washi are in this repo, not on PyPI, so a build would otherwise
+# stop at `No matching distribution found for agedashii-washi`. flet turns
+# each entry here into `name @ file:///abs/path` before handing the list to
+# pip, resolving a relative path against this app's own directory - which
+# is what makes the bundle carry the working copy of the shared packages
+# rather than a published release that does not exist.
+[tool.flet.dev_packages]
+agedashii-qi = "../../packages/agedashii-qi"
+agedashii-washi = "../../packages/agedashii-washi"
+
+# Permissions: this app asks for none, and that is the whole story.
+#
+# It used to declare ACCESS_FINE_LOCATION and ACCESS_COARSE_LOCATION, ahead
+# of a feature, with a long comment admitting that **no code in this app
+# asks the device where it is**: every distance was measured from a fixed
+# origin (`_wat2do_parts.HOME`, Vulcan Lofts) and `future.scan()` took a
+# `centre` that nothing passed. A permission declared for a feature that
+# does not exist is the thing that teaches an owner to stop reading
+# permission lists, and "we will use it later" is how every one of those
+# starts. So it is gone.
+#
+# What replaced it is a setting, not a sensor: Settings > Measure distances
+# from takes a latitude and longitude and moves the map's home marker, the
+# Overpass scan, the mission radius, the thrift list and every distance
+# column together - and it is what `scan()`'s `centre` parameter now
+# carries. That works offline, needs no plugin, prompts for nothing, and is
+# honest about what the app actually knows: what she told it.
+#
+# If Watudo ever does ask the device for a fix, the permission comes back in
+# the same commit as the code that requests it - with `flet-geolocator` in
+# the dependency list above, an `[tool.flet.android.feature]` table saying
+# GPS hardware is not required, and an
+# NSLocationWhenInUseUsageDescription for the App Store. Not before.
+#
+# ACCESS_BACKGROUND_LOCATION and FOREGROUND_SERVICE_LOCATION would be wrong
+# even then. The dashboard declares both because XNAV records a ride while
+# the screen is off; Watudo records nothing, so all-the-time access would
+# mean a Play listing that needs a written justification and a video for a
+# permission no code here would ever use.

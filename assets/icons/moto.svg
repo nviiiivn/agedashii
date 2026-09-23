@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Agedashii Moto - Trips, Garage, XNAV.
+
+  A road: one S-curve climbing from the bottom-left to a head at the top.
+  Trips are the curve, navigation is the head, and the two together are the
+  only thing all three of Moto's surfaces share - you are going somewhere
+  and the bike is how. Deliberately the one diagonal in the family, so it
+  cannot be confused with Tofu's grid or Watudo's upright hourglass even
+  with the colour taken out.
+
+  The gradient runs along the route itself (bottom-left orange to top-right
+  cyan) rather than left-to-right across the canvas, because the route is
+  the object and the object carries the brand.
+
+  The stroke stops at y=368 and the head covers it from y=350 upward: the
+  round cap reaches y=326, where the head is 84px wide against the stroke's
+  42px half-width, so the cap is swallowed and the join is seamless. The
+  head is 2.5x the stroke width, which is the point at which it still reads
+  as an arrow at 48px rather than as a kink in the road.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="brand" gradientUnits="userSpaceOnUse" x1="344" y1="746" x2="680" y2="232">
+      <stop offset="0" stop-color="#ffb020"/>
+      <stop offset="0.5" stop-color="#ff5e8a"/>
+      <stop offset="1" stop-color="#39d0ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="#0d1117"/>
+  <g fill="none" stroke="url(#brand)" stroke-width="84" stroke-linecap="round">
+    <path d="M 344 746 C 344 632 424 612 512 528 C 600 444 680 424 680 368"/>
+  </g>
+  <path d="M 680 226 L 784 350 L 576 350 Z" fill="url(#brand)"/>
+</svg>

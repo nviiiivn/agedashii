@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: agedashii-qi
+Version: 1.0.0
+Summary: Agedashii Qi - twenty-four themes, corner radius, accent glow and the CRT overlay
+Requires-Python: >=3.12
+Requires-Dist: flet<0.87,>=0.86

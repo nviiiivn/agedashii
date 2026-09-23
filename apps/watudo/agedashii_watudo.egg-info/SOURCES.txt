@@ -1,0 +1,11 @@
+pyproject.toml
+agedashii_watudo/__init__.py
+agedashii_watudo.egg-info/PKG-INFO
+agedashii_watudo.egg-info/SOURCES.txt
+agedashii_watudo.egg-info/dependency_links.txt
+agedashii_watudo.egg-info/requires.txt
+agedashii_watudo.egg-info/top_level.txt
+agedashii_watudo/pages/__init__.py
+agedashii_watudo/pages/_wat2do_parts.py
+agedashii_watudo/pages/future.py
+agedashii_watudo/pages/wat2do.py

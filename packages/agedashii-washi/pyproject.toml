@@ -1,0 +1,20 @@
+# Agedashii Washi - the system, without any of the owner's data.
+#
+# The shell every Agedashii app is built in: the offline-first store, the
+# server client, the panel layout engine, preferences, forms, and the small
+# widget vocabulary. Everything here works with no network; see `store`,
+# which queues writes rather than blocking, and note that only server data
+# ever syncs - themes, layouts and preferences are local and stay local.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agedashii-washi"
+version = "1.0.0"
+description = "Agedashii Washi - the offline-first app framework behind Agedashii"
+requires-python = ">=3.12"
+dependencies = ["flet>=0.86,<0.87", "agedashii-qi==1.0.0"]
+
+[tool.setuptools.packages.find]
+include = ["agedashii_washi*"]

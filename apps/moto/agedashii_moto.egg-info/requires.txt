@@ -1,0 +1,2 @@
+flet<0.87,>=0.86
+agedashii-washi==1.0.0
