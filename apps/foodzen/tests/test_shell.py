@@ -137,8 +137,8 @@ class ShellCase(unittest.TestCase):
                                  prefs.set_crt_overlay(crt)))
 
         # This app's own two preferences, restored the same way. The menu
-        # trigger in particular is off by default, and a test that switched
-        # it on would otherwise leave it on for everything after it.
+        # trigger in particular is on by default, and a test that switched
+        # it off would otherwise leave it off for everything after it.
         menu = APP_MAIN.prefs_local.hamburger_enabled()
         mine = APP_MAIN.prefs_local.theme()
         self.addCleanup(lambda: (APP_MAIN.prefs_local.set_hamburger_enabled(menu),

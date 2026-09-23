@@ -28,8 +28,10 @@ and Expenses only.
 > show / hide the hamburger menu trigger as wel please."
 
 So the bottom bar carries all four navigable surfaces and is the way this app
-is meant to be driven. The menu trigger ships **off** and is switched back on
-in Settings → Navigation; hidden, its slot disappears entirely and the brand
+is meant to be driven. The menu trigger ships **on** and is switched *off* in
+Settings → Navigation — "how come its not on by default" is the correction to
+an earlier reading of this, where shipping it hidden made a requested switch
+look like a missing button. Hidden, its slot disappears entirely and the brand
 pill moves to the edge rather than sitting behind a dead 48px gap.
 
 One rail, in `prefs_local.hamburger_shown()`: with the bottom bar switched

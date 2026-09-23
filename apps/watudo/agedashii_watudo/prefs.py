@@ -115,7 +115,10 @@ KEY_ORIGIN = NS + "origin"
 def _defaults():
     return {
         KEY_THEME: "",
-        KEY_MENU_BUTTON: False,
+        # On out of the box. "the ability to show / hide the hamburger menu
+        # trigger" asked for a switch, not for it to start hidden - and a
+        # control that is absent until you find its setting reads as a bug.
+        KEY_MENU_BUTTON: True,
         KEY_FRIENDLY_DATES: True,
         KEY_HIDE_DONE: False,
         KEY_TRACK_VITALS: True,
@@ -205,7 +208,7 @@ def menu_button():
     thing left that reaches every surface, so the trigger comes back whatever
     this says. A setting that can strand you on one page is not a setting.
     """
-    return _as_bool(_V.get(KEY_MENU_BUTTON), False)
+    return _as_bool(_V.get(KEY_MENU_BUTTON), True)
 
 
 def friendly_dates():

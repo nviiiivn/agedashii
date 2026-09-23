@@ -42,9 +42,11 @@ NS = "agedashii.foodzen."
 KEY_THEME = NS + "theme"
 KEY_HAMBURGER = NS + "hamburger"
 
-# Bottom-nav-first: the bar is on (that is the shared default) and the menu
-# trigger is not drawn until she asks for it.
-DEFAULT_HAMBURGER = False
+# Bottom-nav-first means the bar is the primary way around, not that the
+# drawer is hidden: "i want the ability to show / hide the hamburger menu
+# trigger" asked for a switch, and a switch that starts off reads as a
+# missing feature. Both are on out of the box; hiding it is hers to do.
+DEFAULT_HAMBURGER = True
 
 
 def _defaults():
