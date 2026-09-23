@@ -545,7 +545,10 @@ def _planner(page, p):
         _update(page)
         # Off the UI thread: a 40 km offline search is ~150 ms and the
         # server fallback is a network round trip. Either would freeze Flet.
-        res = await R.route_async(a, b)
+        # Only when the start is still the fix it came from - see use_gps.
+        start_text, gps_heading = _PLAN.get("gps_start") or (None, None)
+        res = await R.route_async(
+            a, b, heading=gps_heading if start_text == frm_field.value else None)
         route_button.disabled = False
         _PLAN["route"] = res if res.ok else None
         draw(res)
@@ -557,13 +560,18 @@ def _planner(page, p):
     to_field.on_submit = do_route
 
     async def use_gps(e):
-        pos = await _one_fix(page)
+        fix = await _one_fix(page, want_heading=True)
+        pos = fix[:2] if fix else None
         if pos is None:
             status_text.value = "no GPS fix yet"
             status_text.color = p["pink"]
         else:
             frm_field.value = _fmt_latlon(pos)
             _PLAN["from_text"] = frm_field.value
+            # Remembered against the exact text it belongs to. Type a
+            # different start and the heading is no longer yours - it would
+            # then be choosing a carriageway somewhere you are not.
+            _PLAN["gps_start"] = (frm_field.value, fix[2])
             status_text.value = ""
             if start_pin is not None:
                 start_pin.coordinates = fmap.MapLatitudeLongitude(*pos)
@@ -628,8 +636,16 @@ def _planner(page, p):
             "turns": lambda: turns_card}
 
 
-async def _one_fix(page):
-    """A single GPS position, or None. Never raises at the call site."""
+async def _one_fix(page, want_heading=False):
+    """A single GPS position, or None. Never raises at the call site.
+
+    `want_heading=True` returns (lat, lon, heading) instead, where heading
+    is the fix's own course over ground in compass degrees, or None if the
+    device did not report one - standing still, it usually does not. It
+    matters on a divided road: routing from where you are sitting between
+    two carriageways picks one by distance alone, and half the time that is
+    the one going the other way.
+    """
     if not MAPS_AVAILABLE:
         return None
     try:
@@ -640,7 +656,17 @@ async def _one_fix(page):
         pos = await geo.get_current_position()
         lat = getattr(pos, "latitude", None)
         lon = getattr(pos, "longitude", None)
-        return (lat, lon) if lat is not None and lon is not None else None
+        if lat is None or lon is None:
+            return None
+        if not want_heading:
+            return (lat, lon)
+        hdg = getattr(pos, "heading", None)
+        # A device reports heading as a number, but reports it as 0.0 or -1
+        # when it has no idea - which is a direction, and the wrong one.
+        # Only a positive course is a course.
+        if not isinstance(hdg, (int, float)) or hdg <= 0:
+            hdg = None
+        return (lat, lon, hdg)
     except Exception:                                  # noqa: BLE001
         return None
 
