@@ -163,6 +163,27 @@ WEB_DETAIL = ("a browser cannot reach a LAN address from an https page - "
               "use the installed app for server features")
 
 
+def _web_origin():
+    """The page's own origin, under Pyodide. Empty string anywhere else.
+
+    Each app's host now serves the API from its own origin - see the
+    agedashii_api snippet in the Caddyfile - so the browser build has a
+    server to talk to after all. Same origin means no mixed content and no
+    CORS, and the VoidAuth session cookie is already carried, so there is
+    no second login to configure.
+    """
+    if not ON_THE_WEB:
+        return ""
+    try:
+        import js                                   # noqa: PLC0415
+        return str(js.location.origin)
+    except Exception:                               # noqa: BLE001
+        return ""
+
+
+WEB_ORIGIN = _web_origin()
+
+
 def select(candidates=None, timeout=2.0):
     """Probe each candidate in order; adopt the first that answers.
 
@@ -172,10 +193,21 @@ def select(candidates=None, timeout=2.0):
     global SERVER_URL
     results = []
     if ON_THE_WEB:
+        # The page's own host serves /api now, so there IS something to talk
+        # to - try it before giving up. Only the LAN candidates are hopeless
+        # here, and only because of mixed content.
+        if WEB_ORIGIN:
+            ok, detail = probe(WEB_ORIGIN, timeout=timeout)
+            if ok:
+                SERVER_URL = normalise(WEB_ORIGIN)
+                _remember(WEB_ORIGIN, True, detail)
+                return [(WEB_ORIGIN, True, detail)]
+            results.append((WEB_ORIGIN, False, detail))
         first = (candidates or CANDIDATES or [""])[0]
         _remember(first, False, WEB_DETAIL)
-        return [(u, False, WEB_DETAIL)
-                for u in (candidates if candidates is not None else CANDIDATES)]
+        return results + [(u, False, WEB_DETAIL)
+                          for u in (candidates if candidates is not None
+                                    else CANDIDATES)]
     for url in (candidates if candidates is not None else CANDIDATES):
         ok, detail = probe(url, timeout=timeout)
         results.append((url, ok, detail))
