@@ -16,8 +16,12 @@
 # show, and two builds cannot interfere with each other.
 #
 # Usage, on Tower:
-#   tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux] [web]
+#   tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux] [web] [ipa]
 # Defaults to apk if no target is given.
+#
+# `ipa` only runs on macOS - `flet build ipa` shells out to xcodebuild - so
+# in practice it runs on a macos-latest CI runner rather than here. Set TC
+# to a writable directory there; it defaults to the toolchain path on Tower.
 #
 # `web` is the PWA - what tofu.alola.lol serves, and the only route onto an
 # iPhone that costs nothing. It is also the target that OOM-kills a CI
@@ -39,7 +43,7 @@ TARGETS=("$@")
 
 case "$APP" in
   tofu|moto|watudo|foodzen) ;;
-  *) echo "usage: $0 <tofu|moto|watudo|foodzen> [apk] [linux] [web]" >&2; exit 2 ;;
+  *) echo "usage: $0 <tofu|moto|watudo|foodzen> [apk] [linux] [web] [ipa]" >&2; exit 2 ;;
 esac
 
 TC="${TC:-/home/nvii/flet-toolchain}"
@@ -233,6 +237,28 @@ for T in "${TARGETS[@]}"; do
   fi
   case "$T" in
     apk)   find "dist/$T" -name '*.apk' -exec cp {} "$OUT/agedashii-$APP.apk" \; ;;
+    # An unsigned iOS build frequently stops at the .app or .xcarchive and
+    # never emits a .ipa, because packaging is normally the signing step's
+    # job. A .ipa is only a zip with the bundle under Payload/, and that is
+    # what Sideloadly and AltStore want, so build one when flet has not.
+    ipa)
+      found="$(find "dist/$T" -name '*.ipa' | head -1)"
+      if [ -z "$found" ]; then
+        app="$(find "dist/$T" -maxdepth 5 -name '*.app' -print -quit)"
+        if [ -z "$app" ]; then
+          echo "!!! $APP ipa: no .ipa and no .app under dist/$T"
+          find "dist/$T" -maxdepth 4 | head -30
+          rc_all=1
+          continue
+        fi
+        echo "    packaging $app into a Payload/ zip"
+        pay="$(mktemp -d)/Payload"
+        mkdir -p "$pay"
+        cp -R "$app" "$pay/"
+        ( cd "$(dirname "$pay")" && zip -qry "$OUT/agedashii-$APP.ipa" Payload )
+      else
+        cp "$found" "$OUT/agedashii-$APP.ipa"
+      fi ;;
     linux) tar -C "dist/$T" -czf "$OUT/agedashii-$APP-linux-x64.tar.gz" . ;;
     # The web build is a directory of files to serve, not one artifact, so
     # it is tarred whole and unpacked at the far end.

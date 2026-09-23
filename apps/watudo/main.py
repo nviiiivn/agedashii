@@ -27,14 +27,16 @@ Settings and How this works are surfaces of the shell's own. They have no
 tab bar to read back, so `_HERE` remembers which is showing - and forgets
 again the moment either tab page is.
 
-Bottom bar first
-----------------
+Two ways around, and the bar is the one you reach for
+-----------------------------------------------------
 Her words: "Each of these smaller apps (not tofu) work better with the
 bottom navigation bar and less with the hamburger menu so... i want the
 ability to show / hide the hamburger menu trigger as wel please." So the
-bar carries Wat2Do, Future Finds and Settings, the hamburger is off by
-default and its slot goes away rather than sitting empty, and How this
-works hangs under Settings. One rail, in `menu_visible()`: with the bar
+bar carries Wat2Do, Future Finds and Settings, and How this works hangs
+under Settings. The hamburger stays: the ask was for a *switch*, and one
+that starts off is indistinguishable from the feature being missing -
+"how come its not on by default". Switched off, its slot goes away rather
+than sitting empty. One rail, in `menu_visible()`: with the bar
 switched off the trigger comes back whether or not it is switched on,
 because something has to reach every surface.
 

@@ -492,10 +492,17 @@ class TheNavigationCard(SettingsCase):
         chrome = self.page.controls[0].content
         self.assertEqual(len(chrome.controls), 2, "the bar was still drawn")
 
-    def test_the_menu_trigger_is_off_until_she_asks_for_it(self):
-        """Bottom-nav-first: "these apps work better with the bottom
-        navigation bar and less with the hamburger menu"."""
-        self.assertFalse(prefs_local.DEFAULT_HAMBURGER)
+    def test_the_menu_trigger_is_there_out_of_the_box(self):
+        """"how come its not on by default" - it is now.
+
+        That the bar "works better" than the hamburger here settled which
+        one you reach for, not whether the other exists: the ask was "the
+        ability to show / hide the hamburger menu trigger", and a trigger you
+        have to go find a setting to summon reads as a missing feature
+        rather than a preference.
+        """
+        self.assertTrue(prefs_local.DEFAULT_HAMBURGER)
+        self.assertTrue(prefs_local.hamburger_enabled())
 
     def test_showing_the_menu_trigger_puts_it_in_the_topbar(self):
         prefs.set_bottom_bar_enabled(True)

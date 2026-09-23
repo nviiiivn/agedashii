@@ -116,9 +116,10 @@ TOPICS = [
         "bottom bar on, it is the bar; switch the bar off in Settings and the "
         "page gets its own Present | Future tabs back instead. They used to "
         "both be on screen, one row above the other, saying the same thing.",
-        "The hamburger menu is off by default and can be switched on in "
-        "Settings. With the bottom bar switched off it comes back on its own, "
-        "because something has to reach every surface.",
+        "The hamburger menu is on, and can be switched off in Settings if "
+        "you would rather have only the bar. With the bottom bar switched "
+        "off it comes back on its own, because something has to reach every "
+        "surface.",
     ]),
 ]
 

@@ -204,8 +204,10 @@ class TheNavReachesEachOne(WatudoCase):
         rows[0].on_click(Event(rows[0]))
 
     def test_every_surface_is_reachable_with_the_hamburger_hidden(self):
-        """The default. Three stops on the bar and the fourth under Settings,
-        so hiding the trigger costs nothing but the trigger."""
+        """Hidden by her, not by default. Three stops on the bar and the
+        fourth under Settings, so hiding the trigger costs nothing but the
+        trigger."""
+        self.wprefs.set_menu_button(False)
         page = self.build()
         self.assertFalse(self.wprefs.menu_button())
         self.assertIsNone(page.drawer, "no drawer is built while none can be opened")

@@ -49,8 +49,9 @@ The bar along the bottom is the navigation: **Wat2Do · Future Finds ·
 Settings**. Her words: *"Each of these smaller apps (not tofu) work better
 with the bottom navigation bar and less with the hamburger menu."*
 
-* **The hamburger is off by default** and is switched on in Settings >
-  Navigation. Hidden, its slot in the topbar is *gone* rather than blank —
+* **The hamburger is on** and is switched *off* in Settings > Navigation.
+  The ask was for a switch, and one that starts off just reads as a missing
+  button. Hidden, its slot in the topbar is *gone* rather than blank —
   an empty IconButton still takes its 48px, and a gap where a control used to
   be reads as a control that failed to draw.
 * **How this works is not on the bar.** It is one screen you read once, and

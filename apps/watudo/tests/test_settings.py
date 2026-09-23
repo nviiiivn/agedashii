@@ -185,6 +185,13 @@ class TheAppearanceControls(SettingsCase):
 
 class TheNavigationControls(SettingsCase):
     def test_the_menu_button_switch_puts_the_hamburger_back(self):
+        # It starts on - "how come its not on by default" - so the round
+        # trip is off and then on again, which is also the path that used to
+        # leave a dead gap in the topbar.
+        self.assertEqual(len([c for c in walk(self.topbar(self.page))
+                              if isinstance(c, ft.IconButton)
+                              and c.icon == ft.Icons.MENU]), 1)
+        self.flip("Menu button", False)
         self.assertEqual([c for c in walk(self.topbar(self.page))
                           if isinstance(c, ft.IconButton)
                           and c.icon == ft.Icons.MENU], [])
@@ -211,6 +218,7 @@ class TheNavigationControls(SettingsCase):
     def test_turning_the_bar_off_forces_the_menu_back_on(self):
         """The one rail: something has to reach every surface. The switch
         says so instead of the app quietly disagreeing with it."""
+        self.flip("Menu button", False)
         self.flip("Bottom bar", False)
         self.assertTrue(self.main.menu_visible())
         self.assertFalse(self.wprefs.menu_button(),
