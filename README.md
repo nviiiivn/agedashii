@@ -1,158 +1,144 @@
 # Agedashii
 
-Companion app for [dashbored](https://git.alola.lol) — nvii's homelab dashboard.
-Built with [Flet](https://flet.dev) (Python → Flutter). One codebase builds an
-Android APK, a Linux x64 desktop app, a macOS app, an unsigned iOS simulator
-build, and a web/PWA bundle.
+Four offline-first apps built on two shared packages. Written in
+[Flet](https://flet.dev) (Python → Flutter); one codebase builds an Android
+APK, a Linux desktop app and a browser PWA.
 
-## Pointing it at your server
-
-The app is a client; it needs a dashbored server to talk to. Set the address in
-**Settings → Server** — it is saved on the device (Flet `SharedPreferences`) and
-reused on next launch. No rebuild, no editing source.
-
-On startup the app tries each known address in order and adopts the first that
-answers, so a saved address that has gone stale falls back to the defaults in
-`agedashii_tofu/config.py` rather than hanging.
-
-### Reaching it from outside the house
-
-| Where you are | Works? | How |
-|---|---|---|
-| On the LAN | yes | `http://192.0.2.21:6900` direct |
-| On WireGuard (`vpn.alola.lol`) | yes | same LAN address, through the tunnel |
-| Cellular / anywhere else | **no** | see below |
-
-`iamprettyfamous.online` will not work as the app's server address. Two separate
-walls, both measured on 2026-09-19:
-
-1. **Cloudflare** 403s the default `Python-urllib/3.x` user agent at the edge,
-   before the request reaches the origin. The app therefore identifies itself as
-   `agedashii/1.0`, which passes.
-2. **VoidAuth** forward-auth then 302s *every* path to
-   `auth.iamprettyfamous.online` — `/api/dashboard` and `/api/config` included.
-   There is no token or header the app can send to get past this today.
-
-So off-LAN use means the VPN. Settings reports the difference explicitly
-("blocked by auth" vs "unreachable") rather than a generic offline state,
-because the app silently showing sample data is the failure this is designed to
-make visible.
-
-Giving the app real off-LAN access would mean adding a token-auth path on the
-dashbored server and a Cloudflare rule to let it through — a deliberate decision
-about exposing the API publicly, not something to switch on casually.
-
-## What's live vs sample
-
-If the server is unreachable, pages fall back to bundled mock data so the UI
-never blanks. **Settings → Server** shows which one you are looking at.
-
-| Page | Live from server | Sample / placeholder |
-|---|---|---|
-| Home | weather, Wat2Do checklist + progress, machine dots | now-playing (mock), quick actions (not wired) |
-| Lab → Machines | machines, uptime, CPU/RAM/temp, online dots | Things (soon), Services (demo), Qbit (sample) |
-| Tools | feeds · **Journal — create, edit, delete** · **FoodZen — grocery list, needs, pantry** · **Vault — write notes over SSH** · **EatZen — sodium tracking** · **BPM — blood pressure** | fixation radar (mock) |
-| Trips | trip list, ride files · **create a trip** | stops/route are website-only; ride stats columns (pending GPX parse) |
-| Weather | current + 4-day forecast | Explore map (soon) |
-| Garage | bikes, specs, stats · **Mechanic — log mileage / services / expenses** | Flipper deals (sample) |
-| Wat2Do | full checklist — **toggles and sliders save to the server** | date chevrons (not wired yet) |
-| Extras | projects, **AI chat (real replies via OpenRouter)** | XNAV (soon), obligations (mock) |
-| Settings | server address + status, all 21 themes | theme applies live (per-session) |
-
-## Tests
-
-```bash
-python3 -m unittest discover -s tests -v    # 21 tests, no network needed
+```
+packages/
+  agedashii-qi        the look     24 themes, corner radius, accent glow, CRT
+  agedashii-washi     the system   store, api, panels, prefs, surface,
+                                   widgets, forms, motion, routing, tileserver
+apps/
+  moto                Trips + Garage + XNAV
+  watudo              Wat2Do + Future Finds
+  foodzen             Grocery + EatZen + BPM
+agedashii_tofu/       Tofu — the whole dashboard, every surface on one home
 ```
 
-They cover server discovery and persistence: URL normalising, failover across
-candidates, storage round-trips, and — most importantly — that each failure mode
-is reported distinctly, since "unreachable", "behind a login" and "blocked at
-the edge" need completely different fixes.
+Qi does not import Washi: a theme has no opinion about cards, and a card
+cannot be drawn without a theme, so the arrow points one way. The three
+apps do not import each other, and none of them imports Tofu. Both rules
+are enforced by `tests/test_package_boundaries.py` rather than remembered.
 
-## Running it locally
+**Nothing has been removed from Tofu.** It still shows all nine surfaces.
+The split apps are additive until each has been used and confirmed; what
+exists meanwhile is the ability to *hide* a surface, which is reversible
+and deletes nothing.
 
-```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt   # flet==0.86.5
-.venv/bin/python main.py                    # serves on :8550
+| | web | Android | Linux x64 |
+|---|---|---|---|
+| Tofu | [tofu.alola.lol](https://tofu.alola.lol) | 212 MB | 108 MB |
+| Moto | [moto.alola.lol](https://moto.alola.lol) | 212 MB | 108 MB |
+| Watudo | [watudo.alola.lol](https://watudo.alola.lol) | 135 MB | 32 MB |
+| Foodzen | [foodzen.alola.lol](https://foodzen.alola.lol) | 134 MB | 32 MB |
+
+Watudo and Foodzen are a third the size because they do not carry the
+120 MB offline map they would never open.
+
+[agedashii.alola.lol](https://agedashii.alola.lol) documents Qi and Washi,
+and `/tofu`, `/moto`, `/watudo`, `/foodzen` there are the per-app pages.
+The app subdomains serve the running app and nothing else.
+
+## Local first, and meant literally
+
+`agedashii_washi.store` is the only module in the system that talks to a
+network, and it is built to be told no: writes queue offline, an
+unreachable server burns no retry attempt, failures park rather than
+vanish, and the outbox drains on resume.
+
+Everything else is local and works with the radio off — themes, layouts,
+preferences, the 86 MB routing graph, the 39 MB tile pack, the
+7,709-food nutrition table.
+
+Two deliberate exceptions, both because there is nothing to replay later:
+EatZen's photo analysis needs the vision model live, and Valhalla /
+Overpass / elevation refuse with a reason rather than queueing.
+
+## Pointing it at a server
+
+The app is a client. Set the address in **Settings → Server**; it is saved
+on the device and reused next launch, no rebuild. On startup it tries each
+known address and adopts the first that answers, so a stale saved address
+falls back to the defaults in
+`packages/agedashii-washi/agedashii_washi/config.py` rather than hanging.
+
+| Where you are | Works | How |
+|---|---|---|
+| On the LAN | yes | the LAN address, direct |
+| On WireGuard | yes | same address, through the tunnel |
+| Anywhere else | no | the public hostname is behind a login the app cannot pass |
+| In a browser | no | an https page cannot fetch an http LAN address — mixed content |
+
+The web builds say so plainly rather than looking like a server that is
+merely down.
+
+## Running from source
+
+```sh
+pip install -e packages/agedashii-qi -e packages/agedashii-washi \
+            -e apps/moto -e apps/watudo -e apps/foodzen
+python main.py                 # Tofu
+python apps/moto/main.py       # Moto, Watudo, Foodzen likewise
 ```
 
-**This does not currently work on an aarch64 Raspberry Pi**, and the cause is
-not what a previous version of this README claimed. It is not a piwheels
-problem, and force-reinstalling from pypi.org does not fix it:
-`flet_web-0.86.5-py3-none-any.whl` fetched straight from pypi.org with
-`--no-cache-dir` is 24 kB and contains **zero** files under `flet_web/web/`
-(verified 2026-09-19). The Flutter web client is simply not shipped in the
-0.86.5 wheel, so the server starts and then 500s with
-`RuntimeError: Web root path not found`.
-
-`flet run --web` is no better here — it imports `flet_desktop`, which is not
-installed and is a 6 kB stub that fetches a platform binary at runtime.
-
-Neither affects the actual deliverables: `flet build` in CI downloads its own
-Flutter SDK and produces real apps. To preview on the Pi, use the CI **web/PWA**
-artifact and serve the folder statically.
+On the Void laptop all four are in the desktop launcher as
+**Agedashii Tofu / Moto / Watudo / Foodzen**, run from `~/agedashii-src`.
 
 ## Building
 
-CI (`.github/workflows/build.yml`) builds everything on GitHub runners —
-`workflow_dispatch` to run it by hand:
+```sh
+tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux] [web]
+```
 
-| Artifact | Runner | Notes |
-|---|---|---|
-| `agedashii-android-apk` | ubuntu | release APK |
-| `agedashii-linux-x64` | ubuntu | folder build (binary + libs) |
-| `agedashii-linux-appimage` | ubuntu | **single double-clickable executable** |
-| `agedashii-web-pwa` | ubuntu | browser build — also the only way to preview on the Pi |
-| `agedashii-macos` | macos | unsigned; right-click → Open on first launch |
-| `agedashii-ios-unsigned-ipa` | macos | unsigned .ipa for sideloading |
+Runs on Tower against the toolchain at `/home/nvii/flet-toolchain`. It
+stages each app into its own directory with the shared packages vendored
+in, because a relative path dependency does not survive `flet build`
+copying the tree; it strips `agedashii-*` out of the staged pyproject,
+because pip would otherwise try to fetch them from PyPI where they do not
+exist; and it drops `assets/maps` from the web target, because a browser
+build must not be a 120 MB download.
 
-**iOS:** the .ipa is built unsigned — with no provisioning profile configured,
-flet passes `--no-codesign` through to flutter. Sideload it with AltStore or
-Sideloadly, which re-sign with a free Apple ID; no paid Apple Developer Program
-account needed. (Free certs expire every 7 days, so the app needs periodic
-re-signing — AltStore does that automatically over wifi.)
+GitHub Actions is not used — the minutes are exhausted and a macOS runner
+bills at 10x. `.github/workflows/build.yml` is kept for reference.
 
-`flutter build ipa --no-codesign` frequently stops at the `.app` and never
-emits a `.ipa`, since packaging is normally part of signing. The workflow
-detects that and zips the app into `Payload/` itself, so the artifact is always
-a sideload-ready `.ipa`.
+iOS is not built. `flutter build ipa` needs macOS, and while a Sonoma
+guest under KVM on Tower does work, Xcode itself is behind an Apple ID.
+The free route onto an iPhone is Safari → Share → Add to Home Screen from
+`tofu.alola.lol`.
 
-Note on an earlier green build: run `34007945982` reported success for both jobs
-and uploaded **zero artifacts**, because the upload globs did not match flet's
-output paths and `if-no-files-found` defaulted to a warning. Every build now
-writes to an explicit `-o dist/<target>` and every upload uses
-`if-no-files-found: error`, so an empty artifact fails the run instead of
-quietly shipping nothing.
+## Tests
 
-**Building on the Pi directly (arm64):** Google ships no arm64-host
-`gen_snapshot` or `aapt2` for Linux, so a release AOT build needs a debug build
-(`flet build apk --flutter-build-args=--debug`, skipping AOT) plus
-`android.aapt2FromMavenOverride=<arm64 aapt2>` in
-`build/flutter/android/gradle.properties`. Use CI for a real release APK.
+```sh
+python -m unittest discover -s tests                       # 764, Tofu
+python -m unittest discover -s apps/moto/tests -t .        # 120
+python -m unittest discover -s apps/watudo/tests -t .      # 115
+python -m unittest discover -s apps/foodzen/tests -t .     # 112
+```
 
-## Code map
+`tests/test_package_boundaries.py` holds the rules the split depends on:
+no relative import escaping its package, Qi never importing Washi, no app
+importing another, every module parsing, and no `expand=True` inside a
+wrapping Row.
 
-- `main.py` — async entry point: loads the saved server address before first
-  paint, then the nav shell (topbar, drawer, bottom bar, page router)
-- `agedashii_tofu/config.py` — which server to talk to: candidates, probing, failure
-  diagnosis, `SharedPreferences` persistence
-- `agedashii_tofu/api.py` — the client: per-endpoint adapters reshaping server JSON,
-  30s TTL cache, mock fallback, AI chat
-- `agedashii_tofu/mock.py` — mock data, same shapes as the adapters
-- `agedashii_tofu/theme_data.py` — 21 themes extracted 1:1 from the dashboard's CSS by
-  `tools/gen-themes.py`
-- `agedashii_tofu/ui.py` — theme + app state, card/chip/dot helpers, `apply_theme`
-- `agedashii_tofu/pages/` — one module per page; tabbed pages share `lab._tabs`
-- `tests/` — stdlib unittest
+## Flet 0.86.5 traps, all of which shipped broken here first
 
-Architecture: pages read only the `M` interface — `from .. import api as M`.
-Swap `api` for `mock` and the app renders fully offline (writes become no-ops).
+Each of these is valid Python, valid in a control tree, and wrong only on
+a real device.
 
-## Versions
-
-Flet `0.86.5` and Flutter `3.44.8` are pinned together in `requirements.txt` and
-the workflow; bump both at once. The app uses the 0.86 API (`ft.run`,
-`SharedPreferences` as a registered service), so an unpinned `pip install flet`
-will eventually break it.
+- `expand=True` inside `ft.Row(wrap=True)` — a `Wrap` hands children
+  **unbounded constraints on both axes**, so a `filled=True` TextField
+  with no height paints grey to the bottom of the screen
+- `ft.Icon` exposes `.icon`, not `.name`, and is not slotted — assigning
+  to `.name` binds a stray attribute and silently does nothing
+- `animate_position` outside a `Stack` makes Flutter refuse to draw the
+  control at all
+- `Dropdown.on_select`, not `on_change`; `FilledButton.content`, not
+  `.text`; `page.show_dialog`/`pop_dialog`, not `open`/`close`
+- `Page.padding` defaults to `Padding.all(10)`, outside `SafeArea` and any
+  overlay
+- `strftime("%-d")` is a glibc extension and prints literally on Android
+- a slow synchronous handler on Flet's event loop **drops taps**, and a
+  CPU-bound worker thread starves the UI anyway because of the GIL
+- under Pyodide there are no sockets: a loopback tile server and a urllib
+  probe both hang forever
