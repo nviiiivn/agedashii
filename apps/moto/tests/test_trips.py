@@ -24,10 +24,10 @@ import unittest
 
 import flet as ft
 
-from agedashii_tofu import api, panels, prefs
-from agedashii_tofu.pages import _trips_parts as T
+from agedashii_washi import api, panels, prefs
+from agedashii_moto.pages import _trips_parts as T
 
-from test_api_offline import ApiOfflineCase
+from .offline_harness import ApiOfflineCase
 
 
 # A real /api/valhalla/route answer, trimmed to two maneuvers and a short
@@ -776,7 +776,7 @@ class ThePageBuilds(ApiOfflineCase):
 
     def setUp(self):
         super().setUp()
-        from agedashii_tofu.pages import trips, xnav
+        from agedashii_moto.pages import trips, xnav
         self.trips = trips
         self.xnav = xnav
         self._reset_state()

@@ -21,11 +21,11 @@ nothing here touches a socket either.
 import json
 import unittest
 
-from test_api_offline import ApiOfflineCase
+from .offline_harness import ApiOfflineCase
 
-from agedashii_tofu import api
-from agedashii_tofu.pages import _wat2do_parts as W
-from agedashii_tofu.pages import future as F
+from agedashii_washi import api
+from agedashii_watudo.pages import _wat2do_parts as W
+from agedashii_watudo.pages import future as F
 
 def _all_text(node, out=None):
     """Every Text value in a built control tree, for asserting on wording."""
@@ -379,7 +379,7 @@ class TestFuturePageBuilds(ApiOfflineCase):
         wording says both of those things, and both would be false here.
         """
         import flet as ft
-        from agedashii_tofu.ui import PAL
+        from agedashii_qi.appearance import PAL
         for somedays in (None, [], [{"name": "x"}]):
             with self.subTest(somedays=somedays):
                 notice = F.not_connected(PAL(), somedays)
@@ -398,11 +398,6 @@ class TestFuturePageBuilds(ApiOfflineCase):
         self.addCleanup(F._S.update, {"spots": None, "note": ""})
         self.build_once()
 
-    def test_extras_still_builds_with_the_future_tab_in_it(self):
-        import flet as ft
-        from agedashii_tofu.pages import extras
-        self.go_offline()
-        self.assertIsInstance(extras.build(self.StubPage()), ft.Control)
 
 
 if __name__ == "__main__":

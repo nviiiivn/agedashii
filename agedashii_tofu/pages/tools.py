@@ -30,7 +30,6 @@ from .. import config
 from ..ui import PAL, PAD, BRD, RAD, S, card, chip, sub, title
 from ._forms import Writer, offline_banner, rebuilder
 from .lab import _tabs
-from . import foodzen as fzpage
 
 # Session state, at module level so a repaint after a write does not throw
 # away which feed filter, vault file or journal search you were looking at.
@@ -64,14 +63,13 @@ JN_CATS = {
 JN_SORTS = (("new", "Newest first"), ("old", "Oldest first"), ("az", "A-Z"))
 
 def build(page):
-    """Tools is a FOLDER; FoodZen is a PAGE inside it with its own TABS.
+    """Feeds, Vault and Journal.
 
-    This was one flat strip - Feeds | Vault | Journal | FoodZen | EatZen |
-    BPM - which put EatZen and BPM next to Journal instead of inside
-    FoodZen, and had no room for the website's meals, scrape and expenses
-    tabs at all.
+    FoodZen used to be a fourth tab here, a page-inside-a-folder with six
+    tabs of its own. It is its own app now (Agedashii Foodzen) and has been
+    taken out of Tofu along with the rest of the split surfaces.
 
-    Every tab is a callable, so only the one on screen is built. All four
+    Every tab is a callable, so only the one on screen is built. All of them
     used to be built before anything painted - 1915 controls, of which 1221
     were the 76 feed cards and 503 were the six FoodZen tabs nobody had
     opened. See ``lab._tabs`` for the mechanism, and for what that costs:
@@ -79,8 +77,7 @@ def build(page):
     """
     return _tabs(page, [("Feeds", lambda: _feeds(page)),
                         ("Vault", lambda: _vault(page)),
-                        ("Journal", lambda: _journal(page)),
-                        ("FoodZen", lambda: fzpage.build(page))], key="tools")
+                        ("Journal", lambda: _journal(page))], key="tools")
 
 
 def _run(page, coro_fn, *args):

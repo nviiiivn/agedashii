@@ -4,9 +4,13 @@ import flet as ft
 from agedashii_tofu.ui import (PAL, PAD, BRD, RAD, S, apply_theme, dot,
                          GLOW, crt_overlay)
 from agedashii_tofu.pages.lab import _TAB_INDEX
-from agedashii_tofu.pages.eatzen import _show, _dismiss
+# The dialog helpers used to come from the EatZen page, which reached Tofu
+# by alias from agedashii_foodzen. They are generic - the theme picker uses
+# them - and Washi has had its own copies all along, so they come from there
+# now and opening a dialog no longer depends on a food app being installed.
+from agedashii_washi.surface import _show, _dismiss
 from agedashii_tofu.theme_data import THEMES, THEME_NAMES
-from agedashii_tofu.pages import home, lab, tools, trips, weather, garage, wat2do, extras, settings
+from agedashii_tofu.pages import home, lab, tools, weather, extras, settings
 from agedashii_tofu import api as M
 from agedashii_tofu import config
 from agedashii_tofu import panels
@@ -20,15 +24,13 @@ ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 # drawer. Splitting them into two disjoint sets, as this did before, left
 # four pages reachable only from a hamburger and no single place that
 # listed everything.
-PAGES = ["home", "lab", "tools", "garage", "wat2do",
-         "trips", "weather", "extras", "settings"]
-MAIN = ["home", "lab", "tools", "garage", "wat2do"]
+PAGES = ["home", "lab", "tools", "weather", "extras", "settings"]
+MAIN = ["home", "lab", "tools", "weather", "extras"]
 MORE = "\x00more"  # sentinel: not a page, it opens the drawer
-LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools", "garage": "Garage", "wat2do": "Wat2Do",
-          "trips": "Trips", "weather": "Weather", "extras": "Extras", "settings": "Settings",
+LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools",
+          "weather": "Weather", "extras": "Extras", "settings": "Settings",
           MORE: "More"}
 ICONS = {"home": ft.Icons.HOME, "lab": ft.Icons.DNS, "tools": ft.Icons.CONSTRUCTION,
-         "garage": ft.Icons.TWO_WHEELER, "wat2do": ft.Icons.CHECK_CIRCLE, "trips": ft.Icons.MAP,
          "weather": ft.Icons.CLOUD, "extras": ft.Icons.WIDGETS, "settings": ft.Icons.SETTINGS,
          MORE: ft.Icons.MORE_HORIZ}
 BOTTOM = MAIN + [MORE]
@@ -43,25 +45,13 @@ SUBPAGES = {
     "lab": [("Machines", [("lab", 0)], 1), ("Network", [("lab", 1)], 1),
             ("Services", [("lab", 2)], 1), ("Docker", [("lab", 3)], 1),
             ("Qbit", [("lab", 4)], 1)],
+    # FoodZen and its six tabs used to hang here. They moved out with the
+    # rest of Foodzen; Tools is Feeds, Vault and Journal now.
     "tools": [
         ("Feeds", [("tools", 0)], 1),
         ("Vault", [("tools", 1)], 1),
         ("Journal", [("tools", 2)], 1),
-        ("FoodZen", [("tools", 3)], 1),
-        ("Grocery", [("tools", 3), ("foodzen", 0)], 2),
-        ("Meals", [("tools", 3), ("foodzen", 1)], 2),
-        ("Scrape", [("tools", 3), ("foodzen", 2)], 2),
-        ("Expenses", [("tools", 3), ("foodzen", 3)], 2),
-        ("EatZen", [("tools", 3), ("foodzen", 4)], 2),
-        ("BPM", [("tools", 3), ("foodzen", 5)], 2),
     ],
-    "trips": [("Selekt", [("trips", 0)], 1), ("Produce", [("trips", 1)], 1),
-              ("Rides", [("trips", 2)], 1), ("xNav", [("trips", 3)], 1)],
-    "wat2do": [("Present", [("wat2do", 0)], 1),
-               ("Future", [("wat2do", 1)], 1)],
-    "garage": [("Home", [("garage", 0)], 1),
-               ("Mechanic", [("garage", 1)], 1),
-               ("Flipper", [("garage", 2)], 1)],
     "weather": [("Bay Area", [("weather", 0)], 1),
                 ("Explore", [("weather", 1)], 1)],
     "extras": [("Projects", [("extras", 0)], 1), ("AI", [("extras", 1)], 1),
@@ -635,14 +625,8 @@ async def main(page):
             c = lab.build(page)
         elif key == "tools":
             c = tools.build(page)
-        elif key == "trips":
-            c = trips.build(page)
         elif key == "weather":
             c = weather.build(page)
-        elif key == "garage":
-            c = garage.build(page)
-        elif key == "wat2do":
-            c = wat2do.build(page)
         elif key == "extras":
             c = extras.build(page)
         else:
