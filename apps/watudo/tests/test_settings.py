@@ -231,7 +231,7 @@ class TheNavigationControls(SettingsCase):
 
     def test_settings_describes_the_navigation_the_shell_actually_builds(self):
         said = " ".join(texts(self.tree()))
-        self.assertIn("Wat2Do, Future Finds, Settings", said)
+        self.assertIn("Wat2Do, Future Finds, Weather, Settings", said)
         self.flip("Bottom bar", False)
         self.assertIn("Bottom bar: off", " ".join(texts(self.tree())))
 

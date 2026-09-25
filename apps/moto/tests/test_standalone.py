@@ -133,7 +133,12 @@ class ItDoesNotImportTheOtherApps(unittest.TestCase):
         a reason when it cannot. Anything else opening a socket would be a
         feature that stops existing with the radio off.
         """
-        allowed = {Path("agedashii_moto/pages/_trips_parts.py")}
+        # weather.py is the second honest exception, and the same one:
+        # it POSTs raw Overpass QL, which api._post would wrap in JSON.
+        # It still goes through config._opener, so the offline tests can
+        # swap it out like everything else.
+        allowed = {Path("agedashii_moto/pages/_trips_parts.py"),
+                   Path("agedashii_moto/pages/weather.py")}
         net = {"urllib", "socket", "requests", "httpx", "aiohttp", "http"}
         offenders = []
         for path in source_files():

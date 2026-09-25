@@ -189,7 +189,7 @@ class TheNavReachesEachOne(ShellCase):
         selected at all."""
         module = load_main()
         self.assertEqual(module.PAGES, ["trips", "garage", "xnav", "settings"])
-        self.assertEqual(module.EXTRA_PAGES, ["help"])
+        self.assertEqual(module.EXTRA_PAGES, ["weather", "help"])
         for key in module.PAGES + module.EXTRA_PAGES:
             with self.subTest(surface=key):
                 self.assertIn(key, module.LABELS)

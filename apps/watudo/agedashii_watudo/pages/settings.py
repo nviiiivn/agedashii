@@ -301,7 +301,8 @@ def appearance_card(page, saver, on_change=None):
 
 
 # -------------------------------------------------------------- navigation
-def navigation_card(page, saver, on_change=None, reach=None):
+def navigation_card(page, saver, on_change=None, reach=None,
+                    bar_names=""):
     """The bottom bar, the hamburger, and what is left reaching each surface.
 
     Her words: "Each of these smaller apps (not tofu) work better with the
@@ -338,8 +339,8 @@ def navigation_card(page, saver, on_change=None, reach=None):
     rows = [
         _head("Navigation", ft.Icons.EXPLORE),
         U.switch_row("Bottom bar",
-                     "Wat2Do, Future Finds and Settings along the bottom. This "
-                     "is how the app is meant to be got around.",
+                     f"{bar_names or 'The surfaces'} along the bottom. "
+                     f"This is how the app is meant to be got around.",
                      bar_on, toggle_bar, icon=ft.Icons.VIEW_SIDEBAR),
         U.switch_row("Menu button",
                      "The hamburger in the topbar. Hidden, its slot goes away "
@@ -595,7 +596,7 @@ def _head(text, icon):
                             title(text, 15)])
 
 
-def build(page, on_change=None, go=None, reach=None):
+def build(page, on_change=None, go=None, reach=None, bar_names=""):
     """The whole Settings surface.
 
     `on_change` is the shell's repaint - every appearance and navigation
@@ -607,7 +608,7 @@ def build(page, on_change=None, go=None, reach=None):
     saver = _Saver(page)
     cards = [
         server_card(page, saver, on_change),
-        navigation_card(page, saver, on_change, reach),
+        navigation_card(page, saver, on_change, reach, bar_names),
         theme_card(page, saver, on_change),
         appearance_card(page, saver, on_change),
         day_card(page, saver),

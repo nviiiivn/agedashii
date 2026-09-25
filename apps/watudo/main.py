@@ -71,6 +71,7 @@ from agedashii_watudo import ui as U
 from agedashii_watudo.pages import help as help_page
 from agedashii_watudo.pages import settings as settings_page
 from agedashii_watudo.pages import wat2do
+from agedashii_watudo.pages import weather as weather_page
 
 # The Agedashii pill's three colours, shared with the dashboard and with
 # alola.lol. Written here rather than imported from the dashboard because
@@ -85,7 +86,7 @@ TAB_KEY = "wat2do"
 # Settings' own description of the navigation are all derived from these
 # tables, so adding a surface means adding a line rather than editing three
 # places that can disagree.
-PAGES = ["wat2do", "future", "settings", "help"]
+PAGES = ["wat2do", "future", "weather", "settings", "help"]
 
 # The two that are tabs of one page, and which tab each one is. These are
 # the surfaces whose "am I here" is read back out of the page's own tab
@@ -94,10 +95,12 @@ TAB_PAGES = ("wat2do", "future")
 TAB_OF = {"wat2do": 0, "future": 1}
 
 LABELS = {"wat2do": "Wat2Do", "future": "Future Finds",
-          "settings": "Settings", "help": "How this works"}
+          "weather": "Weather", "settings": "Settings",
+          "help": "How this works"}
 
 BLURB = {"wat2do": "today's checklist, pain, spoons and a mission",
          "future": "places worth a ride someday",
+         "weather": "the bay, and anywhere you tap",
          "settings": "server, theme, the day, the origin",
          "help": "what each part does, and what needs the server"}
 
@@ -107,17 +110,19 @@ BLURB = {"wat2do": "today's checklist, pain, spoons and a mission",
 # glyphs that differ only in outline.
 ICONS = {"wat2do": ft.Icons.CHECK_CIRCLE_OUTLINE,
          "future": ft.Icons.EXPLORE_OUTLINED,
+         "weather": ft.Icons.CLOUD_OUTLINED,
          "settings": ft.Icons.SETTINGS_OUTLINED,
          "help": ft.Icons.HELP_OUTLINE}
 ICONS_ON = {"wat2do": ft.Icons.CHECK_CIRCLE, "future": ft.Icons.EXPLORE,
-            "settings": ft.Icons.SETTINGS, "help": ft.Icons.HELP}
+            "weather": ft.Icons.CLOUD, "settings": ft.Icons.SETTINGS,
+            "help": ft.Icons.HELP}
 
 # What rides the bottom bar. Help is not on it: it is one screen you read
 # once, it lives under Settings the way a manual lives in a drawer, and a
 # fourth stop would push the three that are used daily closer together.
 # Every other surface is here, which is what makes the bar - and not the
 # hamburger - the way around this app.
-BAR_PAGES = ["wat2do", "future", "settings"]
+BAR_PAGES = ["wat2do", "future", "weather", "settings"]
 
 # Where this app remembers its theme, re-exported from its own preferences
 # module. `agedashii_washi.prefs` does not own a theme key - in the dashboard
@@ -173,6 +178,13 @@ def menu_visible():
     return wprefs.menu_button() or not prefs.bottom_bar_enabled()
 
 
+def bar_names():
+    """The bar's destinations as prose: "A, B and C"."""
+    names = [LABELS[k] for k in BAR_PAGES]
+    return (" and ".join(names) if len(names) < 3
+            else ", ".join(names[:-1]) + " and " + names[-1])
+
+
 def reach_lines():
     """How each surface can be reached, in the app's own words.
 
@@ -180,11 +192,11 @@ def reach_lines():
     shell actually builds, rather than a second opinion about it that can
     drift.
     """
-    bar = (", ".join(LABELS[k] for k in BAR_PAGES)
-           if prefs.bottom_bar_enabled() else "off")
+    bar = (bar_names() if prefs.bottom_bar_enabled() else "off")
     menu = ("every surface, " + LABELS["help"].lower() + " included"
             if menu_visible() else "hidden")
-    return [f"Bottom bar: {bar}",
+    return [f"Bottom bar: {', '.join(LABELS[k] for k in BAR_PAGES)}"
+            if prefs.bottom_bar_enabled() else "Bottom bar: off",
             f"Menu button: {menu}",
             f"{LABELS['help']} is always reachable from Settings.",
             "Present and Future are also the page's own two tabs."]
@@ -597,9 +609,12 @@ async def main(page):
         """
         if key == "settings":
             return settings_page.build(page, on_change=render, go=go,
-                                       reach=reach_lines())
+                                       reach=reach_lines(),
+                                       bar_names=bar_names())
         if key == "help":
             return help_page.build(page, go=go)
+        if key == "weather":
+            return weather_page.build(page)
         # No tab bar while the bottom bar is carrying these two: on a phone
         # that was the same two choices in two rows, one above the other.
         # With the bar off, the page's own tabs are how you get between them

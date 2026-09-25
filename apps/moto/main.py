@@ -72,7 +72,8 @@ from agedashii_washi.surface import _TAB_INDEX, _dismiss, _show
 from agedashii_washi.widgets import BRD, PAD
 
 from agedashii_moto import motoprefs
-from agedashii_moto.pages import garage, help as helppage, settings, trips, xnav
+from agedashii_moto.pages import (garage, help as helppage, settings, trips,
+                                  weather, xnav)
 
 # The gradient the brand pill is painted in. The same three stops the
 # dashboard uses, because it is the same brand - Moto is a door into it,
@@ -86,7 +87,7 @@ PAGES = ["trips", "garage", "xnav", "settings"]
 
 #: Reachable, but not on the bar. Help is read once and then not again;
 #: giving it a permanent slot would cost a fifth of the bar for it.
-EXTRA_PAGES = ["help"]
+EXTRA_PAGES = ["weather", "help"]
 
 #: The surfaces built out of `panels.layout` - the ones the topbar's
 #: Arrange button applies to. Settings and Help are ordinary columns with
@@ -100,7 +101,7 @@ CARD_PAGES = ["trips", "garage", "xnav"]
 NAV_PARENT = {"help": "settings"}
 
 LABELS = {"trips": "Trips", "garage": "Garage", "xnav": "XNAV",
-          "settings": "Settings", "help": "Help"}
+          "weather": "Weather", "settings": "Settings", "help": "Help"}
 
 # Themed Material icons, never emoji: this is chrome, and chrome has to
 # follow all 24 themes. An emoji is painted by the font at a fixed colour
@@ -113,7 +114,8 @@ LABELS = {"trips": "Trips", "garage": "Garage", "xnav": "XNAV",
 # is a row of sliders, which is what Settings actually is, rather than the
 # gear every app in the world uses for everything.
 ICONS = {"trips": ft.Icons.ROUTE_OUTLINED, "garage": ft.Icons.TWO_WHEELER,
-         "xnav": ft.Icons.NAVIGATION_OUTLINED, "settings": ft.Icons.TUNE,
+         "xnav": ft.Icons.NAVIGATION_OUTLINED,
+         "weather": ft.Icons.CLOUD_OUTLINED, "settings": ft.Icons.TUNE,
          "help": ft.Icons.MENU_BOOK}
 
 # The filled twin of each mark, for the destination you are standing on.
@@ -121,8 +123,8 @@ ICONS = {"trips": ft.Icons.ROUTE_OUTLINED, "garage": ft.Icons.TWO_WHEELER,
 # at a glance on a phone, where the indicator pill alone is easy to miss in
 # bright sun.
 ICONS_SELECTED = {"trips": ft.Icons.ROUTE, "garage": ft.Icons.TWO_WHEELER,
-                  "xnav": ft.Icons.NAVIGATION, "settings": ft.Icons.TUNE,
-                  "help": ft.Icons.MENU_BOOK}
+                  "xnav": ft.Icons.NAVIGATION, "weather": ft.Icons.CLOUD,
+                  "settings": ft.Icons.TUNE, "help": ft.Icons.MENU_BOOK}
 
 # What sits inside each surface, so the drawer can offer a tab directly
 # instead of landing you on the surface to hunt for it. Each entry is
@@ -140,6 +142,8 @@ SUBPAGES = {
     "garage": [("Home", [("garage", 0)], 1),
                ("Mechanic", [("garage", 1)], 1),
                ("Flipper", [("garage", 2)], 1)],
+    "weather": [("Bay Area", [("weather", 0)], 1),
+                ("Explore", [("weather", 1)], 1)],
 }
 
 #: Sub-rows that navigate to another surface rather than to a tab. Kept
@@ -188,6 +192,8 @@ def build_surface(page, key):
         return garage.build(page)
     if key == "xnav":
         return xnav.build(page)
+    if key == "weather":
+        return weather.build(page)
     if key == "settings":
         return settings.build(page)
     if key == "help":
