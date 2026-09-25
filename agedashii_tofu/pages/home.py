@@ -32,27 +32,16 @@ import flet as ft
 
 from .. import api as M
 from .. import panels
+from .. import prefs
 from ..ui import PAL, PAD, BRD, RAD, S, card, chip, dot, sub, title
 
 # The eight links the website's Quick Links card carries, verbatim. They are
 # hardcoded there too - there is no endpoint that lists them - but they are
 # real addresses that really open, which is the difference between this and
 # a decorative tile.
-QUICK_LINKS = (
-    ("AI chat", "Open WebUI", "https://ai.alola.lol/", ft.Icons.SMART_TOY),
-    ("Image / video", "ComfyUI", "https://comfy.alola.lol/", ft.Icons.IMAGE),
-    ("IDE", "VS Code", "https://code.alola.lol/?folder=/home/nvii",
-     ft.Icons.CODE),
-    ("Music", "Navidrome", "https://navi.alola.lol/app/#/login",
-     ft.Icons.LIBRARY_MUSIC),
-    ("Movies / shows", "Jellyfin", "https://jelly.alola.lol/web/#/home",
-     ft.Icons.MOVIE),
-    ("totemDocs", "Docs", "https://totem.alola.lol/", ft.Icons.MENU_BOOK),
-    ("Site builder", "Drag and drop", "https://build.alola.lol",
-     ft.Icons.WEB),
-    ("Gallery", "ComfyUI output", "https://stuff.alola.lol/",
-     ft.Icons.PHOTO_LIBRARY),
-)
+# The quick links live in prefs now, so Settings can edit them and each
+# app can differ without anyone guessing in advance which eight it wants.
+# They were a module constant here.
 
 # Open-Meteo WMO codes -> the icon and words the website's WX_DESC uses.
 WX_DESC = {
@@ -107,6 +96,11 @@ def ride_call(cur):
     if wind > 20:
         return "Windy - bundled ride only", "meh"
     return "Clear-ish - good day to ride", "good"
+
+
+def _icon(name):
+    """A named icon, or a plain link mark if the name is unknown."""
+    return getattr(ft.Icons, str(name).upper(), ft.Icons.LINK)
 
 
 def _goto(key, tab_path=()):
@@ -358,12 +352,12 @@ def build(page):
     # --------------------------------------------------------- quick links
     def links_card():
         rows = []
-        for label, note, url, icon in QUICK_LINKS:
+        for label, note, url, icon in prefs.quick_links():
             rows.append(ft.Container(
                 col={"xs": 12, "md": 6}, padding=PAD(7, 9), border_radius=RAD(10),
                 bgcolor=p["bg2"], border=BRD(p["border"], 1), ink=True, url=url,
                 content=ft.Row(spacing=8, controls=[
-                    ft.Icon(icon, size=15, color=p["accent"]),
+                    ft.Icon(_icon(icon), size=15, color=p["accent"]),
                     ft.Column(spacing=0, expand=True, controls=[
                         ft.Text(label, size=11.5, color=p["text"], max_lines=1,
                                 overflow=ft.TextOverflow.ELLIPSIS),
@@ -433,9 +427,12 @@ def build(page):
                                                         "reboot", m["display"]))),
                 ]))
 
-        jumps = [("Docker", ft.Icons.INVENTORY_2, "lab", [("lab", 4)]),
-                 ("Qbit", ft.Icons.DOWNLOAD, "lab", [("lab", 3)]),
-                 ("Wat2Do", ft.Icons.CHECK_CIRCLE, "wat2do", []),
+        # Lab's tabs are Machines(0), Network(1), Services(2), Docker(3),
+        # Qbit(4). These two had 4 and 3, so tapping Docker opened Qbit
+        # and tapping Qbit opened Docker - for as long as the tiles have
+        # existed. The Wat2Do tile went with Wat2Do.
+        jumps = [("Docker", ft.Icons.INVENTORY_2, "lab", [("lab", 3)]),
+                 ("Qbit", ft.Icons.DOWNLOAD, "lab", [("lab", 4)]),
                  ("Journal", ft.Icons.EDIT_NOTE, "tools", [("tools", 2)])]
         tiles = []
         for label, icon, key, path in jumps:
@@ -485,42 +482,11 @@ def build(page):
     done = sum(1 for it in day_items if it.get("done"))
     total = len(day_items)
 
-    def wat2do_mini():
-        def row(it):
-            return ft.Row(spacing=8, controls=[
-                ft.Icon(ft.Icons.CHECK_BOX if it.get("done")
-                        else ft.Icons.CHECK_BOX_OUTLINE_BLANK, size=16,
-                        color=p["green"] if it.get("done") else p["text2"]),
-                ft.Text(it["t"], size=12 if not it.get("sub") else 11,
-                        color=p["text2"] if it.get("done")
-                        else (p["text3"] if it.get("sub") else p["text"]),
-                        style=None if not it.get("done") else ft.TextStyle(
-                            decoration=ft.TextDecoration.LINE_THROUGH),
-                        offset=ft.Offset(0.6, 0) if it.get("sub") else None),
-            ])
-        head = [title("Wat2Do"), ft.Container(expand=True),
-                ft.Text(f"{done}/{total}" if day else "—", size=12,
-                        color=p["accent"], weight=ft.FontWeight.W_600)]
-        jump = _goto("wat2do")
-        rows = ([row(it) for it in day_items[:4]] if day
-                else [sub("Today's checklist has not been read from the "
-                          "server on this device.", 11)])
-        inner = ft.Column(spacing=6, controls=[
-            ft.Row(head),
-            ft.ProgressBar(value=(done / total) if total else 0, color=p["orange"],
-                           bgcolor=p["bg2"], bar_height=4, border_radius=RAD(2)),
-            *rows,
-        ])
-        if jump is None:
-            return card(inner)
-        return ft.Container(border_radius=RAD(12), bgcolor=p["surface"],
-                            border=BRD(p["border"], 1), padding=14, ink=True,
-                            on_click=jump, content=inner)
 
     body = panels.layout("home", {
         "greeting": greeting, "stats": stats_card, "weather": weather_card,
         "nowplaying": nowplaying_card, "machines": machines_card,
-        "links": links_card, "actions": actions_row, "wat2do": wat2do_mini,
+        "links": links_card, "actions": actions_row,
     })
     # Only chase the slow number if the strip that shows it is on screen.
     if ov is not None and ov["containers"] is None and docker_tile.controls:

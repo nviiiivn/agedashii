@@ -585,7 +585,10 @@ class HomeRenders(unittest.TestCase):
 
     def test_all_eight_quick_links_are_real_urls(self):
         urls = self._urls(self._build(self.DASH, self.WEATHER))
-        for _label, _note, url, _icon in home.QUICK_LINKS:
+        # A preference now, not a constant on the page - so this
+        # checks what the app would actually draw, defaults included.
+        from agedashii_washi import prefs as _prefs
+        for _label, _note, url, _icon in _prefs.quick_links():
             self.assertIn(url, urls)
 
     def test_the_forecast_row_shows_three_days(self):
@@ -644,10 +647,14 @@ class HomeRenders(unittest.TestCase):
                 del S.goto
             else:
                 S.goto = had
-        self.assertIn(("lab", (("lab", 4),)), jumped)       # Docker
-        self.assertIn(("lab", (("lab", 3),)), jumped)       # Qbit
+        # Lab is Machines(0), Network(1), Services(2), Docker(3),
+        # Qbit(4). These two were the wrong way round in home.py, so
+        # Docker opened Qbit and Qbit opened Docker.
+        self.assertIn(("lab", (("lab", 3),)), jumped)       # Docker
+        self.assertIn(("lab", (("lab", 4),)), jumped)       # Qbit
         self.assertIn(("tools", (("tools", 2),)), jumped)   # Journal
-        self.assertIn(("wat2do", ()), jumped)
+        # The Wat2Do tile went with Wat2Do.
+        self.assertNotIn("wat2do", [k for k, _ in jumped])
 
     def _fire(self, c, labels, depth=0):
         if depth > 60:

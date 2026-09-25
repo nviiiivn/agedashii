@@ -70,6 +70,7 @@ from agedashii_watudo import prefs as wprefs
 from agedashii_watudo import ui as U
 from agedashii_watudo.pages import help as help_page
 from agedashii_watudo.pages import settings as settings_page
+from agedashii_watudo.pages import home as home_page
 from agedashii_watudo.pages import wat2do
 from agedashii_watudo.pages import weather as weather_page
 
@@ -86,7 +87,7 @@ TAB_KEY = "wat2do"
 # Settings' own description of the navigation are all derived from these
 # tables, so adding a surface means adding a line rather than editing three
 # places that can disagree.
-PAGES = ["wat2do", "future", "weather", "settings", "help"]
+PAGES = ["home", "wat2do", "future", "weather", "settings", "help"]
 
 # The two that are tabs of one page, and which tab each one is. These are
 # the surfaces whose "am I here" is read back out of the page's own tab
@@ -94,7 +95,7 @@ PAGES = ["wat2do", "future", "weather", "settings", "help"]
 TAB_PAGES = ("wat2do", "future")
 TAB_OF = {"wat2do": 0, "future": 1}
 
-LABELS = {"wat2do": "Wat2Do", "future": "Future Finds",
+LABELS = {"home": "Home", "wat2do": "Wat2Do", "future": "Future Finds",
           "weather": "Weather", "settings": "Settings",
           "help": "How this works"}
 
@@ -102,7 +103,8 @@ LABELS = {"wat2do": "Wat2Do", "future": "Future Finds",
 # four words. LABELS[help] is what the page calls itself.
 NAV_LABELS = dict(LABELS, help="Help")
 
-BLURB = {"wat2do": "today's checklist, pain, spoons and a mission",
+BLURB = {"home": "the greeting, the shortcuts and the weather",
+         "wat2do": "today's checklist, pain, spoons and a mission",
          "future": "places worth a ride someday",
          "weather": "the bay, and anywhere you tap",
          "settings": "server, theme, the day, the origin",
@@ -112,12 +114,14 @@ BLURB = {"wat2do": "today's checklist, pain, spoons and a mission",
 # is where you are. Material draws both in a NavigationBar, and the pair is
 # what makes a destination recognisable at a glance instead of four grey
 # glyphs that differ only in outline.
-ICONS = {"wat2do": ft.Icons.CHECK_CIRCLE_OUTLINE,
+ICONS = {"home": ft.Icons.HOME_OUTLINED,
+         "wat2do": ft.Icons.CHECK_CIRCLE_OUTLINE,
          "future": ft.Icons.EXPLORE_OUTLINED,
          "weather": ft.Icons.CLOUD_OUTLINED,
          "settings": ft.Icons.SETTINGS_OUTLINED,
          "help": ft.Icons.HELP_OUTLINE}
-ICONS_ON = {"wat2do": ft.Icons.CHECK_CIRCLE, "future": ft.Icons.EXPLORE,
+ICONS_ON = {"home": ft.Icons.HOME, "wat2do": ft.Icons.CHECK_CIRCLE,
+            "future": ft.Icons.EXPLORE,
             "weather": ft.Icons.CLOUD, "settings": ft.Icons.SETTINGS,
             "help": ft.Icons.HELP}
 
@@ -126,7 +130,7 @@ ICONS_ON = {"wat2do": ft.Icons.CHECK_CIRCLE, "future": ft.Icons.EXPLORE,
 # fourth stop would push the three that are used daily closer together.
 # Every other surface is here, which is what makes the bar - and not the
 # hamburger - the way around this app.
-BAR_PAGES = ["wat2do", "future", "weather", "settings"]
+BAR_PAGES = ["home", "wat2do", "future", "weather", "settings"]
 
 # Where this app remembers its theme, re-exported from its own preferences
 # module. `agedashii_washi.prefs` does not own a theme key - in the dashboard
@@ -617,6 +621,8 @@ async def main(page):
                                        bar_names=bar_names())
         if key == "help":
             return help_page.build(page, go=go)
+        if key == "home":
+            return home_page.build(page)
         if key == "weather":
             return weather_page.build(page)
         # No tab bar while the bottom bar is carrying these two: on a phone

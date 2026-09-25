@@ -168,7 +168,7 @@ class TheNavReachesEachOne(WatudoCase):
     def test_the_bar_carries_the_surfaces_that_are_used_daily(self):
         bar = self.bar(self.build())
         self.assertEqual([d.label for d in bar.destinations],
-                         ["Wat2Do", "Future Finds", "Weather",
+                         ["Home", "Wat2Do", "Future Finds", "Weather",
                       "Settings"])
 
     def test_each_destination_has_a_mark_of_its_own_and_a_lit_one(self):
@@ -205,8 +205,8 @@ class TheNavReachesEachOne(WatudoCase):
         rows[0].on_click(Event(rows[0]))
 
     def test_every_surface_is_reachable_with_the_hamburger_hidden(self):
-        """Hidden by her, not by default. Four stops on the bar and the
-        fifth under Settings, so hiding the trigger costs nothing but the
+        """Hidden by her, not by default. Five stops on the bar and the
+        sixth under Settings, so hiding the trigger costs nothing but the
         trigger."""
         self.wprefs.set_menu_button(False)
         page = self.build()
@@ -216,7 +216,7 @@ class TheNavReachesEachOne(WatudoCase):
                 if isinstance(c, ft.IconButton) and c.icon == ft.Icons.MENU]
         self.assertEqual(menu, [], "the slot goes away rather than sitting empty")
         reached = []
-        for key in ("wat2do", "future", "weather", "settings"):
+        for key in ("home", "wat2do", "future", "weather", "settings"):
             self.nav_to(page, key)
             reached.append(key)
         self.go_to_help(page)
@@ -258,7 +258,8 @@ class TheNavReachesEachOne(WatudoCase):
         _TAB_INDEX["wat2do"] = 1          # as a swipe on the tab bar would
         self.assertEqual(self.main.surface_of(), "future")
         self.rerender()
-        self.assertEqual(self.bar(page).selected_index, 1)
+        # Home took index 0, so Wat2Do's two tabs are 1 and 2.
+        self.assertEqual(self.bar(page).selected_index, 2)
         highlighted = [c for c in walk(page.drawer)
                        if isinstance(c, ft.Container) and c.bgcolor
                        and "Future Finds" in texts(c)]

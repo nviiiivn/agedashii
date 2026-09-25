@@ -46,7 +46,7 @@ from agedashii_washi import config, panels, prefs
 from agedashii_washi.surface import _TAB_INDEX, _dismiss, _show
 from agedashii_washi.widgets import BRD, PAD
 from agedashii_foodzen import glyphs, prefs_local
-from agedashii_foodzen.pages import eatzen, foodzen, guide, settings
+from agedashii_foodzen.pages import eatzen, home, foodzen, guide, settings
 
 # The gradient in the brand pill. Same three as the dashboard and the website:
 # the pill is the identity across all of them, so it does not get restyled per
@@ -56,16 +56,17 @@ ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 # Flat: Foodzen IS the app, so there is no page called FoodZen inside it
 # wrapping the others. BPM sits at the same level as Grocery, which is
 # what she asked for - "so bpm is the same as grocery".
+HOME = "home"
 GROCERY, MEALS, SCRAPE, EXPENSES = ("grocery", "meals", "scrape", "expenses")
 EATZEN, BPM, SETTINGS, GUIDE = ("eatzen", "bpm", "settings", "guide")
 
 # Every surface, in menu order.
-PAGES = [GROCERY, MEALS, SCRAPE, EXPENSES, EATZEN, BPM, SETTINGS]
+PAGES = [HOME, GROCERY, MEALS, SCRAPE, EXPENSES, EATZEN, BPM, SETTINGS]
 
 # What rides the bottom bar. Scrape and Expenses are the two that are
 # reached occasionally rather than daily, so they stay in the drawer - a
 # seven-stop bar on a 400px phone elides every label.
-BAR_PAGES = [GROCERY, MEALS, EATZEN, BPM, SETTINGS]
+BAR_PAGES = [HOME, GROCERY, MEALS, EATZEN, BPM, SETTINGS]
 
 # Everything render() will accept. The guide is reachable from Settings and
 # from nowhere else - it is read once and then rarely, and a bar that has to
@@ -77,7 +78,7 @@ SURFACES = PAGES + [GUIDE]
 # Which navigation entry lights up for a surface that is not itself one.
 PARENT = {GUIDE: SETTINGS}
 
-LABELS = {GROCERY: "Grocery", MEALS: "Meals", SCRAPE: "Scrape",
+LABELS = {HOME: "Home", GROCERY: "Grocery", MEALS: "Meals", SCRAPE: "Scrape",
           EXPENSES: "Expenses", EATZEN: "EatZen", BPM: "BPM",
           SETTINGS: "Settings", GUIDE: "How this works"}
 
@@ -87,7 +88,8 @@ NAV_LABELS = dict(LABELS, **{GUIDE: "Help"})
 # Chrome, so these are themed Material icons and never emoji - see glyphs.py
 # for the rule. Named there rather than here so that "what is the sodium
 # mark" has one answer across the whole app.
-ICONS = {GROCERY: glyphs.ICON_GROCERY, MEALS: glyphs.ICON_MEALS,
+ICONS = {HOME: ft.Icons.HOME_OUTLINED,
+         GROCERY: glyphs.ICON_GROCERY, MEALS: glyphs.ICON_MEALS,
          SCRAPE: glyphs.ICON_SCRAPE, EXPENSES: glyphs.ICON_EXPENSES,
          EATZEN: glyphs.ICON_EATZEN, BPM: glyphs.ICON_BP,
          SETTINGS: glyphs.ICON_SETTINGS, GUIDE: glyphs.ICON_HELP}
@@ -540,6 +542,8 @@ class Shell:
         back. It is handed the shell's own repaint rather than reaching for
         one, so it still builds in a harness with no shell at all.
         """
+        if key == HOME:
+            return home.build(self.page)
         if key == GROCERY:
             return foodzen.grocery(self.page)
         if key == MEALS:

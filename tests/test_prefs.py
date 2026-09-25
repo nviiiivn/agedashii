@@ -241,17 +241,19 @@ class TestVisibility(PrefsTestCase):
 
 class TestHomePanels(PrefsTestCase):
     def test_hide_and_reorder(self):
+        # Two panels, not one: hiding the first must not disturb the
+        # second, and moving the second must not un-hide the first.
         prefs.set_home_panel_hidden("nowplaying", True)
-        prefs.move_home_panel("wat2do", -10)   # clamped: already impossible to overshoot
+        prefs.move_home_panel("machines", -10)   # clamped: cannot overshoot
         panels = prefs.home_panels()
         self.assertNotIn("nowplaying", panels)
-        self.assertIn("wat2do", panels)
+        self.assertIn("machines", panels)
         self.assertEqual(len(panels), len(prefs.HOME_PANEL_KEYS) - 1)
 
     def test_move_to_the_top(self):
         for _ in range(len(prefs.HOME_PANEL_KEYS)):
-            prefs.move_home_panel("wat2do", -1)
-        self.assertEqual(prefs.home_panel_order()[0], "wat2do")
+            prefs.move_home_panel("nowplaying", -1)
+        self.assertEqual(prefs.home_panel_order()[0], "nowplaying")
 
     def test_every_panel_can_be_hidden(self):
         for key in prefs.HOME_PANEL_KEYS:
@@ -772,15 +774,15 @@ class PanelLayout(unittest.TestCase):
         # Counted off the shipped order rather than hardcoded: Home has
         # gained and lost cards twice now, and each time this test failed
         # for a reason that had nothing to do with reordering.
-        was = self.panels.panel_keys(self.SURFACE).index("wat2do")
-        prefs.move_panel(self.SURFACE, "wat2do", -3)
-        self.assertEqual(prefs.panel_order(self.SURFACE)[was - 3], "wat2do")
+        was = self.panels.panel_keys(self.SURFACE).index("nowplaying")
+        prefs.move_panel(self.SURFACE, "nowplaying", -3)
+        self.assertEqual(prefs.panel_order(self.SURFACE)[was - 3], "nowplaying")
 
     def test_reset_puts_everything_back(self):
         prefs.set_panel_width(self.SURFACE, "machines", 20)
         prefs.set_panel_height(self.SURFACE, "machines", 3)
         prefs.set_panel_hidden(self.SURFACE, "weather", True)
-        prefs.move_panel(self.SURFACE, "wat2do", -4)
+        prefs.move_panel(self.SURFACE, "nowplaying", -4)
         prefs.reset_panels(self.SURFACE)
         self.assertEqual(prefs.panels(self.SURFACE),
                          self.panels.panel_keys(self.SURFACE))
@@ -903,7 +905,7 @@ class PanelLayoutSurvivesARestart(unittest.TestCase):
 
         prefs.set_panel_width("home", "machines", 30)
         prefs.set_panel_hidden("home", "nowplaying", True)
-        prefs.move_panel("home", "wat2do", -3)
+        prefs.move_panel("home", "nowplaying", -3)
         before = (prefs.panels("home"), prefs.panel_width("home", "machines"))
 
         store = self.FakeStore()
@@ -2057,15 +2059,15 @@ class PanelReorderByDrop(PrefsTestCase):
         self.assertEqual(order.index("greeting"), order.index("weather") + 1)
 
     def test_dropping_upwards_lands_before_the_target(self):
-        self.assertTrue(prefs.move_panel_onto("home", "wat2do", "stats"))
+        self.assertTrue(prefs.move_panel_onto("home", "nowplaying", "stats"))
         order = prefs.panel_order("home")
-        self.assertEqual(order.index("wat2do"), order.index("stats") - 1)
+        self.assertEqual(order.index("nowplaying"), order.index("stats") - 1)
 
     def test_a_hidden_neighbour_keeps_its_place(self):
         """Order is kept for every panel, hidden included, so un-hiding
         one brings it back where she left it and not at the end."""
         prefs.set_panel_hidden("home", "nowplaying", True)
-        prefs.move_panel_onto("home", "wat2do", "greeting")
+        prefs.move_panel_onto("home", "nowplaying", "greeting")
         self.assertIn("nowplaying", prefs.panel_order("home"))
 
     def test_unknown_or_self_is_refused(self):

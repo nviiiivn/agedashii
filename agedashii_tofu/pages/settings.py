@@ -725,6 +725,109 @@ def diagnostics_card(page):
     ]))
 
 
+
+def quick_links_card(page, saver):
+    """Add, edit, delete and reorder the shortcuts on Home.
+
+    They were a module constant in home.py, which made "which eight links
+    should this app ship with" a question somebody had to get right in
+    advance - and get right again for every new app. Now the defaults are
+    just a starting point.
+
+    Saved to this device like every other preference: no server round
+    trip, and it works with the radio off.
+    """
+    p = PAL()
+    links = prefs.quick_links()
+
+    def commit(rows, note):
+        prefs.set_quick_links(rows)
+        saver.note(note)
+        rerender = getattr(S, "rerender", None)
+        if callable(rerender):
+            rerender()
+
+    def shift(index, delta):
+        def handler(e):
+            if prefs.move_quick_link(index, delta):
+                saver.note("moved")
+                rerender = getattr(S, "rerender", None)
+                if callable(rerender):
+                    rerender()
+        return handler
+
+    def drop(index):
+        def handler(e):
+            rows = prefs.quick_links()
+            if 0 <= index < len(rows):
+                gone = rows.pop(index)
+                commit(rows, f"removed {gone[0]}")
+        return handler
+
+    def row(index, link):
+        label, note, url, icon = link
+        return ft.Container(
+            padding=PAD(6, 9), border_radius=RAD(8), bgcolor=p["bg2"],
+            border=BRD(p["border"], 1),
+            content=ft.Row(spacing=6, controls=[
+                ft.Icon(getattr(ft.Icons, str(icon).upper(), ft.Icons.LINK),
+                        size=14, color=p["accent"]),
+                ft.Column(spacing=0, expand=True, controls=[
+                    ft.Text(label, size=12.5, color=p["text"], no_wrap=True),
+                    ft.Text(url, size=10, color=p["text3"], no_wrap=True),
+                ]),
+                ft.IconButton(ft.Icons.ARROW_UPWARD, icon_size=15,
+                              icon_color=p["text3"], tooltip="Up",
+                              on_click=shift(index, -1)),
+                ft.IconButton(ft.Icons.ARROW_DOWNWARD, icon_size=15,
+                              icon_color=p["text3"], tooltip="Down",
+                              on_click=shift(index, 1)),
+                ft.IconButton(ft.Icons.DELETE_OUTLINE, icon_size=15,
+                              icon_color=p["red"], tooltip="Remove",
+                              on_click=drop(index)),
+            ]))
+
+    label_f = ft.TextField(hint_text="Label", dense=True, filled=True,
+                           height=40, text_size=12, expand=True)
+    url_f = ft.TextField(hint_text="https://", dense=True, filled=True,
+                         height=40, text_size=12, expand=True)
+    note_f = ft.TextField(hint_text="Note (optional)", dense=True, filled=True,
+                          height=40, text_size=12, expand=True)
+
+    def add(e):
+        label = (label_f.value or "").strip()
+        url = (url_f.value or "").strip()
+        if not label or not url:
+            saver.note("a link needs a label and a URL", bad=True)
+            return
+        rows = prefs.quick_links()
+        rows.append((label, (note_f.value or "").strip(), url, "LINK"))
+        label_f.value = url_f.value = note_f.value = ""
+        commit(rows, f"added {label}")
+
+    def reset(e):
+        prefs.set_quick_links(
+            tuple(x.split("|")) for x in prefs.DEFAULT_QUICK_LINKS)
+        commit(prefs.quick_links(), "back to the shipped links")
+
+    body = [sub("QUICK LINKS", 10),
+            sub("the shortcuts on Home. Yours, not a constant in the code.",
+                10.5)]
+    body += [row(i, link) for i, link in enumerate(links)] or [
+        sub("none - add one below", 10)]
+    body += [
+        ft.Row(spacing=6, controls=[label_f, url_f]),
+        ft.Row(spacing=6, controls=[
+            note_f,
+            ft.FilledButton(content=ft.Text("Add", size=12), height=38,
+                            icon=ft.Icons.ADD, on_click=add),
+        ]),
+        ft.TextButton(content=ft.Text("Reset to the shipped links", size=11),
+                      on_click=reset),
+    ]
+    return card(ft.Column(spacing=8, controls=body))
+
+
 def _bump(on_layout):
     """Tell the caller the navigation changed, if it asked to be told.
 
@@ -797,6 +900,7 @@ def build(page, on_theme=None, on_layout=None):
         saver.control,
         layout_card(page, saver, on_layout=on_layout),
         panels_card(page, saver, on_layout=on_layout),
+        quick_links_card(page, saver),
         units_card(page, saver),
         health_card(page, saver),
         data_card(page, saver),

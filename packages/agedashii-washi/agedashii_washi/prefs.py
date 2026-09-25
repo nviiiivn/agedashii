@@ -126,6 +126,86 @@ PAGE_LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools",
 # by an older build or hand-edited in storage never went through the setter.
 PROTECTED_PAGES = {"settings"}
 
+# ----------------------------------------------------------- quick links
+# The eight shortcuts on Home. They were a module constant in Tofu's
+# home.py, which made "which links should Moto ship with" a question
+# somebody had to get right in advance. They are a preference now, so the
+# answer is whatever she puts there.
+#
+# Stored as "label|note|url|icon" strings for the same reason the trip tags
+# below are: SharedPreferences round-trips list[str] and nothing richer. A
+# row that does not parse is dropped rather than raising - a corrupt
+# preference should cost one link, not the whole card.
+#
+# Local like every other preference: no server round trip, works with the
+# radio off.
+DEFAULT_QUICK_LINKS = [
+    "AI chat|Open WebUI|https://ai.alola.lol/|SMART_TOY",
+    "Image / video|ComfyUI|https://comfy.alola.lol/|IMAGE",
+    "IDE|VS Code|https://code.alola.lol/?folder=/home/nvii|CODE",
+    "Music|Navidrome|https://navi.alola.lol/app/#/login|LIBRARY_MUSIC",
+    "Movies / shows|Jellyfin|https://jelly.alola.lol/web/#/home|MOVIE",
+    "totemDocs|Docs|https://totem.alola.lol/|MENU_BOOK",
+    "Site builder|Drag and drop|https://build.alola.lol|WEB",
+    "Gallery|ComfyUI output|https://stuff.alola.lol/|PHOTO_LIBRARY",
+]
+
+KEY_QUICK_LINKS = "agedashii.quick_links"
+
+
+def quick_links():
+    """The shortcuts, as (label, note, url, icon) tuples.
+
+    A row missing a URL is dropped: a shortcut that goes nowhere is the
+    thing this card existed to stop showing.
+    """
+    raw = _V.get(KEY_QUICK_LINKS)
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raw = DEFAULT_QUICK_LINKS
+    out = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        parts = entry.split("|")
+        if len(parts) != 4:
+            continue
+        label, note, url, icon = (x.strip() for x in parts)
+        if not label or not url:
+            continue
+        out.append((label, note, url, icon))
+    return out
+
+
+def set_quick_links(links):
+    """Replace the whole list. `links` is (label, note, url, icon) tuples."""
+    rows = []
+    for item in links or []:
+        try:
+            label, note, url, icon = item
+        except (TypeError, ValueError):
+            continue
+        label, note, url, icon = (str(x).replace("|", " ").strip()
+                                  for x in (label, note, url, icon))
+        if not label or not url:
+            continue
+        rows.append(f"{label}|{note}|{url}|{icon}")
+    _V[KEY_QUICK_LINKS] = rows
+    return True
+
+
+def move_quick_link(index, delta):
+    """Shift one link up or down. Clamped, so the ends are not a dead tap."""
+    links = quick_links()
+    if not 0 <= index < len(links):
+        return False
+    target = max(0, min(len(links) - 1, index + delta))
+    if target == index:
+        return False
+    links.insert(target, links.pop(index))
+    return set_quick_links(links)
+
+
+
 # The scheme this build writes. Bumped when the meaning of a stored layout
 # key changes and `load()` has to convert.
 LAYOUT_SCHEME = 2
@@ -145,7 +225,12 @@ DEFAULT_BOTTOM = ["home", "lab", "tools"]
 MAX_BOTTOM = 5
 
 # The panels pages/home.py stacks, in the order it stacks them.
-HOME_PANEL_KEYS = ["greeting", "weather", "nowplaying", "machines", "actions", "wat2do"]
+# Every card Home can draw, in shipped order. "wat2do" left with
+# Wat2Do; "stats" and "links" were missing, so two cards could
+# never be reordered or hidden and the drag handles outnumbered
+# the rows this list knew about.
+HOME_PANEL_KEYS = ["greeting", "stats", "weather", "nowplaying",
+                   "machines", "links", "actions"]
 
 HOME_PANEL_LABELS = {"greeting": "Greeting & date", "weather": "Weather",
                      "nowplaying": "Now playing", "machines": "Machines",
@@ -179,6 +264,7 @@ DEFAULT_CRT_INTENSITY = 40
 def _defaults():
     return {
         KEY_PAGE_ORDER: list(PAGE_KEYS),
+        KEY_QUICK_LINKS: list(DEFAULT_QUICK_LINKS),
         KEY_PAGES_HIDDEN: [],
         KEY_BOTTOM_PAGES: list(DEFAULT_BOTTOM),
         KEY_LAYOUT_SCHEME: LAYOUT_SCHEME,

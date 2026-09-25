@@ -142,7 +142,7 @@ SURFACES = {
         ("greeting", "Greeting & date"), ("stats", "Stat strip"),
         ("weather", "Weather"), ("nowplaying", "Now playing"),
         ("machines", "Machine status"), ("links", "Quick links"),
-        ("actions", "Quick actions"), ("wat2do", "Wat2Do progress"),
+        ("actions", "Quick actions"),
     ],
     "weather": [
         ("header", "Location picker & rain"), ("map", "Bay Area map"),

@@ -72,8 +72,8 @@ from agedashii_washi.surface import _TAB_INDEX, _dismiss, _show
 from agedashii_washi.widgets import BRD, PAD
 
 from agedashii_moto import motoprefs
-from agedashii_moto.pages import (garage, help as helppage, settings, trips,
-                                  vnav, weather, xnav)
+from agedashii_moto.pages import (garage, help as helppage, home, settings,
+                                  trips, vnav, weather, xnav)
 
 # The gradient the brand pill is painted in. The same three stops the
 # dashboard uses, because it is the same brand - Moto is a door into it,
@@ -87,7 +87,7 @@ PAGES = ["trips", "garage", "xnav", "settings"]
 
 #: Reachable, but not on the bar. Help is read once and then not again;
 #: giving it a permanent slot would cost a fifth of the bar for it.
-EXTRA_PAGES = ["weather", "help"]
+EXTRA_PAGES = ["home", "weather", "help"]
 
 #: The surfaces built out of `panels.layout` - the ones the topbar's
 #: Arrange button applies to. Settings and Help are ordinary columns with
@@ -95,15 +95,16 @@ EXTRA_PAGES = ["weather", "help"]
 #: card stack" asks it of these three and not of all five.
 # xnav is a stub with nothing to arrange yet; vNav's cards are
 # inside Trips, which is already here.
-CARD_PAGES = ["trips", "garage"]
+CARD_PAGES = ["trips", "garage", "home"]
 
 #: Where the bar's highlight goes for a surface that is not on the bar.
 #: Help lives under Settings, so standing in Help lights Settings rather
 #: than nothing - a bar with no selection reads as "you are nowhere".
 NAV_PARENT = {"help": "settings"}
 
-LABELS = {"trips": "Trips", "garage": "Garage", "xnav": "XNAV",
-          "weather": "Weather", "settings": "Settings", "help": "Help"}
+LABELS = {"home": "Home", "trips": "Trips", "garage": "Garage",
+          "xnav": "XNAV", "weather": "Weather", "settings": "Settings",
+          "help": "Help"}
 
 # Themed Material icons, never emoji: this is chrome, and chrome has to
 # follow all 24 themes. An emoji is painted by the font at a fixed colour
@@ -115,7 +116,7 @@ LABELS = {"trips": "Trips", "garage": "Garage", "xnav": "XNAV",
 # the compass arrow - where you are now; TWO_WHEELER is a motorcycle; TUNE
 # is a row of sliders, which is what Settings actually is, rather than the
 # gear every app in the world uses for everything.
-ICONS = {"trips": ft.Icons.ROUTE_OUTLINED, "garage": ft.Icons.TWO_WHEELER,
+ICONS = {"home": ft.Icons.HOME_OUTLINED, "trips": ft.Icons.ROUTE_OUTLINED, "garage": ft.Icons.TWO_WHEELER,
          "xnav": ft.Icons.NAVIGATION_OUTLINED,
          "weather": ft.Icons.CLOUD_OUTLINED, "settings": ft.Icons.TUNE,
          "help": ft.Icons.MENU_BOOK}
@@ -124,7 +125,7 @@ ICONS = {"trips": ft.Icons.ROUTE_OUTLINED, "garage": ft.Icons.TWO_WHEELER,
 # Outline-to-filled is Material's own selected-state language and it reads
 # at a glance on a phone, where the indicator pill alone is easy to miss in
 # bright sun.
-ICONS_SELECTED = {"trips": ft.Icons.ROUTE, "garage": ft.Icons.TWO_WHEELER,
+ICONS_SELECTED = {"home": ft.Icons.HOME, "trips": ft.Icons.ROUTE, "garage": ft.Icons.TWO_WHEELER,
                   "xnav": ft.Icons.NAVIGATION, "weather": ft.Icons.CLOUD,
                   "settings": ft.Icons.TUNE, "help": ft.Icons.MENU_BOOK}
 
@@ -190,6 +191,8 @@ def build_surface(page, key):
     there is nowhere to go rather than being handed a callback into a dead
     page.
     """
+    if key == "home":
+        return home.build(page)
     if key == "garage":
         return garage.build(page)
     if key == "xnav":
