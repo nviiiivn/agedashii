@@ -46,22 +46,6 @@ def _repaint(page):
         pass
 
 
-def build(page):
-    """The FoodZen page: six tabs, matching the website.
-
-    Each tab is a callable, so only the one on screen is built. All six used
-    to be built whenever Tools painted, whether or not FoodZen was even the
-    tab you were looking at - 503 controls, 269 of them the Browse wall
-    inside Grocery. See ``lab._tabs``.
-    """
-    return _tabs(page, [
-        ("Grocery", lambda: _grocery(page)),
-        ("Meals", lambda: _meals(page)),
-        ("Scrape", lambda: _scrape(page)),
-        ("Expenses", lambda: _expenses(page)),
-        ("EatZen", lambda: eatzen.build_eatzen(page)),
-        ("BPM", lambda: eatzen.build_bpm(page)),
-    ], key="foodzen")
 
 
 def _state():
@@ -131,7 +115,7 @@ def _writer(page):
 
 # ------------------------------------------------------------------ grocery
 
-def _grocery(page):
+def grocery(page):
     """List templates, the list itself, browse, and need."""
     p = PAL()
     fz = _state()
@@ -284,7 +268,7 @@ def _browse(page, run):
 
 # -------------------------------------------------------------------- meals
 
-def _meals(page):
+def meals(page):
     """Pantry, recipe vault and meal plan."""
     p = PAL()
     fz = _state()
@@ -375,7 +359,7 @@ def _mealplan(recipes):
 
 # ------------------------------------------------------------------- scrape
 
-def _scrape(page):
+def scrape(page):
     """Pull a recipe off a URL and save it to the vault."""
     p = PAL()
     status = ft.Text("", size=11, color=p["text2"])
@@ -416,7 +400,7 @@ def _scrape(page):
         say("fetching...")
         result.controls = []
         page.update()
-        data, err = M.foodzen_scrape(u)
+        data, err = M.foodzenscrape(u)
         if err:
             say(f"scrape failed - {err}", True)
             page.update()
@@ -457,7 +441,7 @@ def _scrape(page):
 
 # ----------------------------------------------------------------- expenses
 
-def _expenses(page):
+def expenses(page):
     """Import a receipt, see spending, and see what you buy most often."""
     p = PAL()
     fz = _state()

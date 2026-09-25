@@ -514,25 +514,18 @@ class TheNavigationCard(SettingsCase):
         icons = [c.icon for c in topbar.controls if isinstance(c, ft.IconButton)]
         self.assertIn(ft.Icons.MENU, icons)
 
-    def test_hiding_it_takes_the_slot_away_rather_than_leaving_a_gap(self):
-        prefs.set_bottom_bar_enabled(True)
-        prefs_local.set_hamburger_enabled(True)
-        fire(switch_labelled(self.build(), "Menu button").on_change, False)
-        self.assertFalse(prefs_local.hamburger_enabled())
-        self.shell.render(APP_MAIN.SETTINGS)
-        topbar = self.page.controls[0].content.controls[0].content
-        self.assertNotIn(ft.Icons.MENU,
-                         [c.icon for c in topbar.controls
-                          if isinstance(c, ft.IconButton)])
-        self.assertEqual(getattr(topbar.controls[0].content, "value", None),
-                         "Foodzen")
 
     def test_with_the_menu_hidden_every_surface_is_still_reachable(self):
-        """The whole point of a rail. Hidden menu, bar on: walk the bar."""
+        """The whole point of a rail. Asking for the menu to be hidden
+        no longer hides it - Scrape, Expenses and the guide are not on
+        the bar, so the drawer is the only thing that reaches them."""
         prefs.set_bottom_bar_enabled(True)
         prefs_local.set_hamburger_enabled(False)
+        self.assertTrue(prefs_local.hamburger_shown(),
+                        "the trigger must survive, or three surfaces "
+                        "have nothing reaching them")
         self.shell.attach()
-        for index, key in enumerate(APP_MAIN.PAGES):
+        for index, key in enumerate(APP_MAIN.BAR_PAGES):
             with self.subTest(surface=key):
                 event = mock.Mock()
                 event.control.selected_index = index
@@ -550,7 +543,7 @@ class TheNavigationCard(SettingsCase):
         prefs_local.set_hamburger_enabled(False)
         prefs.set_bottom_bar_enabled(False)
         self.assertTrue(prefs_local.hamburger_shown())
-        self.shell.render(APP_MAIN.FOODZEN)
+        self.shell.render(APP_MAIN.GROCERY)
         topbar = self.page.controls[0].content.controls[0].content
         self.assertIn(ft.Icons.MENU, [c.icon for c in topbar.controls
                                       if isinstance(c, ft.IconButton)])
@@ -649,7 +642,7 @@ class TheGuide(SettingsCase):
         """Not "Grocery", which is where an unguarded index would land."""
         self.shell.render(APP_MAIN.GUIDE)
         self.assertEqual(self.shell.bottom_bar().selected_index,
-                         APP_MAIN.PAGES.index(APP_MAIN.SETTINGS))
+                         APP_MAIN.BAR_PAGES.index(APP_MAIN.SETTINGS))
 
     def test_it_answers_the_questions_it_promises_to(self):
         """The four things the guide exists to say, checked as prose.

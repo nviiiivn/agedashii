@@ -79,16 +79,14 @@ def _page_build():
     this one, so the import raised ImportError and EatZen and BPM could not be
     built at all.
 
-    FoodZen's own page is the right answer here: it is the page that carries
-    EatZen and BPM as tabs, so rebuilding it puts you back where you were.
-    Imported inside the function because foodzen.py imports this module at
-    module level - the cycle only resolves if one half of it is deferred.
+    EatZen used to be a tab of FoodZen, so rebuilding FoodZen put you back
+    where you were. Flattened, EatZen is its own surface and the page to
+    rebuild is this one.
 
     With a shell present this is never called: `rebuilder` prefers the
     whole-app re-render registered on S, which keeps the chrome.
     """
-    from . import foodzen
-    return foodzen.build
+    return build_eatzen
 
 
 def _now_local():

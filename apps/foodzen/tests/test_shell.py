@@ -177,7 +177,7 @@ class ShellCase(unittest.TestCase):
 class ItBuilds(ShellCase):
     def test_a_shell_paints_a_first_screen(self):
         self.shell.attach()
-        self.assertEqual(self.shell.current, APP_MAIN.FOODZEN)
+        self.assertEqual(self.shell.current, APP_MAIN.GROCERY)
         self.assertIsNotNone(self.root())
         self.assertGreater(self.page.updates, 0, "nothing was ever pushed to Flet")
 
@@ -218,7 +218,7 @@ class ItBuilds(ShellCase):
     def test_an_unknown_surface_lands_somewhere_real(self):
         """A stale deep link is a wrong page, never a blank one."""
         self.shell.render("no-such-page")
-        self.assertEqual(self.shell.current, APP_MAIN.FOODZEN)
+        self.assertEqual(self.shell.current, APP_MAIN.GROCERY)
         self.assertIsNotNone(self.shell.body.content)
 
     def test_each_surface_is_the_page_its_label_promises(self):
@@ -230,11 +230,11 @@ class ItBuilds(ShellCase):
                                return_value=marks["build_eatzen"]), \
              mock.patch.object(APP_MAIN.eatzen, "build_bpm",
                                return_value=marks["build_bpm"]), \
-             mock.patch.object(APP_MAIN.foodzen, "build",
-                               return_value=ft.Text("FOODZEN")):
+             mock.patch.object(APP_MAIN.foodzen, "grocery",
+                               return_value=ft.Text("GROCERY")):
             self.assertEqual(self.shell.body_for(APP_MAIN.EATZEN).value, "EATZEN")
             self.assertEqual(self.shell.body_for(APP_MAIN.BPM).value, "BPM")
-            self.assertEqual(self.shell.body_for(APP_MAIN.FOODZEN).value, "FOODZEN")
+            self.assertEqual(self.shell.body_for(APP_MAIN.GROCERY).value, "GROCERY")
 
 
 # ------------------------------------------------------------------ the chrome
@@ -269,19 +269,6 @@ class Chrome(ShellCase):
         self.shell.attach()
         self.assertIn(ft.Icons.MENU, self._topbar_icons())
 
-    def test_hiding_the_menu_trigger_leaves_no_gap(self):
-        """Not a disabled button and not a spacer: the slot goes away.
-
-        "i want the ability to show / hide the hamburger menu trigger" - a
-        hidden trigger that still cost 48px would be the worst of both.
-        """
-        APP_MAIN.prefs_local.set_hamburger_enabled(False)
-        self.shell.attach()
-        bar = self.chrome().controls[0].content
-        self.assertNotIn(ft.Icons.MENU, self._topbar_icons())
-        self.assertEqual(getattr(bar.controls[0].content, "value", None), "Foodzen",
-                         "the brand pill must move to the edge, not sit "
-                         "behind an empty slot")
 
     def test_the_safearea_wraps_the_chrome_and_not_the_crt(self):
         """A screen effect that stopped short of the cutout would draw a
@@ -420,75 +407,16 @@ class Navigation(ShellCase):
         walk(control)
         return out
 
-    def test_the_drawer_sub_rows_match_the_pages_real_tabs(self):
-        """The menu jumps to a tab by index, so the indices have to be right.
 
-        Read back off the page itself rather than restated here: reorder the
-        tabs in pages/foodzen.py and this is what notices.
-        """
-        captured = {}
 
-        def fake_tabs(page, tabs, key=None):
-            captured["labels"] = [label for label, _ in tabs]
-            captured["key"] = key
-            return ft.Text("tabs")
 
-        with mock.patch("agedashii_foodzen.pages.foodzen._tabs", fake_tabs):
-            APP_MAIN.foodzen.build(self.page)
 
-        self.assertEqual(captured["key"], "foodzen",
-                         "the drawer writes _TAB_INDEX['foodzen']")
-        for label, index in APP_MAIN.SUBPAGES[APP_MAIN.FOODZEN]:
-            with self.subTest(tab=label):
-                self.assertEqual(captured["labels"][index], label)
 
-    def test_a_sub_row_lands_on_its_tab(self):
-        self.shell.render(APP_MAIN.FOODZEN)
-        for label, index in APP_MAIN.SUBPAGES[APP_MAIN.FOODZEN]:
-            with self.subTest(tab=label):
-                _TAB_INDEX["foodzen"] = 0
-                self.tap(self._row_for(label))
-                self.assertEqual(self.shell.current, APP_MAIN.FOODZEN)
-                self.assertEqual(_TAB_INDEX["foodzen"], index)
 
-    def test_eatzen_and_bpm_are_not_listed_twice(self):
-        """They are top-level pages here, so they are not also sub-rows."""
-        sub_labels = [label for label, _ in APP_MAIN.SUBPAGES[APP_MAIN.FOODZEN]]
-        self.assertNotIn("EatZen", sub_labels)
-        self.assertNotIn("BPM", sub_labels)
-
-    def test_the_chevron_folds_without_rebuilding_the_page(self):
-        """A slow rebuild eating a tap is a bug this codebase has shipped."""
-        self.shell.render(APP_MAIN.FOODZEN)
-        built = self.shell.body.content
-        chevron = self._chevron_for(APP_MAIN.FOODZEN)
-        self.assertTrue(self.shell._section_open(APP_MAIN.FOODZEN))
-        self.tap(chevron)
-        self.assertFalse(self.shell._section_open(APP_MAIN.FOODZEN))
-        self.assertIs(self.shell.body.content, built,
-                      "folding the menu rebuilt the page body")
-
-    def _chevron_for(self, key):
-        for row in self.shell.nav_drawer().controls:
-            children = getattr(getattr(row, "content", None), "controls", None) or []
-            for child in children:
-                icon = getattr(child, "content", None)
-                if getattr(icon, "icon", None) in (ft.Icons.EXPAND_MORE,
-                                                   ft.Icons.CHEVRON_RIGHT):
-                    return child
-        self.fail(f"no chevron for {key}")
-
-    def test_a_folded_section_draws_no_sub_rows(self):
-        self.shell.render(APP_MAIN.FOODZEN)
-        self.shell._open[APP_MAIN.FOODZEN] = False
-        labels = self._drawer_labels()
-        for label, _ in APP_MAIN.SUBPAGES[APP_MAIN.FOODZEN]:
-            self.assertNotIn(label, labels)
-
-    def test_the_bottom_bar_reaches_every_surface(self):
+    def test_the_bottom_bar_reaches_every_surface_it_carries(self):
         prefs.set_bottom_bar_enabled(True)
         self.shell.attach()
-        for index, key in enumerate(APP_MAIN.PAGES):
+        for index, key in enumerate(APP_MAIN.BAR_PAGES):
             with self.subTest(surface=key):
                 event = mock.Mock()
                 event.control.selected_index = index
@@ -497,7 +425,7 @@ class Navigation(ShellCase):
 
     def test_the_bottom_bar_highlights_where_you_are(self):
         prefs.set_bottom_bar_enabled(True)
-        for index, key in enumerate(APP_MAIN.PAGES):
+        for index, key in enumerate(APP_MAIN.BAR_PAGES):
             self.shell.render(key)
             self.assertEqual(self.shell.bottom_bar().selected_index, index)
 

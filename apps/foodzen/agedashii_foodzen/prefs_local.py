@@ -95,15 +95,31 @@ def hamburger_enabled():
     return _as_bool(_V.get(KEY_HAMBURGER), DEFAULT_HAMBURGER)
 
 
+#: Surfaces this app has that the bottom bar does not carry. Scrape and
+#: Expenses are reached occasionally rather than daily and a seven-stop
+#: bar elides every label on a 400px phone; the guide is read once.
+#:
+#: This is why the trigger can no longer be hidden - see hamburger_shown.
+HAS_DRAWER_ONLY_SURFACES = True
+
+
 def hamburger_shown():
     """Whether the topbar actually draws it.
 
-    The rail: with the bottom bar off, the drawer is the only navigation
-    there is, so the trigger appears regardless of the setting. Without
-    this the two switches together produce an app with no way to reach any
-    other surface - including Settings, which is where you would undo it.
+    The rail: something has to reach every surface.
+
+    With the bottom bar off, the drawer is the only navigation there is.
+    And since flattening, the bar does not carry everything either -
+    Scrape, Expenses and the guide live in the drawer alone - so hiding
+    the trigger would strand three surfaces even with the bar on.
+
+    Either way the answer is the same: it is drawn. The setting is kept
+    and still remembered, because the moment the bar carries everything
+    again it would start meaning something.
     """
-    return hamburger_enabled() or not _shared.bottom_bar_enabled()
+    return (hamburger_enabled()
+            or HAS_DRAWER_ONLY_SURFACES
+            or not _shared.bottom_bar_enabled())
 
 
 # ---------------------------------------------------------------- write API

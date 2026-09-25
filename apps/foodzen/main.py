@@ -53,12 +53,19 @@ from agedashii_foodzen.pages import eatzen, foodzen, guide, settings
 # app - only the word inside it changes.
 ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 
-FOODZEN, EATZEN, BPM, SETTINGS, GUIDE = ("foodzen", "eatzen", "bpm",
-                                         "settings", "guide")
+# Flat: Foodzen IS the app, so there is no page called FoodZen inside it
+# wrapping the others. BPM sits at the same level as Grocery, which is
+# what she asked for - "so bpm is the same as grocery".
+GROCERY, MEALS, SCRAPE, EXPENSES = ("grocery", "meals", "scrape", "expenses")
+EATZEN, BPM, SETTINGS, GUIDE = ("eatzen", "bpm", "settings", "guide")
 
-# The navigation: what the bottom bar carries and what the menu lists. Four,
-# which is inside a NavigationBar's comfortable five.
-PAGES = [FOODZEN, EATZEN, BPM, SETTINGS]
+# Every surface, in menu order.
+PAGES = [GROCERY, MEALS, SCRAPE, EXPENSES, EATZEN, BPM, SETTINGS]
+
+# What rides the bottom bar. Scrape and Expenses are the two that are
+# reached occasionally rather than daily, so they stay in the drawer - a
+# seven-stop bar on a 400px phone elides every label.
+BAR_PAGES = [GROCERY, MEALS, EATZEN, BPM, SETTINGS]
 
 # Everything render() will accept. The guide is reachable from Settings and
 # from nowhere else - it is read once and then rarely, and a bar that has to
@@ -70,26 +77,24 @@ SURFACES = PAGES + [GUIDE]
 # Which navigation entry lights up for a surface that is not itself one.
 PARENT = {GUIDE: SETTINGS}
 
-LABELS = {FOODZEN: "FoodZen", EATZEN: "EatZen", BPM: "BPM",
+LABELS = {GROCERY: "Grocery", MEALS: "Meals", SCRAPE: "Scrape",
+          EXPENSES: "Expenses", EATZEN: "EatZen", BPM: "BPM",
           SETTINGS: "Settings", GUIDE: "How this works"}
+
+# The nav label, where a drawer row and a bar slot have no room for four
+# words. LABELS[GUIDE] is what the page calls itself once you are on it.
+NAV_LABELS = dict(LABELS, **{GUIDE: "Help"})
 # Chrome, so these are themed Material icons and never emoji - see glyphs.py
 # for the rule. Named there rather than here so that "what is the sodium
 # mark" has one answer across the whole app.
-ICONS = {FOODZEN: glyphs.ICON_GROCERY, EATZEN: glyphs.ICON_EATZEN,
-         BPM: glyphs.ICON_BP, SETTINGS: glyphs.ICON_SETTINGS,
-         GUIDE: glyphs.ICON_HELP}
+ICONS = {GROCERY: glyphs.ICON_GROCERY, MEALS: glyphs.ICON_MEALS,
+         SCRAPE: glyphs.ICON_SCRAPE, EXPENSES: glyphs.ICON_EXPENSES,
+         EATZEN: glyphs.ICON_EATZEN, BPM: glyphs.ICON_BP,
+         SETTINGS: glyphs.ICON_SETTINGS, GUIDE: glyphs.ICON_HELP}
 
-# The tabs inside FoodZen, so the drawer can offer one directly instead of
-# making you land on the page and hunt for it. (label, tab index) against the
-# `_tabs(..., key="foodzen")` call in pages/foodzen.py - the test walks both
-# and fails if they drift.
-#
-# EatZen and BPM are tabs 4 and 5 of that page and are deliberately NOT listed
-# here: they are top-level entries in this app, and one surface listed twice
-# in a six-row menu is noise.
-SUBPAGES = {
-    FOODZEN: [("Grocery", 0), ("Meals", 1), ("Scrape", 2), ("Expenses", 3)],
-}
+# Nothing has tabs any more: the six that were tabs of FoodZen are six
+# surfaces, so the drawer lists them directly and has nothing to nest.
+SUBPAGES = {}
 
 # How often the outbox watcher looks up from its book. Matched to
 # api.ONLINE_RECHECK, which is how long a "we are offline" verdict is trusted
@@ -113,7 +118,7 @@ class Shell:
         # Which surface is on screen. Rebound by render(), read by the drawer,
         # the bottom bar and by a theme change - which repaints the page you
         # are on rather than bouncing you back to the first one.
-        self.current = FOODZEN
+        self.current = GROCERY
         # The body is created once and reused across renders, the same way the
         # sync chip is: swapping its `content` is a smaller repaint than
         # rebuilding the column, and a background drain needs a control it can
@@ -366,6 +371,10 @@ class Shell:
             if SUBPAGES.get(k) and self._section_open(k):
                 for label, tab in SUBPAGES[k]:
                     rows.append(sub_row(label, k, tab))
+            # The guide is a surface, not a tab, and hangs off Settings -
+            # the second way in beside the row on the Settings page.
+            if k == SETTINGS:
+                rows.append(page_row(GUIDE))
 
         return ft.NavigationDrawer(bgcolor=p["bg2"], controls=rows)
 
@@ -504,21 +513,20 @@ class Shell:
     # --------------------------------------------------------- bottom bar
     async def bottom_pick(self, e):
         idx = getattr(e.control, "selected_index", None)
-        if idx is not None and 0 <= idx < len(PAGES):
-            self.render(PAGES[idx])
+        if idx is not None and 0 <= idx < len(BAR_PAGES):
+            self.render(BAR_PAGES[idx])
 
     def bottom_bar(self):
-        # selected_index must be a real index (Flet asserts on it). Every
-        # navigable page is on the bar, and a surface that is not one - the
-        # guide - lights up the entry it hangs off rather than falling back
-        # to the first tab, which would say you were on Grocery while you
-        # were reading the manual.
+        # selected_index must be a real index (Flet asserts on it). Three
+        # surfaces are not on the bar - Scrape, Expenses and the guide - so
+        # standing on one lights the entry it hangs off, or Grocery, rather
+        # than leaving the bar reading as "you are nowhere".
         lit = PARENT.get(self.current, self.current)
-        here = PAGES.index(lit) if lit in PAGES else 0
+        here = BAR_PAGES.index(lit) if lit in BAR_PAGES else 0
         return ft.NavigationBar(
             selected_index=here,
-            destinations=[ft.NavigationBarDestination(icon=ICONS[k], label=LABELS[k])
-                          for k in PAGES],
+            destinations=[ft.NavigationBarDestination(
+                icon=ICONS[k], label=NAV_LABELS[k]) for k in BAR_PAGES],
             on_change=self.bottom_pick)
 
     # ------------------------------------------------------------- render
@@ -532,6 +540,14 @@ class Shell:
         back. It is handed the shell's own repaint rather than reaching for
         one, so it still builds in a harness with no shell at all.
         """
+        if key == GROCERY:
+            return foodzen.grocery(self.page)
+        if key == MEALS:
+            return foodzen.meals(self.page)
+        if key == SCRAPE:
+            return foodzen.scrape(self.page)
+        if key == EXPENSES:
+            return foodzen.expenses(self.page)
         if key == EATZEN:
             return eatzen.build_eatzen(self.page)
         if key == BPM:
@@ -542,7 +558,7 @@ class Shell:
                                   on_help=lambda: self.render(GUIDE))
         if key == GUIDE:
             return guide.build(self.page, back=lambda: self.render(SETTINGS))
-        return foodzen.build(self.page)
+        return foodzen.grocery(self.page)
 
     def repaint(self):
         """Rebuild the whole shell on the surface you are standing on."""
@@ -550,7 +566,7 @@ class Shell:
 
     def render(self, key=None):
         p = PAL()
-        key = key if key in SURFACES else FOODZEN
+        key = key if key in SURFACES else GROCERY
         self.current = key
         # Cleared before the body builds and set again by panels.layout(), so
         # the topbar - built after the body, below - knows whether this page
@@ -601,7 +617,7 @@ class Shell:
         """
         S.rerender = lambda: self.render(self.current)
         self.page.on_app_lifecycle_state_change = self.on_lifecycle
-        self.render(FOODZEN)
+        self.render(GROCERY)
         return self
 
 

@@ -731,12 +731,6 @@ class ToolsDoesNotBuildEveryTabBeforeItPaints(unittest.TestCase):
         self.assertTrue(all(isinstance(b, ast.Lambda) for b in bodies),
                         "every Tools tab body must be deferred")
 
-    def test_every_foodzen_tab_body_is_deferred(self):
-        import ast
-        bodies = self._bodies("apps/foodzen/agedashii_foodzen/pages/foodzen.py", "foodzen")
-        self.assertEqual(len(bodies), 6)
-        self.assertTrue(all(isinstance(b, ast.Lambda) for b in bodies),
-                        "every FoodZen tab body must be deferred")
 
 
 class FeedsShowsAPageAtATimeAndSaysSo(unittest.TestCase):
