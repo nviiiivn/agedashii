@@ -151,7 +151,7 @@ SUBPAGES = {
 #: Sub-rows that navigate to another surface rather than to a tab. Kept
 #: apart from SUBPAGES because the test that walks SUBPAGES against the
 #: page modules' own `_tabs()` calls would have nothing to match this to.
-SUBSURFACES = {"settings": [("How this works", "help", 1)]}
+SUBSURFACES = {"settings": [("Help", "help", 1)]}
 
 
 def _sub_rows(key):

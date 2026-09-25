@@ -10,7 +10,7 @@ from agedashii_tofu.pages.lab import _TAB_INDEX
 # now and opening a dialog no longer depends on a food app being installed.
 from agedashii_washi.surface import _show, _dismiss
 from agedashii_tofu.theme_data import THEMES, THEME_NAMES
-from agedashii_tofu.pages import home, lab, tools, settings
+from agedashii_tofu.pages import help as helppage, home, lab, tools, settings
 from agedashii_tofu import api as M
 from agedashii_tofu import config
 from agedashii_tofu import panels
@@ -25,13 +25,18 @@ ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 # four pages reachable only from a hamburger and no single place that
 # listed everything.
 PAGES = ["home", "lab", "tools", "settings"]
+
+#: Reachable, but never on the bar. Read once, then rarely.
+EXTRA_PAGES = ["help"]
 MAIN = ["home", "lab", "tools"]
 MORE = "\x00more"  # sentinel: not a page, it opens the drawer
+# The nav label is Help - a drawer row has no room for four words. The
+# page calls itself "How this works" once you are on it.
 LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools",
-          "settings": "Settings", MORE: "More"}
+          "settings": "Settings", "help": "Help", MORE: "More"}
 ICONS = {"home": ft.Icons.HOME, "lab": ft.Icons.DNS,
          "tools": ft.Icons.CONSTRUCTION, "settings": ft.Icons.SETTINGS,
-         MORE: ft.Icons.MORE_HORIZ}
+         "help": ft.Icons.MENU_BOOK, MORE: ft.Icons.MORE_HORIZ}
 BOTTOM = MAIN + [MORE]
 
 # What sits inside each page, so the drawer can offer it directly instead of
@@ -329,7 +334,14 @@ async def main(page):
 
 
     def _drawer_pages():
-        return prefs.visible_pages()
+        """Her chosen pages, plus Help at the end.
+
+        Help is not one of prefs' pages: it cannot be reordered,
+        hidden or put on the bar, because it is the screen that
+        explains the others - including how to undo whatever you
+        just did to the layout.
+        """
+        return prefs.visible_pages() + EXTRA_PAGES
 
     def _bottom_items():
         """Bottom bar = the owner's chosen pages, plus More for the rest."""
@@ -623,6 +635,8 @@ async def main(page):
             c = lab.build(page)
         elif key == "tools":
             c = tools.build(page)
+        elif key == "help":
+            c = helppage.build(page)
         else:
             # on_layout repaints so a reordered bottom bar takes effect at
             # once. Settings itself decides when to call it - repainting on

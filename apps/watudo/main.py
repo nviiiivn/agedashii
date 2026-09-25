@@ -98,6 +98,10 @@ LABELS = {"wat2do": "Wat2Do", "future": "Future Finds",
           "weather": "Weather", "settings": "Settings",
           "help": "How this works"}
 
+# The nav label, where a drawer row and a bar slot have no room for
+# four words. LABELS[help] is what the page calls itself.
+NAV_LABELS = dict(LABELS, help="Help")
+
 BLURB = {"wat2do": "today's checklist, pain, spoons and a mission",
          "future": "places worth a ride someday",
          "weather": "the bay, and anywhere you tap",
