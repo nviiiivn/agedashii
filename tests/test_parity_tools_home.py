@@ -725,9 +725,9 @@ class ToolsDoesNotBuildEveryTabBeforeItPaints(unittest.TestCase):
     def test_every_tools_tab_body_is_deferred(self):
         import ast
         bodies = self._bodies("agedashii_tofu/pages/tools.py", "tools")
-        # Feeds, Vault, Journal. FoodZen was the fourth and left
-        # with the rest of Foodzen.
-        self.assertEqual(len(bodies), 3)
+        # Feeds, Vault, Journal, and Projects / AI / Obligations,
+        # which arrived when Extras stopped being a page.
+        self.assertEqual(len(bodies), 6)
         self.assertTrue(all(isinstance(b, ast.Lambda) for b in bodies),
                         "every Tools tab body must be deferred")
 

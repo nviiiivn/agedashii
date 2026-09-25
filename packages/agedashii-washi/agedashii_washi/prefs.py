@@ -101,15 +101,22 @@ def legacy_key(key):
     return LEGACY_NS + key[len(NS):] if key.startswith(NS) else None
 
 # ---------------------------------------------------------------- catalogue
-# The nine pages, in shipped order. Deliberately a copy of main.PAGES rather
+# Tofu's pages, in shipped order. Deliberately a copy of main.PAGES rather
 # than an import: main.py calls ft.run() at import time, so importing it from
 # a library module would start the app.
-PAGE_KEYS = ["home", "lab", "tools", "garage", "wat2do",
-             "trips", "weather", "extras", "settings"]
+#
+# These are read by exactly one file - agedashii_tofu/pages/settings.py -
+# and the three split apps keep their own page lists in their own shells.
+# So this is app data sitting in a shared package, which is the wrong
+# place for it; it stays here for now because the layout helpers below
+# close over it, and moving it is its own change.
+#
+# Was nine: garage, wat2do and trips left with Moto and Watudo, weather
+# went to both of them, and extras became three tabs of Tools.
+PAGE_KEYS = ["home", "lab", "tools", "settings"]
 
-PAGE_LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools", "garage": "Garage",
-               "wat2do": "Wat2Do", "trips": "Trips", "weather": "Weather",
-               "extras": "Extras", "settings": "Settings"}
+PAGE_LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools",
+               "settings": "Settings"}
 
 # Settings must stay reachable from at least one surface: it is the only way
 # back from a layout you regret. It may leave the menu *or* the bar - just
@@ -123,7 +130,15 @@ PROTECTED_PAGES = {"settings"}
 # key changes and `load()` has to convert.
 LAYOUT_SCHEME = 2
 
-DEFAULT_BOTTOM = ["home", "lab", "tools", "garage", "wat2do"]
+# Her spec for Tofu's bar: Home, Lab, Tools and More. Was five, two of
+# which (garage, wat2do) left with Moto and Watudo.
+#
+# Settings is deliberately NOT here. It stays reachable through the
+# drawer, and putting it on the bar by default would also weaken the
+# rail below: the point of PROTECTED_PAGES is that Settings cannot
+# leave BOTH surfaces, which only means something while it is normally
+# on one of them.
+DEFAULT_BOTTOM = ["home", "lab", "tools"]
 
 # A NavigationBar also carries a "More" destination, so five is the most that
 # fits on a phone before the labels start eliding.
@@ -398,8 +413,19 @@ def drawer_section_open(page_key, current_key):
 
 
 def set_drawer_open(page_key, open_):
-    """Record an explicit open/closed choice for `page_key`'s chevron."""
-    if page_key not in PAGE_KEYS:
+    """Record an explicit open/closed choice for `page_key`'s chevron.
+
+    Deliberately NOT checked against PAGE_KEYS. Every app draws this
+    drawer, and PAGE_KEYS is Tofu's page list - so the check rejected
+    Moto asking to open Garage, and Garage's Home/Mechanic/Flipper rows
+    silently never drew. The other PAGE_KEYS uses below are Tofu's own
+    layout editor and are right to be narrow; this one is shared.
+
+    A key that is meaningless to the app asking costs one stored string
+    that nothing ever reads, which is cheaper than a nav that quietly
+    loses rows.
+    """
+    if not isinstance(page_key, str) or not page_key or ":" in page_key:
         return False
     kept = [e for e in (_V.get(KEY_DRAWER_OPEN) or [])
             if isinstance(e, str) and e.partition(":")[0] != page_key]

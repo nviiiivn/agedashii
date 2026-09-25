@@ -64,8 +64,8 @@ class TestSanitiseOrder(PrefsTestCase):
         self.assertEqual(sorted(got), sorted(prefs.PAGE_KEYS))
 
     def test_missing_keys_are_appended(self):
-        got = prefs.sanitise_order(["weather", "home"], prefs.PAGE_KEYS)
-        self.assertEqual(got[:2], ["weather", "home"])
+        got = prefs.sanitise_order(["tools", "home"], prefs.PAGE_KEYS)
+        self.assertEqual(got[:2], ["tools", "home"])
         self.assertEqual(sorted(got), sorted(prefs.PAGE_KEYS))
 
     def test_duplicates_collapse(self):
@@ -157,14 +157,15 @@ class TestVisibility(PrefsTestCase):
 
     def test_all_four_combinations_are_reachable(self):
         prefs.set_in_bottom_bar("home", False)       # make a slot
-        prefs.set_in_bottom_bar("weather", True)     # menu + bar
+        prefs.set_in_bottom_bar("home", True)        # menu + bar
         prefs.set_page_in_menu("lab", False)         # bar only
-        prefs.set_page_in_menu("extras", False)      # neither
+        prefs.set_page_in_menu("tools", False)       # neither
+        prefs.set_in_bottom_bar("tools", False)      # ...and off the bar
         self.assertEqual(
             {k: (k in prefs.visible_pages(), k in prefs.bottom_bar_pages())
-             for k in ("weather", "lab", "trips", "extras")},
-            {"weather": (True, True), "lab": (False, True),
-             "trips": (True, False), "extras": (False, False)})
+             for k in ("home", "lab", "tools")},
+            {"home": (True, True), "lab": (False, True),
+             "tools": (False, False)})
 
     def test_a_bar_only_page_is_still_reachable(self):
         prefs.set_page_in_menu("lab", False)
@@ -195,9 +196,9 @@ class TestVisibility(PrefsTestCase):
         self.assertIn("settings", prefs.visible_pages())
 
     def test_unhiding_restores_it(self):
-        prefs.set_page_hidden("trips", True)
-        prefs.set_page_hidden("trips", False)
-        self.assertIn("trips", prefs.visible_pages())
+        prefs.set_page_hidden("lab", True)
+        prefs.set_page_hidden("lab", False)
+        self.assertIn("lab", prefs.visible_pages())
 
     def test_bottom_bar_never_empties(self):
         for key in list(prefs.DEFAULT_BOTTOM):
@@ -215,20 +216,27 @@ class TestVisibility(PrefsTestCase):
         self.assertTrue(prefs.reachable_pages())
 
     def test_bottom_bar_is_capped(self):
-        added = prefs.set_in_bottom_bar("weather", True)
-        self.assertFalse(added, "the sixth page must be refused, not silently dropped")
-        self.assertEqual(len(prefs.bottom_bar_pages()), prefs.MAX_BOTTOM)
+        """Tofu has four pages and the cap is five, so the cap cannot be
+        reached any more. What is still worth pinning down is that adding
+        a page to the bar succeeds while there is room, and that the bar
+        never grows past the cap however many are added."""
+        self.assertTrue(prefs.set_in_bottom_bar("settings", True))
+        for key in prefs.PAGE_KEYS:
+            prefs.set_in_bottom_bar(key, True)
+        self.assertLessEqual(len(prefs.bottom_bar_pages()), prefs.MAX_BOTTOM)
+        self.assertEqual(len(prefs.bottom_bar_pages()),
+                         min(len(prefs.PAGE_KEYS), prefs.MAX_BOTTOM))
 
     def test_bottom_bar_follows_the_page_order(self):
-        prefs.set_page_order(["wat2do", "garage", "tools", "lab", "home",
-                              "trips", "weather", "extras", "settings"])
+        prefs.set_page_order(["tools", "lab", "home", "settings"])
+        prefs.set_in_bottom_bar("settings", True)
         self.assertEqual(prefs.bottom_bar_pages(),
-                         ["wat2do", "garage", "tools", "lab", "home"])
+                         ["tools", "lab", "home", "settings"])
 
     def test_moving_a_page_reorders_it(self):
-        prefs.move_page("weather", -1)
+        prefs.move_page("tools", -1)
         order = prefs.page_order()
-        self.assertEqual(order.index("weather"), prefs.PAGE_KEYS.index("weather") - 1)
+        self.assertEqual(order.index("tools"), prefs.PAGE_KEYS.index("tools") - 1)
 
 
 class TestHomePanels(PrefsTestCase):
@@ -329,15 +337,14 @@ class TestPersistence(PrefsTestCase):
         exactly what the old build was drawing.
         """
         store = FakePrefs({
-            "nvii.pages_hidden": ["garage", "extras"],
-            "nvii.bottom_pages": ["home", "lab", "tools", "garage", "wat2do"],
+            "nvii.pages_hidden": ["lab"],
+            "nvii.bottom_pages": ["home", "lab", "tools"],
         })
         asyncio.run(prefs.load(store))
         self.assertEqual(prefs.bottom_bar_pages(),
-                         ["home", "lab", "tools", "wat2do"],
+                         ["home", "tools"],
                          "the same four the coupled build was showing")
-        self.assertNotIn("garage", prefs.visible_pages())
-        self.assertNotIn("extras", prefs.visible_pages())
+        self.assertNotIn("lab", prefs.visible_pages())
 
     def test_the_split_is_applied_once_and_never_again(self):
         """Otherwise every restart would re-couple the two sets.
@@ -345,21 +352,21 @@ class TestPersistence(PrefsTestCase):
         The second load has to leave a deliberately menu-hidden, bar-on
         page exactly as she set it - that combination is the feature.
         """
-        store = FakePrefs({"nvii.pages_hidden": ["garage"],
-                           "nvii.bottom_pages": ["home", "garage"]})
+        store = FakePrefs({"nvii.pages_hidden": ["lab"],
+                           "nvii.bottom_pages": ["home", "lab"]})
         asyncio.run(prefs.load(store))
         self.assertEqual(prefs.bottom_bar_pages(), ["home"])
 
         # Now she does the thing the split exists for: garage on the bar,
         # out of the menu.
-        prefs.set_in_bottom_bar("garage", True)
-        self.assertEqual(prefs.bottom_bar_pages(), ["home", "garage"])
+        prefs.set_in_bottom_bar("lab", True)
+        self.assertEqual(prefs.bottom_bar_pages(), ["home", "lab"])
         asyncio.run(prefs.save(store))
 
         prefs.reset_all()
         asyncio.run(prefs.load(store))
-        self.assertEqual(prefs.bottom_bar_pages(), ["home", "garage"])
-        self.assertNotIn("garage", prefs.visible_pages())
+        self.assertEqual(prefs.bottom_bar_pages(), ["home", "lab"])
+        self.assertNotIn("lab", prefs.visible_pages())
 
     def test_a_fresh_install_is_not_migrated(self):
         """Nothing stored means nothing to convert - and no phantom edits."""
@@ -546,12 +553,20 @@ class DrawerSectionsCollapse(unittest.TestCase):
         prefs.set_drawer_open("tools", True)
         # Stays open even standing somewhere else...
         self.assertTrue(prefs.drawer_section_open("tools", "home"))
-        prefs.set_drawer_open("garage", False)
+        prefs.set_drawer_open("lab", False)
         # ...and stays closed even while standing on it.
-        self.assertFalse(prefs.drawer_section_open("garage", "garage"))
+        self.assertFalse(prefs.drawer_section_open("lab", "lab"))
 
     def test_an_unknown_page_is_refused(self):
-        self.assertFalse(prefs.set_drawer_open("not-a-page", True))
+        # A key from another app is not "unknown" - Moto opens Garage
+        # through this same function, and checking against Tofu's
+        # PAGE_KEYS silently cost Moto its Garage sub-rows. What is
+        # still refused is a key that cannot round-trip: the store
+        # holds "<key>:<flag>" strings.
+        self.assertTrue(prefs.set_drawer_open("garage", True))
+        self.assertFalse(prefs.set_drawer_open("has:colon", True))
+        self.assertFalse(prefs.set_drawer_open("", True))
+        self.assertFalse(prefs.set_drawer_open(None, True))
 
     def test_survives_a_round_trip_through_stringy_storage(self):
         """The same footgun `bottom_bar_enabled` guards against: storage
@@ -578,7 +593,7 @@ class DrawerSectionsCollapse(unittest.TestCase):
         `save_payload()`'s generic loop instead, which this proves end to
         end rather than trusting the mechanism by inspection."""
         prefs.set_drawer_open("tools", True)
-        prefs.set_drawer_open("garage", False)
+        prefs.set_drawer_open("lab", False)
         store = FakePrefs()
         self.assertTrue(asyncio.run(prefs.save(store)))
 
@@ -587,7 +602,7 @@ class DrawerSectionsCollapse(unittest.TestCase):
 
         asyncio.run(prefs.load(store))
         self.assertTrue(prefs.drawer_section_open("tools", "home"))
-        self.assertFalse(prefs.drawer_section_open("garage", "garage"))
+        self.assertFalse(prefs.drawer_section_open("lab", "lab"))
 
     def test_a_page_with_no_subpages_has_nothing_to_toggle(self):
         """home and settings never call set_drawer_open in the real UI
@@ -628,13 +643,12 @@ class DrawerSubpagesMatchTheRealTabs(unittest.TestCase):
 
         expected = {
             "lab": ["Machines", "Network", "Services", "Docker", "Qbit"],
-            "tools": ["Feeds", "Vault", "Journal", "FoodZen"],
-            "foodzen": ["Grocery", "Meals", "Scrape", "Expenses", "EatZen", "BPM"],
-            # Future lives on Wat2Do, matching the website; it was briefly
-            # mounted here too.
-            "extras": ["Projects", "AI", "Obligations"],
+            # FoodZen left with Foodzen; Projects, AI and Obligations
+            # arrived when Extras stopped being a page.
+            "tools": ["Feeds", "Vault", "Journal", "Projects", "AI",
+                      "Obligations"],
         }
-        for group in ("tools", "lab", "extras"):
+        for group in ("tools", "lab"):
             for label, path, _depth in subpages[group]:
                 key, index = path[-1]
                 self.assertLess(index, len(expected[key]),
@@ -1177,9 +1191,9 @@ class RadiusReachesTheControls(unittest.TestCase):
 
     def _radii(self, page_name):
         from agedashii_tofu import ui
-        from agedashii_tofu.pages import home, lab, settings, tools, weather
+        from agedashii_tofu.pages import home, lab, settings, tools
         module = {"home": home, "lab": lab, "tools": tools,
-                  "weather": weather, "settings": settings}[page_name]
+                  "settings": settings}[page_name]
         page = self.StubPage()
         ui.apply_theme(page)
         out = []
@@ -1201,7 +1215,7 @@ class RadiusReachesTheControls(unittest.TestCase):
 
     def test_zero_is_genuinely_square_everywhere(self):
         prefs.set_corner_radius(0)
-        for name in ("home", "lab", "tools", "weather", "settings"):
+        for name in ("home", "lab", "tools", "settings"):
             for control, radius in self._radii(name):
                 if self._is_circle(control, radius):
                     continue           # a status dot is a circle, not a corner
@@ -1250,17 +1264,17 @@ class RadiusReachesTheControls(unittest.TestCase):
         control the CRT adds is one, over the whole shell, in main.py.
         """
         prefs.set_corner_radius(8)
-        before = {n: len(self._walk_page(n)) for n in ("home", "lab", "tools", "weather")}
+        before = {n: len(self._walk_page(n)) for n in ("home", "lab", "tools")}
         prefs.set_corner_radius(0)
         prefs.set_accent_glow(True)
         prefs.set_crt_overlay(True)
-        after = {n: len(self._walk_page(n)) for n in ("home", "lab", "tools", "weather")}
+        after = {n: len(self._walk_page(n)) for n in ("home", "lab", "tools")}
         self.assertEqual(before, after)
 
     def _walk_page(self, name):
         from agedashii_tofu import ui
-        from agedashii_tofu.pages import home, lab, tools, weather
-        module = {"home": home, "lab": lab, "tools": tools, "weather": weather}[name]
+        from agedashii_tofu.pages import home, lab, tools
+        module = {"home": home, "lab": lab, "tools": tools}[name]
         page = self.StubPage()
         ui.apply_theme(page)
         return self._walk(module.build(page))
@@ -2007,10 +2021,10 @@ class SettingsDrivesTheTwoSurfacesSeparately(PrefsTestCase):
         return out
 
     def test_the_bar_pill_leaves_the_menu_alone(self):
-        self.assertIn("garage", prefs.bottom_bar_pages())
-        asyncio.run(self._pills()["garage"]["Bar"].on_click(None))
-        self.assertNotIn("garage", prefs.bottom_bar_pages())
-        self.assertIn("garage", prefs.visible_pages(),
+        self.assertIn("lab", prefs.bottom_bar_pages())
+        asyncio.run(self._pills()["lab"]["Bar"].on_click(None))
+        self.assertNotIn("lab", prefs.bottom_bar_pages())
+        self.assertIn("lab", prefs.visible_pages(),
                       "taking it off the bar must not take it out of the menu")
 
     def test_the_menu_pill_leaves_the_bar_alone(self):

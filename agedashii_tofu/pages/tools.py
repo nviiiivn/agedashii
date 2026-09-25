@@ -30,6 +30,7 @@ from .. import config
 from ..ui import PAL, PAD, BRD, RAD, S, card, chip, sub, title
 from ._forms import Writer, offline_banner, rebuilder
 from .lab import _tabs
+from . import extras as _extras
 
 # Session state, at module level so a repaint after a write does not throw
 # away which feed filter, vault file or journal search you were looking at.
@@ -63,11 +64,16 @@ JN_CATS = {
 JN_SORTS = (("new", "Newest first"), ("old", "Oldest first"), ("az", "A-Z"))
 
 def build(page):
-    """Feeds, Vault and Journal.
+    """Feeds, Vault, Journal, Projects, AI and Obligations.
 
     FoodZen used to be a fourth tab here, a page-inside-a-folder with six
-    tabs of its own. It is its own app now (Agedashii Foodzen) and has been
-    taken out of Tofu along with the rest of the split surfaces.
+    tabs of its own. It is its own app now (Agedashii Foodzen) and has
+    been taken out of Tofu along with the rest of the split surfaces.
+
+    Projects, AI and Obligations arrived from Extras, which stopped being
+    a page of its own. They are wrapped in lambdas here; on Extras they
+    were built eagerly, so all three were rebuilt every time you touched
+    any one of them.
 
     Every tab is a callable, so only the one on screen is built. All of them
     used to be built before anything painted - 1915 controls, of which 1221
@@ -77,7 +83,11 @@ def build(page):
     """
     return _tabs(page, [("Feeds", lambda: _feeds(page)),
                         ("Vault", lambda: _vault(page)),
-                        ("Journal", lambda: _journal(page))], key="tools")
+                        ("Journal", lambda: _journal(page)),
+                        ("Projects", lambda: _extras._projects(page)),
+                        ("AI", lambda: _extras._ai(page)),
+                        ("Obligations", lambda: _extras._obl())],
+                 key="tools")
 
 
 def _run(page, coro_fn, *args):

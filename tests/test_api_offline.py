@@ -624,7 +624,7 @@ class TestSyncSurface(ApiOfflineCase):
 class TestPagesStillBuild(ApiOfflineCase):
     """The read path feeds real pages; a shape change here is a black screen."""
 
-    def test_tools_and_extras_build_offline(self):
+    def test_tools_builds_offline(self):
         import flet as ft
 
         class StubPage:
@@ -645,11 +645,12 @@ class TestPagesStillBuild(ApiOfflineCase):
             def close(self, *a, **k):
                 pass
 
-        # Garage moved out with Moto; its offline build is
-        # covered by apps/moto/tests/test_garage.py.
-        from agedashii_tofu.pages import extras, tools
+        # Garage moved out with Moto and Extras stopped being a
+        # page - its three tabs are Tools tabs now, so building
+        # Tools covers them.
+        from agedashii_tofu.pages import tools
         self.go_offline()
-        for module in (tools, extras):
+        for module in (tools,):
             with self.subTest(page=module.__name__):
                 built = module.build(StubPage())
                 self.assertIsInstance(built, ft.Control)

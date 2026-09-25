@@ -7,8 +7,8 @@ of RainViewer's index that afternoon - not shapes that seemed likely.
 import unittest
 from unittest import mock
 
-from agedashii_tofu import panels
-from agedashii_tofu.pages import weather as W
+from agedashii_washi import panels
+from agedashii_moto.pages import weather as W
 
 
 def _spot(name, region, lat, lon, on_map, temp, code, pop0, precip=0.0,
@@ -203,7 +203,7 @@ class MappedAndReference(unittest.TestCase):
 class AllSpotsPanel(unittest.TestCase):
 
     def setUp(self):
-        from agedashii_tofu.ui import PAL
+        from agedashii_washi.ui_compat import PAL
         self.p = PAL()
         W._OPEN_SPOTS.clear()
         self.shown = self._draw()
@@ -288,7 +288,7 @@ class ARainChipComesFromRealData(unittest.TestCase):
 class TappedPointCard(unittest.TestCase):
 
     def setUp(self):
-        from agedashii_tofu.ui import PAL
+        from agedashii_washi.ui_compat import PAL
         self.p = PAL()
         self.saved = dict(W._point)
 
@@ -345,7 +345,7 @@ class TheFirstPaintNeverWaitsOnOpenMeteo(unittest.TestCase):
         W._WX.update(self.saved)
 
     def test_spots_reads_the_store_and_never_the_wire(self):
-        from agedashii_tofu import api
+        from agedashii_washi import api
         with mock.patch.object(api, "_get") as wire, \
              mock.patch.object(api, "_cached", return_value=SPOTS) as cached:
             spots, err = W._spots()
@@ -357,14 +357,14 @@ class TheFirstPaintNeverWaitsOnOpenMeteo(unittest.TestCase):
     def test_nothing_stored_and_no_failed_read_is_not_an_error(self):
         """The third state. Calling it "server unreachable" before anything
         has been asked is a claim nobody has the evidence for."""
-        from agedashii_tofu import api
+        from agedashii_washi import api
         with mock.patch.object(api, "_cached", return_value=None):
             spots, err = W._spots()
         self.assertIsNone(spots)
         self.assertIsNone(err)
 
     def test_a_failed_background_read_is_reported_verbatim(self):
-        from agedashii_tofu import api
+        from agedashii_washi import api
         W._WX["error"] = "connection refused"
         with mock.patch.object(api, "_cached", return_value=None):
             spots, err = W._spots()
@@ -372,7 +372,7 @@ class TheFirstPaintNeverWaitsOnOpenMeteo(unittest.TestCase):
         self.assertEqual(err, "connection refused")
 
     def test_the_card_tells_reading_apart_from_unreachable_and_empty(self):
-        from agedashii_tofu.ui import PAL
+        from agedashii_washi.ui_compat import PAL
         p = PAL()
         reading = _texts(W._nothing_yet(p, None, True))
         self.assertTrue(any("Reading the forecast" in s for s in reading))
@@ -398,7 +398,7 @@ class WeatherDoesNotBuildBothTabsBeforeItPaints(unittest.TestCase):
         import ast
         import os
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        with open(os.path.join(root, "agedashii_tofu/pages/weather.py")) as fh:
+        with open(os.path.join(root, "agedashii_moto/pages/weather.py")) as fh:
             tree = ast.parse(fh.read())
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call)

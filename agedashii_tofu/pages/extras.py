@@ -1,4 +1,10 @@
-"""Extras: the Gitea repos, the AI chat, Future Finds, and Obligations.
+"""The Projects, AI and Obligations tabs - now tabs of Tools.
+
+Extras stopped being a page of its own; these three moved onto Tools,
+which builds them lazily. What is left here is the three tab bodies and
+their state, imported by tools.py.
+
+Was: Extras - the Gitea repos, the AI chat, Future Finds, and Obligations.
 
 Projects and AI both used to be sketches of the website's real thing.
 Projects listed 21 repo *names* and put an "open in new" icon beside each
@@ -30,23 +36,6 @@ from .. import panels
 from .lab import _tabs, _show, _dismiss, _error_card
 
 
-def build(page):
-    # XNAV moved to Trips, where the rest of the ride pipeline lives; the
-    # copy here was a mock that could never record anything.
-    #
-    # Future Finds lives here rather than as a fourth tab on Wat2Do, where
-    # the website keeps it, for one reason: a new top-level page has to be
-    # declared in prefs.PAGE_KEYS or the layout editor cannot show it, and a
-    # tab inside Wat2Do would sit under that page's own date/checklist state.
-    # Extras is where the app already puts the things that are their own
-    # thing. `key` makes the tab bar remember which one you were on across
-    # the repaint every write triggers - without it, saving a gem bounced
-    # you back to Projects.
-    # Future lives on Wat2Do, which is where the website keeps it. It was
-    # mounted here as well for a while; two mounts of one module is not
-    # mirroring, and the drawer would have offered the same page twice.
-    return _tabs(page, [("Projects", _projects(page)), ("AI", _ai(page)),
-                        ("Obligations", _obl())], key="extras")
 
 
 # ------------------------------------------------------------------ projects

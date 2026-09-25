@@ -10,7 +10,7 @@ from agedashii_tofu.pages.lab import _TAB_INDEX
 # now and opening a dialog no longer depends on a food app being installed.
 from agedashii_washi.surface import _show, _dismiss
 from agedashii_tofu.theme_data import THEMES, THEME_NAMES
-from agedashii_tofu.pages import home, lab, tools, weather, extras, settings
+from agedashii_tofu.pages import home, lab, tools, settings
 from agedashii_tofu import api as M
 from agedashii_tofu import config
 from agedashii_tofu import panels
@@ -24,14 +24,13 @@ ORANGE, PINK, CYAN = "#ffb020", "#ff5e8a", "#39d0ff"
 # drawer. Splitting them into two disjoint sets, as this did before, left
 # four pages reachable only from a hamburger and no single place that
 # listed everything.
-PAGES = ["home", "lab", "tools", "weather", "extras", "settings"]
-MAIN = ["home", "lab", "tools", "weather", "extras"]
+PAGES = ["home", "lab", "tools", "settings"]
+MAIN = ["home", "lab", "tools"]
 MORE = "\x00more"  # sentinel: not a page, it opens the drawer
 LABELS = {"home": "Home", "lab": "Lab", "tools": "Tools",
-          "weather": "Weather", "extras": "Extras", "settings": "Settings",
-          MORE: "More"}
-ICONS = {"home": ft.Icons.HOME, "lab": ft.Icons.DNS, "tools": ft.Icons.CONSTRUCTION,
-         "weather": ft.Icons.CLOUD, "extras": ft.Icons.WIDGETS, "settings": ft.Icons.SETTINGS,
+          "settings": "Settings", MORE: "More"}
+ICONS = {"home": ft.Icons.HOME, "lab": ft.Icons.DNS,
+         "tools": ft.Icons.CONSTRUCTION, "settings": ft.Icons.SETTINGS,
          MORE: ft.Icons.MORE_HORIZ}
 BOTTOM = MAIN + [MORE]
 
@@ -51,11 +50,10 @@ SUBPAGES = {
         ("Feeds", [("tools", 0)], 1),
         ("Vault", [("tools", 1)], 1),
         ("Journal", [("tools", 2)], 1),
+        ("Projects", [("tools", 3)], 1),
+        ("AI", [("tools", 4)], 1),
+        ("Obligations", [("tools", 5)], 1),
     ],
-    "weather": [("Bay Area", [("weather", 0)], 1),
-                ("Explore", [("weather", 1)], 1)],
-    "extras": [("Projects", [("extras", 0)], 1), ("AI", [("extras", 1)], 1),
-               ("Obligations", [("extras", 2)], 1)],
 }
 
 # How often the outbox watcher looks up from its book. Matched to
@@ -625,10 +623,6 @@ async def main(page):
             c = lab.build(page)
         elif key == "tools":
             c = tools.build(page)
-        elif key == "weather":
-            c = weather.build(page)
-        elif key == "extras":
-            c = extras.build(page)
         else:
             # on_layout repaints so a reordered bottom bar takes effect at
             # once. Settings itself decides when to call it - repainting on
