@@ -61,24 +61,38 @@ its six tabs become six peers. BPM sits at the same level as Grocery.
 
 ## 2. What has to be built to get there
 
-### A. Four Home dashboards — the largest piece
+### A. Four Home dashboards — smaller than it first looked
 
-Every app gains a Home, and none of them can share Tofu's. Tofu's
-`home.py` is 581 lines of machine stats, containers, services and power
-controls — it is a *homelab* dashboard, and it means nothing in Foodzen.
+I costed this as three new features. It is not, and the reason is worth
+knowing: `home.py:520` already registers Home as eight named, separately
+buildable cards through `panels.layout("home", {...})` —
 
-So Home is one shared **shape** with four different contents:
+`greeting` · `stats` · `weather` · `nowplaying` · `machines` · `links` ·
+`actions` · `wat2do`
 
-| App | What its Home would show |
+Her brief for the new Homes was *"the quick links and quick actions and
+'welcome'/'good morning' shit, a weather shortcut, and maybe a music
+component"*. Every one of those is already a card in that list. So the work
+is **moving five of those cards into Washi and letting each app pick which
+it shows** — not writing three dashboards.
+
+| App | Cards |
 |---|---|
-| Tofu | what it shows now — machines, services, containers, weather, quick actions |
-| Moto | next ride, last ride, odometer, service due, weather for riding |
-| Watudo | today's checklist, pain and spoons, what is next |
-| Foodzen | today's sodium and sugar against target, what is in the list, last BPM |
+| Tofu | unchanged: all eight |
+| Moto | greeting, links, actions, weather, nowplaying |
+| Watudo | greeting, links, actions, weather, nowplaying |
+| Foodzen | greeting, links, actions, weather, nowplaying |
 
-**This is the part I would push back on scheduling.** Three new dashboards
-is not a refactor, it is three new features, and each needs deciding what
-belongs on it. Everything else in this proposal is moving existing code.
+Two things fall out of this for free, because `panels` already does them:
+each app's Home is reorderable and each card is hideable, per app, without
+any new code.
+
+What each app *should eventually* show — next ride and service due for
+Moto, today's sodium against target for Foodzen — is a later pass. Basic
+first, as she asked.
+
+`QUICK_LINKS` is a module constant of eight homelab URLs. It stays Tofu's
+by default; whether each app gets its own list is question 4 below.
 
 ### B. Weather moves to Washi
 
@@ -135,7 +149,8 @@ Each step leaves every suite green.
 5. **vNav rename + xNav stub.** Self-contained.
 6. **Mechanic reads the Mechanicry journal.**
 7. **Help everywhere**, under one name.
-8. **Four Homes.** Last, because it is the only part that is new work.
+8. **Home cards into Washi, and a Home in each app.** Last because it
+   depends on Weather already being shared (step 1), not because it is big.
 
 Rebuild and redeploy at the end, on your word — not per step.
 
@@ -143,13 +158,21 @@ Rebuild and redeploy at the end, on your word — not per step.
 
 ## 4. Decisions I need from you
 
-1. **"Help" or "How this works"?** Moto says Help, Watudo says How this
-   works. It should be one word in all four. I would use **Help**, because
-   it is what the drawer entry has room for.
-2. **Four Homes now, or later?** Step 8 is roughly as much work as steps
-   1–7 together. Everything else can ship without it.
+1. ~~"Help" or "How this works"?~~ **Settled: both.** They are different
+   jobs — **Help** is the nav label, where a drawer row and a bar slot have
+   no room for four words, and **How this works** is the page's own title
+   once you are on it. Same page. Moto and Watudo each had one half of
+   this already; now all four have both.
+2. ~~Four Homes now, or later?~~ **Settled: now, basic.** Greeting, quick
+   links, quick actions, weather, music. See section A — these already
+   exist as cards, so this is no longer the expensive step.
 3. **Does Tofu keep a Home at all**, given its Home *is* the homelab
    dashboard and nothing moved out of it? I have assumed yes, unchanged.
+4. **Does each app get its own quick links?** `QUICK_LINKS` is eight
+   homelab URLs — AI chat, ComfyUI, VS Code, Navidrome, Jellyfin, docs,
+   site builder, gallery. Right for Tofu. For Moto and Foodzen they are
+   probably the wrong eight, but I do not know what the right ones are, so
+   the default is: every app shows the same list until you say otherwise.
 
 ---
 
