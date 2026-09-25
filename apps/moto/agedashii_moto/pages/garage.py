@@ -868,12 +868,62 @@ def _mechanic(page):
             title("The fleet", 13),
             ft.Column(spacing=6, controls=[bike_card(b) for b in bikes]),
         ])),
+        "journal": _mechanicry_card,
         "note": lambda: card(
             sub("The website's Mechanic tab is still a placeholder - "
                 "\"content TBD\" - so this view is app-side only. Everything "
                 "it writes lands in the same records the website reads.",
                 10.5), pad=10),
     })
+
+
+def _mechanicry_card():
+    """The Mechanicry journal, which lived in the dashboard until now.
+
+    Her words: "into garage mechanic -- where there's legit entries for
+    each bike -- i feel like the 'journal' exists already. it's just not
+    called a journal."
+
+    It half did. Garage has per-bike Notes and Mods folders, and the
+    dashboard had a Journal with a Mechanicry category - two stores on two
+    endpoints, and the motorcycle writing was in the one that is not about
+    motorcycles.
+
+    Nothing is moved on disk. Every Mechanicry entry lands under Unsorted
+    because not one of them fills in the template's "Bike/vehicle:" line,
+    so there is nothing to sort them BY yet - and guessing which of six
+    bikes an entry belongs to is not a script's call to make.
+    """
+    p = PAL()
+    rows = M.journal()
+    if rows is None:
+        return card(ft.Column(spacing=6, controls=[
+            title("Mechanicry", 13),
+            sub("the server has not answered /api/journal", 10)]))
+    mine = [r for r in rows if (r.get("cat") or "").lower() == "mechanicry"]
+    if not mine:
+        return card(ft.Column(spacing=6, controls=[
+            title("Mechanicry", 13),
+            sub("nothing written yet", 10)]))
+
+    def entry(r):
+        return ft.Container(
+            padding=PAD(6, 9), border_radius=RAD(8), bgcolor=p["bg2"],
+            border=BRD(p["border"], 1),
+            content=ft.Row(spacing=8, controls=[
+                ft.Icon(ft.Icons.BUILD, size=13, color=p["text3"]),
+                ft.Text(r.get("title") or r.get("name") or "—", size=12,
+                        color=p["text"], expand=True, no_wrap=True),
+                ft.Text(r.get("date") or "", size=10.5, color=p["text3"]),
+            ]))
+
+    return card(ft.Column(spacing=8, controls=[
+        title("Mechanicry", 13),
+        sub(f"unsorted - {len(mine)} "
+            f"{'entry' if len(mine) == 1 else 'entries'}, none naming a "
+            f"bike yet", 10),
+        ft.Column(spacing=6, controls=[entry(r) for r in mine[:40]]),
+    ]))
 
 
 # ---------------------------------------------------------------- flipper
