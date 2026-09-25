@@ -149,10 +149,17 @@ Each step leaves every suite green.
 5. **vNav rename + xNav stub.** Self-contained.
 6. **Mechanic reads the Mechanicry journal.**
 7. **Help everywhere**, under one name.
-8. **Home cards into Washi, and a Home in each app.** Last because it
-   depends on Weather already being shared (step 1), not because it is big.
+8. **Home cards into Washi, and a Home in each app.** Depends on Weather
+   already being shared (step 1), not on being big.
+9. **Tofu Home's three dead controls** (section G) and the `_goto` test.
+10. **Quick links into prefs, and the Settings editor** (section H).
+11. **Rebuild and redeploy** — web, APK and Linux x64 for all four apps.
+    Her words: *"after you've made all the changes -- please make sure to
+    update the web apps and apk and x64 linux apps please."*
 
-Rebuild and redeploy at the end, on your word — not per step.
+Rebuilding happens once, at the end, on your word — not per step. Verified
+by pulling each bundle down from its live URL and reading what is inside
+it, not by looking at this machine's disk.
 
 ---
 
@@ -166,13 +173,53 @@ Rebuild and redeploy at the end, on your word — not per step.
 2. ~~Four Homes now, or later?~~ **Settled: now, basic.** Greeting, quick
    links, quick actions, weather, music. See section A — these already
    exist as cards, so this is no longer the expensive step.
-3. **Does Tofu keep a Home at all**, given its Home *is* the homelab
-   dashboard and nothing moved out of it? I have assumed yes, unchanged.
-4. **Does each app get its own quick links?** `QUICK_LINKS` is eight
-   homelab URLs — AI chat, ComfyUI, VS Code, Navidrome, Jellyfin, docs,
-   site builder, gallery. Right for Tofu. For Moto and Foodzen they are
-   probably the wrong eight, but I do not know what the right ones are, so
-   the default is: every app shows the same list until you say otherwise.
+3. ~~Does Tofu keep a Home?~~ **Settled: yes, it is the template.**
+   Unchanged except for what was removed — see section G, which is not
+   optional, because the trim already left two dead taps on it.
+4. ~~Own quick links per app?~~ **Settled: keep the defaults, and make
+   them editable.** Settings gets an editor for the quick links — add,
+   delete, rename, re-point, reorder. That replaces the question: the
+   defaults stop being a decision anyone has to get right, because you can
+   change them per app without a rebuild. See section H.
+
+---
+
+## G. Tofu's Home has three dead controls
+
+Two are mine, from the trim that has already landed. One was there before.
+
+| Where | What | Whose |
+|---|---|---|
+| `home.py:438` | a **Wat2Do** tile jumping to `wat2do` | mine — the page left in `1e55c30` |
+| `home.py:504` | the whole **Wat2Do mini-card**, same dead jump | mine, same commit |
+| `home.py:436-437` | **Docker and Qbit tiles are swapped** | pre-existing |
+
+The third is worth spelling out. Lab's tabs are Machines(0), Network(1),
+Services(2), Docker(3), Qbit(4) — confirmed against `lab.py`. The Home
+tiles send Docker to index 4 and Qbit to index 3. Tapping Docker has been
+opening Qbit, and tapping Qbit has been opening Docker, for as long as
+those tiles have existed.
+
+`_goto` returns None when there is no shell, and a tile with a None handler
+is skipped rather than drawn dead — which is why the tests did not catch
+any of this. The tests build pages without a shell.
+
+**Fix:** drop the Wat2Do tile and the Wat2Do card, swap Docker and Qbit
+back, and add a test that walks every `_goto` key against `main.PAGES` so a
+future removal cannot leave another one behind.
+
+## H. Quick links become editable
+
+`QUICK_LINKS` is a module constant of eight tuples — label, note, url,
+icon. Making it editable means:
+
+- the list moves from a constant into prefs, seeded with the eight
+  defaults, so an untouched install looks exactly as it does now
+- Settings gains an editor: add, delete, rename, re-point, reorder
+- it is per app, so Moto's links and Foodzen's links diverge by you
+  changing them, not by me guessing
+- it is local like every other preference — no server round trip, works
+  with the radio off
 
 ---
 
