@@ -73,8 +73,13 @@ buildable cards through `panels.layout("home", {...})` —
 Her brief for the new Homes was *"the quick links and quick actions and
 'welcome'/'good morning' shit, a weather shortcut, and maybe a music
 component"*. Every one of those is already a card in that list. So the work
-is **moving five of those cards into Washi and letting each app pick which
-it shows** — not writing three dashboards.
+is **each app getting a Home built from those cards** — not writing three
+dashboards.
+
+The cards go into each app, the same way Weather does, and for the same
+reason: they are page content, not plumbing. `panels.layout` — the thing
+that arranges them, hides them and reorders them — is already in Washi,
+which is where the shared part belongs.
 
 | App | Cards |
 |---|---|
@@ -94,15 +99,22 @@ first, as she asked.
 `QUICK_LINKS` is a module constant of eight homelab URLs. It stays Tofu's
 by default; whether each app gets its own list is question 4 below.
 
-### B. Weather moves to Washi
+### B. Weather goes to Moto and Watudo
 
-`weather.py` is 1,623 lines and two apps now need it. Copying it into both
-means two files that drift. It moves to `agedashii_washi/pages/weather.py`
-and both import it.
+`weather.py` leaves Tofu and lands in both apps. Same page, same two tabs
+(Bay Area, Explore), in each.
 
-This makes Washi the first shared package to own a *page* rather than
-plumbing. That is a real change to what Washi is, and worth saying out loud
-rather than doing quietly.
+I proposed putting it in Washi instead. That was wrong: Washi is plumbing —
+store, api, config, prefs, panels, surface, widgets, forms, motion,
+routing, tileserver — and a 1,623-line page is not plumbing. Her call, and
+the right one.
+
+The data side needs nothing: `api.weather()` is already in Washi, which is
+where the shared part belongs.
+
+Two copies can drift. If that ever bites, the fix is to pull the shared
+part out then, with a real reason — not to build a package up front against
+a problem that has not happened.
 
 ### C. Tools absorbs Extras
 
@@ -136,24 +148,66 @@ Rename in one module and its two mount points. The new xNav is a page that
 says what it will be, with `XNAV.md` behind it. **No navigation is built in
 this pass.**
 
+## I. Links that open the other app
+
+Her ask: a Wat2Do link on Tofu should open the Watudo *app* if it is
+installed, and the web portal otherwise.
+
+This works, and it needs no new invention, because each app already has its
+own domain and its own package id:
+
+| | |
+|---|---|
+| `online.iamprettyfamous.agedashii` | tofu.alola.lol |
+| `online.iamprettyfamous.agedashii.moto` | moto.alola.lol |
+| `online.iamprettyfamous.agedashii.watudo` | watudo.alola.lol |
+| `online.iamprettyfamous.agedashii.foodzen` | foodzen.alola.lol |
+
+**Android App Links** is the mechanism. Each app declares an intent-filter
+for its own `https://<app>.alola.lol`, and every app links to the others by
+plain URL. Android then hands the link to the installed app, or to the
+browser if it is not installed — which is exactly the behaviour asked for,
+with no "do you have it?" check anywhere in our code. One `launch_url` per
+link, and the same code path works on web and desktop.
+
+**The one prerequisite** is a `/.well-known/assetlinks.json` on each domain
+carrying that app's SHA-256 signing fingerprint. Caddy already serves all
+four domains, so hosting it is a file. Getting the fingerprint needs
+`apksigner`: the APKs are signed with scheme v2/v3, so there is no
+`META-INF/*.RSA` to read — this Pi cannot see it, but the toolchain on
+Tower can.
+
+**The risk worth naming now.** If the signing key changes between builds,
+the published fingerprints stop matching and every cross-app link silently
+falls back to the browser — it still *works*, so nothing looks broken, and
+the app links just quietly stop opening the app. `flet build apk` signs
+with a debug key unless told otherwise, and a debug keystore is regenerated
+per machine. **Before this ships, the four apps need one stable signing
+key**, or the assetlinks become a lie the moment a build happens somewhere
+else.
+
+Without verified App Links it still works, just worse: Android shows a
+chooser instead of going straight to the app.
+
+**Web to web** needs nothing — a link between the domains already works
+today, and a PWA installed to the home screen will capture its own domain.
+
 ---
 
 ## 3. Order
 
 Each step leaves every suite green.
 
-1. **Weather → Washi.** Nothing depends on the others; unblocks Moto and Watudo.
+1. **Weather into Moto and Watudo**, out of Tofu.
 2. **Tools absorbs Extras; Tofu drops Weather and Extras.** Tofu reaches its target shape.
-3. **Weather into Moto and Watudo.** Now that it is shared.
-4. **Foodzen flattens.** Self-contained.
-5. **vNav rename + xNav stub.** Self-contained.
-6. **Mechanic reads the Mechanicry journal.**
-7. **Help everywhere**, under one name.
-8. **Home cards into Washi, and a Home in each app.** Depends on Weather
-   already being shared (step 1), not on being big.
-9. **Tofu Home's three dead controls** (section G) and the `_goto` test.
-10. **Quick links into prefs, and the Settings editor** (section H).
-11. **Rebuild and redeploy** — web, APK and Linux x64 for all four apps.
+3. **Foodzen flattens.** Self-contained.
+4. **vNav rename + xNav stub.** Self-contained.
+5. **Mechanic reads the Mechanicry journal.**
+6. **Help everywhere**, under one name.
+7. **A Home in each app**, built from the cards Tofu's Home already has.
+8. **Tofu Home's three dead controls** (section G) and the `_goto` test.
+9. **Quick links into prefs, and the Settings editor** (section H).
+10. **Rebuild and redeploy** — web, APK and Linux x64 for all four apps.
     Her words: *"after you've made all the changes -- please make sure to
     update the web apps and apk and x64 linux apps please."*
 
