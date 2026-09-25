@@ -714,7 +714,7 @@ class DrawerReachesEveryTab(unittest.TestCase):
                 subpages = ast.literal_eval(node.value)
         self.assertIn("trips", subpages)
         self.assertEqual([(label, path[-1][1]) for label, path, _ in subpages["trips"]],
-                         [("Selekt", 0), ("Produce", 1), ("Rides", 2), ("xNav", 3)])
+                         [("Selekt", 0), ("Produce", 1), ("Rides", 2), ("vNav", 3)])
 
 
 class StubPage:
@@ -776,9 +776,9 @@ class ThePageBuilds(ApiOfflineCase):
 
     def setUp(self):
         super().setUp()
-        from agedashii_moto.pages import trips, xnav
+        from agedashii_moto.pages import trips, vnav
         self.trips = trips
-        self.xnav = xnav
+        self.vnav = vnav
         self._reset_state()
         self.addCleanup(self._reset_state)
 
@@ -788,7 +788,7 @@ class ThePageBuilds(ApiOfflineCase):
                               "note": ""})
         self.trips._PLAN.update({"route": None, "from": None, "to": None,
                                  "from_text": "", "to_text": ""})
-        self.xnav._NAV.update({"a": None, "b": None, "route": None,
+        self.vnav._NAV.update({"a": None, "b": None, "route": None,
                                "limits": None, "speeds": [], "corners": [],
                                "profile": None, "profile_error": "", "pois": {},
                                "poi_failed": [], "poi_open": False,
@@ -904,11 +904,11 @@ class ThePageBuilds(ApiOfflineCase):
         self.assertIn("Alameda loop", said)
         self.assertIn("Save trip", said)
 
-    def test_xnav_builds_with_a_route_in_hand(self):
+    def test_vnav_builds_with_a_route_in_hand(self):
         self.server.data["/api/trips"] = [LEG]
         self.server.data["/api/rides"] = {"rides": []}
         route = T.parse_route(VALHALLA)
-        self.xnav._NAV.update({"route": route, "corners": [0],
+        self.vnav._NAV.update({"route": route, "corners": [0],
                                "speeds": [35] * len(route["points"]),
                                "profile": [{"lat": 0, "lon": 0, "ele_ft": 10},
                                            {"lat": 1, "lon": 1, "ele_ft": 90}],
@@ -924,7 +924,7 @@ class ThePageBuilds(ApiOfflineCase):
         self.server.data["/api/rides"] = {"rides": []}
         built, _ = self.build()
         said = _texts(built)
-        for label in ("Selekt", "Produce", "Rides", "xNav"):
+        for label in ("Selekt", "Produce", "Rides", "vNav"):
             self.assertIn(label, said)
 
 

@@ -272,7 +272,7 @@ class TheHamburgerCanBeHidden(SettingsCase):
         they are, in each surface's own tab bar."""
         _fire(_switch(self.tree, "Menu button"), False)
         module = load_main()
-        for key, labels in (("trips", ["Selekt", "Produce", "Rides", "xNav"]),
+        for key, labels in (("trips", ["Selekt", "Produce", "Rides", "vNav"]),
                             ("garage", ["Home", "Mechanic", "Flipper"])):
             with self.subTest(surface=key):
                 appearance.S.goto(key)
@@ -342,12 +342,12 @@ class TheUnitsReachTheNumbers(ShellCase):
         self.assertEqual(prefs.unit_system(), "metric")
         self.assertEqual(U.distance_unit(), "km")
 
-    def test_metric_changes_the_distances_xnav_shows(self):
+    def test_metric_changes_the_distances_vnav_shows(self):
         module = load_main()
         prefs.set_unit_system("imperial")
-        imperial = " ".join(texts(module.build_surface(StubPage(), "xnav")))
+        imperial = " ".join(texts(module.build_surface(StubPage(), "trips")))
         prefs.set_unit_system("metric")
-        metric = " ".join(texts(module.build_surface(StubPage(), "xnav")))
+        metric = " ".join(texts(module.build_surface(StubPage(), "trips")))
         self.assertIn("mi", imperial)
         self.assertIn("km", metric)
         self.assertNotIn("— mi", metric)

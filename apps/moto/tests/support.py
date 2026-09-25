@@ -272,7 +272,7 @@ class ShellCase(unittest.TestCase):
 
 def reset_page_state():
     """Put every page module's between-rebuild state back to empty."""
-    from agedashii_moto.pages import garage, settings, trips, xnav
+    from agedashii_moto.pages import garage, settings, trips, vnav
 
     # Settings' status line outlives a rebuild on purpose (see the comment
     # on `_STATUS` there), which means it also outlives a test. A leftover
@@ -288,7 +288,7 @@ def reset_page_state():
     garage._state.update({"bike": None, "section": "dashboard", "note": None})
     garage._flip.update({"query": "motorcycle", "min": "", "max": "",
                          "data": None, "error": "", "note": "", "ran": False})
-    xnav._NAV.update({"a": None, "b": None, "route": None, "limits": None,
+    vnav._NAV.update({"a": None, "b": None, "route": None, "limits": None,
                       "speeds": [], "corners": [], "profile": None,
                       "profile_error": "", "pois": {}, "poi_failed": [],
                       "poi_open": False, "active": set(), "note": "",

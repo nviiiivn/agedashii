@@ -73,7 +73,7 @@ from agedashii_washi.widgets import BRD, PAD
 
 from agedashii_moto import motoprefs
 from agedashii_moto.pages import (garage, help as helppage, settings, trips,
-                                  weather, xnav)
+                                  vnav, weather, xnav)
 
 # The gradient the brand pill is painted in. The same three stops the
 # dashboard uses, because it is the same brand - Moto is a door into it,
@@ -93,7 +93,9 @@ EXTRA_PAGES = ["weather", "help"]
 #: Arrange button applies to. Settings and Help are ordinary columns with
 #: nothing to rearrange, so a test that asks "does every surface register a
 #: card stack" asks it of these three and not of all five.
-CARD_PAGES = ["trips", "garage", "xnav"]
+# xnav is a stub with nothing to arrange yet; vNav's cards are
+# inside Trips, which is already here.
+CARD_PAGES = ["trips", "garage"]
 
 #: Where the bar's highlight goes for a surface that is not on the bar.
 #: Help lives under Settings, so standing in Help lights Settings rather
@@ -138,7 +140,7 @@ ICONS_SELECTED = {"trips": ft.Icons.ROUTE, "garage": ft.Icons.TWO_WHEELER,
 # page itself.
 SUBPAGES = {
     "trips": [("Selekt", [("trips", 0)], 1), ("Produce", [("trips", 1)], 1),
-              ("Rides", [("trips", 2)], 1), ("xNav", [("trips", 3)], 1)],
+              ("Rides", [("trips", 2)], 1), ("vNav", [("trips", 3)], 1)],
     "garage": [("Home", [("garage", 0)], 1),
                ("Mechanic", [("garage", 1)], 1),
                ("Flipper", [("garage", 2)], 1)],

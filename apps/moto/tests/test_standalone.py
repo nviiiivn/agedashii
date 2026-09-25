@@ -79,7 +79,7 @@ class ItDoesNotImportTheOtherApps(unittest.TestCase):
     def test_the_shipped_package_does_not_even_mention_the_old_module_paths(self):
         """Comments are not imports, but they are directions.
 
-        `xnav.py` pointed at `agedashii_tofu/tileserver.py` for months after that
+        `vnav.py` pointed at `agedashii_tofu/tileserver.py` for months after that
         file stopped existing. A stale pointer in a docstring costs the next
         reader the same search every time.
         """
@@ -101,7 +101,7 @@ class ItDoesNotImportTheOtherApps(unittest.TestCase):
         load_main()
         import agedashii_moto.pages.garage  # noqa: F401
         import agedashii_moto.pages.trips   # noqa: F401
-        import agedashii_moto.pages.xnav    # noqa: F401
+        import agedashii_moto.pages.vnav    # noqa: F401
         for name in FORBIDDEN:
             self.assertNotIn(name, sys.modules,
                              f"{name} was loaded by importing Moto")

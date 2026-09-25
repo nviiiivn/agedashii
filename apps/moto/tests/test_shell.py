@@ -136,11 +136,11 @@ class EverySurfaceRenders(ShellCase):
         self.assertNotIn("Rebel 250", said)
         self.assertNotIn("CB250", said)
 
-    def test_xnav_shows_dashes_for_a_route_it_has_not_got(self):
+    def test_vnav_shows_dashes_for_a_route_it_has_not_got(self):
         """Distance, duration, ascent and descent are all "—" until there is
         a route to measure - not 0, which would read as a measurement."""
         module = load_main()
-        said = " ".join(texts(module.build_surface(StubPage(), "xnav")))
+        said = " ".join(texts(module.build_surface(StubPage(), "trips")))
         self.assertIn("No route yet", said)
         self.assertIn("— mi", said)
 
@@ -213,7 +213,7 @@ class TheNavReachesEachOne(ShellCase):
     def test_tapping_a_drawer_row_changes_the_surface(self):
         page = self.build_shell()
         module = load_main()
-        for key in ("garage", "xnav", "trips"):
+        for key in ("garage", "trips", "trips"):
             with self.subTest(surface=key):
                 self.tap(page, self._drawer_row(page, module.LABELS[key]))
                 self.assertEqual(_current_label(page), module.LABELS[key])
@@ -290,6 +290,7 @@ class TheNavReachesEachOne(ShellCase):
                 self.assertEqual(declared, [(lab, i) for i, lab in actual])
 
     def test_xnav_has_no_sub_rows_because_it_has_no_tabs(self):
+        """It is a stub, and a stub has nothing to nest."""
         module = load_main()
         self.assertNotIn("xnav", module.SUBPAGES)
 

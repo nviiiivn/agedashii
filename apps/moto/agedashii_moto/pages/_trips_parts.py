@@ -1,6 +1,6 @@
 """Data and pure logic behind the Trips page, split out so it can be tested.
 
-`pages/trips.py` and `pages/xnav.py` are Flet control trees; nothing in them
+`pages/trips.py` and `pages/vnav.py` are Flet control trees; nothing in them
 can be asserted on without a running app. Everything here is either a plain
 function over plain data or one clearly-marked network call, which is what
 lets the arithmetic that decides what a card says be checked in `tests/`.

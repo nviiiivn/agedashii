@@ -7,7 +7,7 @@ Four tabs, the website's four, in the order a ride actually happens:
   Produce  the route editor - waypoints, forks, and the trip report
   Rides    recorded GPX: list, replay with a scrubber, speed-limit overlay,
            plus live turn-by-turn against whatever Selekt last planned
-  xNav     the live map: GPS, track recording, and route guidance with
+  vNav     the live map: GPS, track recording, and route guidance with
            speed limits, curves, elevation and POIs
 
 What crosses the wire has to match the browser exactly, because both write
@@ -34,7 +34,7 @@ from agedashii_washi import tileserver
 from agedashii_washi.ui_compat import PAL, PAD, BRD, RAD, card, chip, title, sub
 from agedashii_washi.forms import rebuilder
 from . import _trips_parts as T
-from . import xnav
+from . import vnav
 from .. import units as U
 from agedashii_washi.surface import _dismiss, _show
 from agedashii_washi.surface import _TAB_INDEX, _tabs
@@ -84,7 +84,7 @@ _REFRESH = {"cards": {}, "builder": None}
 
 def build(page):
     return _tabs(page, [("Selekt", _selekt(page)), ("Produce", _produce(page)),
-                        ("Rides", _rides(page)), ("xNav", xnav.build(page))],
+                        ("Rides", _rides(page)), ("vNav", vnav.build(page))],
                  key="trips")
 
 
@@ -1867,7 +1867,7 @@ def _rides_list(page, p, say):
             ft.Row([ft.Icon(ft.Icons.SPEED, size=16, color=p["text2"]),
                     title("Recorded rides", 14)]),
             _empty(p, "No rides uploaded yet. Record one on the phone, or use "
-                      "xNav's recorder, and it appears here.")]), pad=12)
+                      "vNav's recorder, and it appears here.")]), pad=12)
 
     open_id = (_S["ride"] or {}).get("id")
 
