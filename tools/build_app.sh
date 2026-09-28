@@ -270,6 +270,41 @@ for T in "${TARGETS[@]}"; do
   EXTRA=""
   [ "$T" = web ] && EXTRA="assets/maps"
 
+  # Android-only packages, removed from the STAGED pyproject for web.
+  #
+  # pyjnius is how the app speaks: it calls android.speech.tts. There is no
+  # Pyodide wheel for it, so `flet build web` dies with
+  #
+  #   ERROR: No matching distribution found for pyjnius
+  #
+  # and the web target fails in eight seconds while the APK is fine.
+  #
+  # The obvious fix - `pyjnius; sys_platform == 'android'` - DOES NOT WORK,
+  # and failed in the more dangerous direction first. flet evaluates markers
+  # on the BUILD HOST, which is Linux for both targets, so the marker meant
+  # to include it on Android EXCLUDED IT EVERYWHERE: the APK built clean,
+  # every test passed, and the app was silently mute. One host builds both
+  # targets, so no marker can tell them apart. The split has to be made
+  # here, where the target is actually known.
+  ANDROID_ONLY="pyjnius"
+  [ -f "$STAGE/pyproject.toml.all" ] || cp "$STAGE/pyproject.toml" "$STAGE/pyproject.toml.all"
+  cp "$STAGE/pyproject.toml.all" "$STAGE/pyproject.toml"
+  if [ "$T" = web ]; then
+    python3 - "$STAGE/pyproject.toml" "$ANDROID_ONLY" <<'PYEOF'
+import re, sys
+path, names = sys.argv[1], sys.argv[2].split()
+s = open(path).read()
+
+def drop(m):
+    kept = [d for d in re.findall(r'"[^"]*"', m.group(1))
+            if re.split(r"[<>=!~;\[ ]", d.strip('"').lower())[0] not in names]
+    return "dependencies = [" + ", ".join(kept) + "]"
+
+open(path, "w").write(re.sub(r"dependencies\s*=\s*\[([^\]]*)\]", drop, s, count=1))
+print(f"    deps:  {', '.join(names)} stripped for web (no Pyodide wheel)")
+PYEOF
+  fi
+
   # Release signing, for apk only.
   #
   # Without a key, `flet build apk` signs with Flutter's throwaway debug key -
