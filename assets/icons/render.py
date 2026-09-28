@@ -33,8 +33,16 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-# The four apps. The id is the filename stem and matches apps/<id>/.
-ICONS = ("tofu", "moto", "watudo", "foodzen")
+# The apps whose icons are GENERATED from the SVG masters here.
+#
+# `navi` and `moto` are deliberately absent. Their icons are her own artwork -
+# the CB750 with a route and a pin for Navi, the same bike with a gear for Moto -
+# supplied as PNGs and resized from those masters, not drawn from an SVG. Running
+# this script must not overwrite them, and listing them here is the only way it
+# could. Their masters live beside the output as `navi-1024.png` and
+# `moto-1024.png`; to change either one, replace that file and re-run the resize
+# in tools/, not this.
+ICONS = ("tofu", "watudo", "foodzen")
 
 # 1024 is what `flet build` wants for an app icon; the rest are the launcher
 # sizes Android asks for, plus 48 because 48 is the size the icon is actually

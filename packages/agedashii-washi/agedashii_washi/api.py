@@ -1314,21 +1314,72 @@ def garage_bikes():
 
 
 def trips():
+    """Her saved trips. Each row keeps its waypoints.
+
+    The waypoints used to be dropped here, which was quietly expensive: the
+    server sends the whole trip record, the store caches the whole thing, and
+    this function then handed back a name and a mileage - so an app that wanted
+    to ride a saved trip had the geometry on the device already and no way to
+    reach it. Keeping them costs nothing that has not already been paid.
+    """
     d = _get("/api/trips")
     if not isinstance(d, list):
         return None
     return [{"id": t.get("id", ""), "name": t.get("name", t.get("id", "—")),
-             "mi": t.get("miles", ""), "date": t.get("date", "")} for t in d]
+             "mi": t.get("miles", ""), "date": t.get("date", ""),
+             "waypoints": t.get("waypoints") or []} for t in d]
+
+
+def trip_points(trip_id):
+    """[(lat, lon)] for a saved trip, from the cached trip list. Offline.
+
+    No second request: `/api/trips` already carries every trip's waypoints and
+    the store has them. A trip seen once with signal can be ridden in a canyon.
+    """
+    for trip in (trips() or []):
+        if trip.get("id") != trip_id:
+            continue
+        out = []
+        for point in trip.get("waypoints") or []:
+            lat, lon = point.get("lat"), point.get("lon")
+            if lat is None or lon is None:
+                continue
+            out.append((float(lat), float(lon)))
+        return out
+    return []
 
 
 def rides_list():
+    """Recorded rides on the server. The id is what `ride_points` needs."""
     d = _get("/api/rides")
     if d is None:
         return None
     out = []
     for r in (d.get("rides") or []):
-        out.append({"name": (r.get("filename") or "").replace(".gpx", ""),
-                    "pts": "", "mi": "", "top": ""})
+        rid = r.get("id") or (r.get("filename") or "").replace(".gpx", "")
+        out.append({"id": rid, "name": rid, "pts": "", "mi": "", "top": "",
+                    "size": r.get("size"), "mtime": r.get("mtime")})
+    return out
+
+
+def ride_points(ride_id):
+    """[(lat, lon)] for a recorded ride, through the store so it caches.
+
+    `/api/rides/view` parses the GPX server-side and hands back points, so the
+    phone does not carry an XML parser for this. Cached like every other read,
+    which means a ride opened once at home can be re-ridden with no signal.
+    """
+    if not ride_id:
+        return []
+    d = _get(f"/api/rides/view?id={urllib.parse.quote(str(ride_id))}")
+    if not isinstance(d, dict):
+        return []
+    out = []
+    for point in d.get("points") or []:
+        lat, lon = point.get("lat"), point.get("lon")
+        if lat is None or lon is None:
+            continue
+        out.append((float(lat), float(lon)))
     return out
 
 
@@ -1598,6 +1649,34 @@ def _gpx(name, points):
         bits.append("</trkpt>")
         rows.append("".join(bits))
     return head + "\n".join(rows) + "\n  </trkseg></trk>\n</gpx>\n"
+
+
+def ride_upload(name, content, note=""):
+    """Upload a ride file the CALLER has already built. Returns (ok, message).
+
+    `ride_save` below builds a bare GPX out of points, which is the right thing
+    when points are all there is. This is for a caller that has something richer:
+    Navi's telemetry log carries lean angle, cornering load, altitude, climb rate
+    and engine speed in GPX extension elements, and routing it through
+    `ride_save` would rebuild the file from lat/lon alone and silently throw all
+    of that away.
+
+    That is not hypothetical - it is exactly what was happening, and the
+    telemetry sat on the phone while the server got a plain track.
+
+    Queued through the same outbox as everything else, so a ride finished in a
+    canyon goes up when the phone gets home rather than being lost at the moment
+    it is complete.
+    """
+    if not content:
+        return False, "nothing to upload"
+    payload = {"filename": f"{name}.gpx", "content": content}
+    res = _queue_write("/api/rides/upload", json_body=payload, timeout=120,
+                       invalidate=("/api/rides",))
+    if not res.ok:
+        return False, res.message
+    tail = " - held on this device, will sync" if res.queued else ""
+    return True, f"{note or 'uploaded'}{tail}"
 
 
 def ride_save(name, points, distance_m=0.0):

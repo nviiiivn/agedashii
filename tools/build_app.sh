@@ -16,7 +16,7 @@
 # show, and two builds cannot interfere with each other.
 #
 # Usage, on Tower:
-#   tools/build_app.sh <tofu|moto|watudo|foodzen> [apk] [linux] [web] [ipa]
+#   tools/build_app.sh <tofu|moto|watudo|foodzen|navi> [apk] [linux] [web] [ipa]
 # Defaults to apk if no target is given.
 #
 # `ipa` only runs on macOS - `flet build ipa` shells out to xcodebuild - so
@@ -42,8 +42,8 @@ TARGETS=("$@")
 [ ${#TARGETS[@]} -eq 0 ] && TARGETS=(apk)
 
 case "$APP" in
-  tofu|moto|watudo|foodzen) ;;
-  *) echo "usage: $0 <tofu|moto|watudo|foodzen> [apk] [linux] [web] [ipa]" >&2; exit 2 ;;
+  tofu|moto|watudo|foodzen|navi) ;;
+  *) echo "usage: $0 <tofu|moto|watudo|foodzen|navi> [apk] [linux] [web] [ipa]" >&2; exit 2 ;;
 esac
 
 TC="${TC:-/home/nvii/flet-toolchain}"
@@ -66,9 +66,11 @@ OUT="$TC/out/$APP"
 # "routing..." and asks the server for the answer, and Foodzen has no map
 # at all: shipping them 120 MB they never open would roughly triple their
 # download for nothing.
+# Navi is the whole reason the pack exists - an offline navigation app with no
+# tiles and no graph is a grey grid and a refusal - so it gets both.
 case "$APP" in
-  tofu|moto) WANT_MAPS=1 ;;
-  *)         WANT_MAPS=0 ;;
+  tofu|moto|navi) WANT_MAPS=1 ;;
+  *)              WANT_MAPS=0 ;;
 esac
 
 echo "=== staging $APP  ($(date -Is))"
@@ -189,18 +191,57 @@ mkdir -p "$STAGE/assets/icons"
 # time. Keeping four copies of icon.png in the repo under four directories
 # would mean four places to forget when an icon changes.
 ICONS="$SRC/assets/icons"
-if [ -f "$ICONS/$APP-1024.png" ]; then
-  cp "$ICONS/$APP-1024.png" "$STAGE/assets/icon.png"
-  cp "$ICONS/$APP-192.png"  "$STAGE/assets/icons/icon-192.png"
-  cp "$ICONS/$APP-512.png"  "$STAGE/assets/icons/icon-512.png"
-  # Android's adaptive icon crops to a circle; the artwork is already
-  # inset for that, so the maskable variant is the same file rather than a
-  # second drawing that could drift away from the first.
-  cp "$ICONS/$APP-192.png"  "$STAGE/assets/icons/icon-maskable-192.png"
-  cp "$ICONS/$APP-512.png"  "$STAGE/assets/icons/icon-maskable-512.png"
-  cp "$ICONS/$APP-192.png"  "$STAGE/assets/icons/apple-touch-icon-192.png"
-  cp "$ICONS/$APP-192.png"  "$STAGE/assets/favicon.png"
-  echo "    icon:  $APP-1024.png"
+
+# Which artwork this build wears on the home screen.
+#
+# Android will not let an app change its own launcher icon at runtime - that
+# needs activity-alias entries and a native PackageManager call, and Flet
+# exposes neither. So the choice is made HERE, at build time, and the answer to
+# "I want the Pixel to show the cb and the Moto to show the ex" is two builds of
+# the same app: same package id, same signing key, different icon. Both install
+# and update normally; they are the same app wearing different clothes.
+#
+#   AGEDASHII_ICON=ex tools/build_app.sh navi apk
+ICON_ID="$APP"
+if [ -n "${AGEDASHII_ICON:-}" ] && [ "${AGEDASHII_ICON}" != "default" ]; then
+  if [ -f "$ICONS/$APP-${AGEDASHII_ICON}-1024.png" ]; then
+    ICON_ID="$APP-${AGEDASHII_ICON}"
+    echo "    icon:  variant ${AGEDASHII_ICON}"
+  else
+    echo "    icon:  no '${AGEDASHII_ICON}' variant for $APP, using the default"
+  fi
+fi
+
+if [ -f "$ICONS/$ICON_ID-1024.png" ]; then
+  cp "$ICONS/$ICON_ID-1024.png" "$STAGE/assets/icon.png"
+  cp "$ICONS/$ICON_ID-192.png"  "$STAGE/assets/icons/icon-192.png"
+  cp "$ICONS/$ICON_ID-512.png"  "$STAGE/assets/icons/icon-512.png"
+  # Android's adaptive icon crops to a circle and the launcher crops again, so
+  # only the middle ~72% is guaranteed to survive. The generated SVG icons are
+  # drawn inset for that; her own PNG artwork is a full-bleed circle and was
+  # being cut twice - "it gets shoved into a circle and it doesn't look riht".
+  # A dedicated maskable file, inset into the safe zone, is used when one
+  # exists, and the plain icon otherwise.
+  if [ -f "$ICONS/$ICON_ID-maskable-192.png" ]; then
+    cp "$ICONS/$ICON_ID-maskable-192.png" "$STAGE/assets/icons/icon-maskable-192.png"
+    cp "$ICONS/$ICON_ID-maskable-512.png" "$STAGE/assets/icons/icon-maskable-512.png"
+  else
+    cp "$ICONS/$ICON_ID-192.png"  "$STAGE/assets/icons/icon-maskable-192.png"
+    cp "$ICONS/$ICON_ID-512.png"  "$STAGE/assets/icons/icon-maskable-512.png"
+  fi
+  cp "$ICONS/$ICON_ID-192.png"  "$STAGE/assets/icons/apple-touch-icon-192.png"
+  cp "$ICONS/$ICON_ID-192.png"  "$STAGE/assets/favicon.png"
+  # The alternate artwork, when the app has one. Shipped in every build rather
+  # than downloaded, so switching it in Settings is instant and works offline.
+  # It is the IN-APP icon only - Android will not let an app change its own
+  # launcher icon without activity-alias entries and a native PackageManager
+  # call, neither of which Flet exposes.
+  if [ -f "$ICONS/$APP-ex-192.png" ]; then
+    cp "$ICONS/$APP-ex-192.png" "$STAGE/assets/icons/icon-ex-192.png"
+    cp "$ICONS/$APP-ex-512.png" "$STAGE/assets/icons/icon-ex-512.png"
+    echo "    icon:  + alternate ($APP-ex)"
+  fi
+  echo "    icon:  $ICON_ID-1024.png"
 else
   echo "    icon:  NONE - $ICONS/$APP-1024.png is missing, the build will"
   echo "           carry Flet's default and look like every other Flet app"
@@ -228,7 +269,56 @@ for T in "${TARGETS[@]}"; do
   # baking it in is what used to OOM the CI runner.
   EXTRA=""
   [ "$T" = web ] && EXTRA="assets/maps"
-  time flet build "$T" --yes -o "dist/$T" --exclude .git dist build .venv $EXTRA
+
+  # Release signing, for apk only.
+  #
+  # Without a key, `flet build apk` signs with Flutter's throwaway debug key -
+  # and Android ties an app's identity to its signing key, so the NEXT build
+  # would be refused as an update and would have to be uninstalled first. On a
+  # phone that is recording rides, uninstalling deletes every ride that has not
+  # yet synced. One permanent key means every future build installs straight
+  # over the top.
+  #
+  # The keystore and its password come from the environment and are never in
+  # this repo. They live in vault on the Pi and are copied to the builder;
+  # `set -u` is on, so the defaults below are what let an unsigned build still
+  # work rather than dying on an unset variable.
+  SIGN=""
+  KS="${AGEDASHII_KEYSTORE:-}"
+  if [ "$T" = apk ] && [ -n "$KS" ] && [ -f "$KS" ]; then
+    SIGN="--android-signing-key-store $KS
+          --android-signing-key-store-password ${AGEDASHII_KEYSTORE_PASSWORD:-}
+          --android-signing-key-password ${AGEDASHII_KEY_PASSWORD:-${AGEDASHII_KEYSTORE_PASSWORD:-}}
+          --android-signing-key-alias ${AGEDASHII_KEY_ALIAS:-nvii}"
+    echo "    sign:  $KS (alias ${AGEDASHII_KEY_ALIAS:-nvii})"
+  elif [ "$T" = apk ]; then
+    echo "    sign:  NONE - debug key, this build cannot update a signed one"
+  fi
+
+  # The version Android sees.
+  #
+  # `--build-number` becomes versionCode, which is the ONLY thing Android
+  # compares to decide whether an APK is an update. `--build-version` becomes
+  # versionName, which is for people. Both are read out of the app's own
+  # version.py when it has one, so the number in the APK, the number the update
+  # check compares and the number in the published version.json are one number
+  # with one source. Setting them here and in version.py separately is how they
+  # would eventually disagree - and a versionCode that did not rise is an update
+  # that silently never offers itself.
+  VER=""
+  VERPY="$STAGE/agedashii_$APP/version.py"
+  if [ -f "$VERPY" ]; then
+    V_NAME=$(python3 -c "import re,sys;print(re.search(r'VERSION_NAME\s*=\s*\"([^\"]+)\"',open(sys.argv[1]).read()).group(1))" "$VERPY" 2>/dev/null || true)
+    V_CODE=$(python3 -c "import re,sys;print(re.search(r'VERSION_CODE\s*=\s*(\d+)',open(sys.argv[1]).read()).group(1))" "$VERPY" 2>/dev/null || true)
+    if [ -n "$V_NAME" ] && [ -n "$V_CODE" ]; then
+      VER="--build-version $V_NAME --build-number $V_CODE"
+      echo "    ver:   $V_NAME ($V_CODE)"
+    fi
+  fi
+
+  # $SIGN and $VER are deliberately unquoted: they are lists of arguments, not
+  # single strings.
+  time flet build "$T" --yes -o "dist/$T" --exclude .git dist build .venv $EXTRA $SIGN $VER
   rc=$?
   if [ $rc -ne 0 ]; then
     echo "!!! $APP $T FAILED rc=$rc"

@@ -1,0 +1,106 @@
+# Agedashii Navi - the on-bike navigation app.
+#
+# Its own app, on purpose. Her words: "WE CAN push this into xnav after. but
+# at the moment i want it to be its own app FIRST okay???? i don't want to
+# have to push everything else alongside it everytime". So this builds and
+# installs on its own, and nothing here imports Moto.
+#
+# The dependency list below is also the one `flet build` installs into the
+# bundle. flet reads the TOML list when it is non-empty and only falls back
+# to requirements.txt when it is empty (flet_cli/commands/build_base.py,
+# `_install_python_packages`) - so anything missing from this list is
+# missing from the app on the phone.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agedashii-navi"
+version = "1.0.0"
+description = "Agedashii Navi - turn-by-turn and telemetry for a motorcycle, with no signal"
+requires-python = ">=3.12"
+dependencies = [
+    "flet>=0.86,<0.87",
+    # The map itself. Not optional here the way it is in Watudo: an app whose
+    # whole surface is a map does not degrade gracefully into no map, so if
+    # this is missing the build is wrong and should be obvious at once.
+    "flet-map>=0.86,<0.87",
+    # Where the bike is, how fast, which way, how high. Speed and heading come
+    # from the receiver's own Doppler solution rather than differencing
+    # positions, which is both better and available while barely moving.
+    "flet-geolocator>=0.86,<0.87",
+    # Android will not hand over location, or let anything keep running with
+    # the screen off, without being asked at runtime. Without this the
+    # manifest entries below are a request nobody ever makes.
+    "flet-permission-handler>=0.86,<0.87",
+    # The exhaust note. Its `on_stream` handler delivers raw PCM16 chunks, which
+    # is what makes the loudness meter and the RPM estimate real rather than a
+    # plan - see agedashii_navi/audio.py. The accelerometer, gyroscope and
+    # barometer need nothing here: Flet 0.86 ships those as core services.
+    "flet-audio-recorder>=0.86,<0.87",
+    # Washi is the plumbing, and the two pieces that matter most here are
+    # already in it: `tileserver` serves MBTiles off the device over
+    # loopback so the map works with the radio off, and `routing` is a
+    # pure-CPython A* over a packed road graph that does turn-by-turn with
+    # no network at all. Neither is re-implemented here.
+    "agedashii-washi==1.0.0",
+    # Named as well as agedashii-washi, which already requires it, so the
+    # dev_packages table below can point it at this checkout too. Left
+    # implicit, pip would go looking for it on PyPI, where it is not.
+    "agedashii-qi==1.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["agedashii_navi*"]
+
+[tool.flet]
+product = "Agedashii Navi"
+org = "online.iamprettyfamous"
+# Pinned rather than composed, so the identity the OS installs under cannot
+# drift with a directory rename. Its own bundle id means its own
+# SharedPreferences store and its own app-private data directory: the ride
+# log on this app cannot be disturbed by installing or clearing any other
+# Agedashii app.
+bundle_id = "online.iamprettyfamous.agedashii.navi"
+company = "nvii"
+copyright = "Copyright (c) 2026 nvii"
+
+[tool.flet.dev_packages]
+agedashii-qi = "../../packages/agedashii-qi"
+agedashii-washi = "../../packages/agedashii-washi"
+
+[tool.flet.android.permission]
+# Location, at the accuracy a route needs. COARSE is listed as well because
+# Android will grant only coarse if the rider picks "approximate", and an app
+# that declares only FINE gets nothing at all in that case rather than
+# something it could still show a map with.
+"android.permission.ACCESS_FINE_LOCATION" = true
+"android.permission.ACCESS_COARSE_LOCATION" = true
+# The ride keeps recording with the screen off and the phone in a tank bag.
+# That is the entire point of a telemetry log, and Android 10+ stops handing
+# out fixes the moment the app is not visible without these two.
+"android.permission.ACCESS_BACKGROUND_LOCATION" = true
+"android.permission.FOREGROUND_SERVICE" = true
+"android.permission.FOREGROUND_SERVICE_LOCATION" = true
+# Keep the screen on while navigating. A phone that sleeps at 60 mph is not
+# a navigation device.
+"android.permission.WAKE_LOCK" = true
+# The exhaust note, for the loudness meter and the RPM estimate. Declared
+# because the code that uses it exists and ships in this build - Settings has
+# the switch and it starts OFF. A permission declared ahead of a feature is
+# what teaches an owner to stop reading permission lists.
+"android.permission.RECORD_AUDIO" = true
+
+[tool.flet.android.feature]
+# GPS hardware is required - not "used". Everything this app does is anchored
+# to where the bike actually is.
+"android.hardware.location.gps" = true
+# The accelerometer, gyroscope, barometer and microphone. All marked NOT
+# required: every one of them is read when present and simply absent from the
+# log when it is not, so a phone without a barometer should still install. The
+# diagnostics block in Settings names whichever ones have actually reported.
+"android.hardware.sensor.accelerometer" = false
+"android.hardware.sensor.gyroscope" = false
+"android.hardware.sensor.barometer" = false
+"android.hardware.microphone" = false

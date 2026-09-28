@@ -35,7 +35,8 @@ _EMPTY_PNG = bytes.fromhex(
     "01f15c4890000000a49444154789c63000100000500010d0a2db40000"
     "000049454e44ae426082")
 
-_state = {"server": None, "thread": None, "path": None, "port": None}
+_state = {"server": None, "thread": None, "path": None, "port": None,
+          "zooms": None}
 _lock = threading.Lock()
 
 
@@ -78,6 +79,28 @@ class MBTiles:
         except sqlite3.Error:
             return {}
 
+    def zooms(self):
+        """(minzoom, maxzoom) actually present, or None if unknowable.
+
+        The map has to be told this. An archive built for a motorcycle trip
+        stops at z15 to stay under 40 MB, and a tile layer that does not know
+        that asks for z16 the moment she pinches in, gets an empty tile for
+        every one of them, and goes blank at exactly the zoom she is riding
+        at. Told the range, it scales z15 up instead.
+
+        Asked of the tiles rather than the metadata table: that table is
+        written by whatever built the file and is routinely absent or stale,
+        and being wrong here is invisible until the map is blank.
+        """
+        try:
+            row = self._conn().execute(
+                "SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles").fetchone()
+        except sqlite3.Error:
+            return None
+        if not row or row[0] is None:
+            return None
+        return int(row[0]), int(row[1])
+
 
 def _handler_for(archive):
     class Handler(BaseHTTPRequestHandler):
@@ -89,8 +112,33 @@ def _handler_for(archive):
         disable_nagle_algorithm = True
         wbufsize = 64 * 1024
 
+        # A keep-alive connection whose client has gone away must not hold a
+        # thread for ever. flutter_map opens a fresh batch per pan and lets
+        # the old ones rot.
+        timeout = 15
+
         def log_message(self, *args):
             pass          # a tile server logging every pan is just noise
+
+        def handle_one_request(self):
+            # THIS is what froze the app on her phones. flutter_map speaks
+            # HTTP/1.1, takes its tile, then drops the socket with an RST
+            # rather than a clean close. The stdlib reads the next request
+            # line, gets ECONNRESET, and lets it out of handle() - so
+            # socketserver calls handle_error() and prints a fifteen-line
+            # traceback. On Android every one of those lines is a synchronous
+            # write to logcat, and there is one per tile. A single pan is
+            # forty tiles, the map widget retries what it thinks failed, and
+            # the retries make more tracebacks: the app spends its whole
+            # budget formatting stack traces about a socket closing normally.
+            #
+            # A client hanging up is not an error for a tile server. It is
+            # the shape of the conversation.
+            try:
+                super().handle_one_request()
+            except (ConnectionResetError, BrokenPipeError, TimeoutError,
+                    OSError):
+                self.close_connection = True
 
         def do_GET(self):
             parts = self.path.lstrip("/").split("?")[0].split("/")
@@ -110,14 +158,19 @@ def _handler_for(archive):
             self._send(data if data is not None else _EMPTY_PNG, "image/png")
 
         def _send(self, body, content_type):
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            # Tiles for a given z/x/y never change within a build, and the
-            # widget re-requests constantly while panning.
-            self.send_header("Cache-Control", "public, max-age=604800")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                # Tiles for a given z/x/y never change within a build, and the
+                # widget re-requests constantly while panning.
+                self.send_header("Cache-Control", "public, max-age=604800")
+                self.end_headers()
+                self.wfile.write(body)
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                # She panned away before this tile finished. Nothing to do
+                # and nothing to say about it - see handle_one_request.
+                self.close_connection = True
 
     return Handler
 
@@ -170,11 +223,19 @@ def start(mbtiles_path, port=0):
             request_queue_size = 128
             allow_reuse_address = True
 
+            def handle_error(self, request, client_address):
+                # The last line of defence for the traceback storm described
+                # in handle_one_request. Anything that escapes a handler at
+                # all is, for a loopback tile server, a client that went
+                # away; printing it costs more than the request did.
+                pass
+
         server = _Server(("127.0.0.1", port), _handler_for(archive))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         _state.update({"server": server, "thread": thread,
-                       "path": str(path), "port": server.server_address[1]})
+                       "path": str(path), "port": server.server_address[1],
+                       "zooms": archive.zooms()})
         return url_template()
 
 
@@ -188,9 +249,11 @@ def stop():
     if server is not None:
         server.shutdown()
         server.server_close()
-    _state.update({"server": None, "thread": None, "path": None, "port": None})
+    _state.update({"server": None, "thread": None, "path": None,
+                   "port": None, "zooms": None})
 
 
 def status():
     return {"running": _state["server"] is not None,
-            "port": _state["port"], "mbtiles": _state["path"]}
+            "port": _state["port"], "mbtiles": _state["path"],
+            "zooms": _state["zooms"]}

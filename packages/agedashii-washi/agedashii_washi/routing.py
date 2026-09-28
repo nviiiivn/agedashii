@@ -1255,19 +1255,72 @@ def progress(route, position):
     pts = route.points
     if not pts:
         return None, 0.0, None
-    best_i, best_d = 0, float("inf")
-    for i, q in enumerate(pts):
-        # Cheap equirectangular squared distance for the scan; the winner
-        # gets a real haversine. A route is a few hundred points, so this
-        # runs in well under a millisecond per fix.
-        dlat = q[0] - position[0]
-        dlon = (q[1] - position[1]) * math.cos(math.radians(position[0]))
-        d = dlat * dlat + dlon * dlon
-        if d < best_d:
-            best_d, best_i = d, i
     cum = route.cum_m
-    along = cum[best_i] if best_i < len(cum) else 0.0
-    return best_i, along, haversine_m(position, pts[best_i])
+
+    # MEASURED TO THE LINE, NOT TO ITS CORNERS.
+    #
+    # This used to scan the vertices and return the distance to the nearest
+    # one. Route points are raw OSM shape points, copied straight off the way
+    # geometry and never densified, so on a straight road consecutive points
+    # sit 183-449 m apart - measured, on her real Oakland-to-Chabot routes.
+    #
+    # A rider exactly on the line, halfway between two of them, was therefore
+    # up to 224 m from the nearest VERTEX, and read as 224 m "off route". The
+    # threshold is 45 m. So off-route latched after three fixes, every prompt
+    # was suppressed while it held, a reroute fired and cleared it, and the
+    # whole cycle repeated: 17-19 false reroutes per 15-18 km ride in
+    # simulation against the real Bay Area graph.
+    #
+    # That is what "it worked for several turns then just stopped" was. It was
+    # never frozen. It had decided she was lost, on a straight road, while she
+    # was following the line it drew for her.
+    #
+    # Projecting onto each SEGMENT costs one extra multiply per point and also
+    # makes `along` continuous instead of jumping in vertex-sized steps, which
+    # fixes the "in X ft" readout and when the 60/20/6 s prompts fire.
+    if len(pts) == 1:
+        return 0, (cum[0] if cum else 0.0), haversine_m(position, pts[0])
+
+    # Flat local metres about the fix: good to centimetres at route scale, and
+    # it keeps the whole scan in cheap arithmetic.
+    scale = math.cos(math.radians(position[0]))
+    m_per_deg = 111_320.0
+
+    def _xy(q):
+        return ((q[1] - position[1]) * scale * m_per_deg,
+                (q[0] - position[0]) * m_per_deg)
+
+    best_i, best_d2, best_t = 0, float("inf"), 0.0
+    ax, ay = _xy(pts[0])
+    for i in range(len(pts) - 1):
+        bx, by = _xy(pts[i + 1])
+        vx, vy = bx - ax, by - ay
+        seg2 = vx * vx + vy * vy
+        if seg2 <= 0.0:                      # duplicated point
+            t = 0.0
+        else:
+            # Fraction along this segment of the closest approach, clamped so
+            # a fix past either end measures to that endpoint rather than to
+            # an imaginary extension of the road.
+            t = -(ax * vx + ay * vy) / seg2
+            t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        px, py = ax + vx * t, ay + vy * t
+        d2 = px * px + py * py
+        if d2 < best_d2:
+            best_d2, best_i, best_t = d2, i, t
+        ax, ay = bx, by
+
+    off = math.sqrt(best_d2)
+    # `along` interpolated across the winning segment, so it advances with the
+    # bike instead of in jumps the size of the gap between shape points.
+    start = cum[best_i] if best_i < len(cum) else 0.0
+    end = cum[best_i + 1] if best_i + 1 < len(cum) else start
+    along = start + (end - start) * best_t
+    # The index still names a vertex, which is what every caller expects - the
+    # one being ridden towards, so a maneuver lookup does not point back at a
+    # corner already taken.
+    index = best_i + 1 if (best_t > 0.5 and best_i + 1 < len(pts)) else best_i
+    return index, along, off
 
 
 def next_maneuver(route, position):
