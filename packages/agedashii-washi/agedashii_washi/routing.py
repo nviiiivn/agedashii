@@ -117,11 +117,18 @@ CLASSES = ["motorway", "motorway_link", "trunk", "trunk_link", "primary",
            "primary_link", "secondary", "secondary_link", "tertiary",
            "tertiary_link", "unclassified", "residential", "living_street",
            "service", "road"]
-# Effective door-to-door speeds, least-squares fitted to Valhalla's motorcycle
-# costing over 45 Bay Area routes. Lower than the signposted speeds because
-# they absorb signals, stop signs and turn delay.
-SPEED_KMH = [79.0, 38.7, 79.0, 38.7, 36.1, 38.7, 36.1, 38.7,
-             28.0, 38.7, 24.0, 12.1, 12.1, 6.3, 6.3]
+# Effective speeds per class, measured from Valhalla 3.6.3 motorcycle costing on
+# the California default-speed tiles (tools/navi-routing/fit_speed_kmh.py, 200
+# trips measured, 200 validated at median +2.4%). They absorb signals and turn
+# delay; the junction and U-turn penalties are search costs only.
+#
+# UNMEASURED - no usable evidence in 400 trips, so the OLD values stand and are
+# known to be old: tertiary_link 38.7 (0.42 km seen, which measured 25.8 - so
+# 38.7 is believed too fast; every other link measured 27-35), living_street
+# 12.1 and road 6.3 (0 km seen). The table this replaced was fitted to her
+# server, which used world-average speeds: ETAs ran a median 13.4% long.
+SPEED_KMH = [97.3, 49.2, 58.4, 35.0, 42.3, 27.8, 40.3, 26.9,
+             34.9, 38.7, 29.0, 17.2, 12.1, 8.9, 6.3]
 # The A* heuristic must be admissible for the cost function actually used,
 # i.e. the fastest *calibrated* class, not the fastest signposted one.
 MAXSPEED_MS = max(SPEED_KMH) / 3.6

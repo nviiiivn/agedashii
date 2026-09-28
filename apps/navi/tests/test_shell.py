@@ -195,6 +195,66 @@ class EverySurfaceBuilds(unittest.TestCase):
                 self.assertIsNotNone(self._build(module))
 
 
+class DropAPinOnTheMap(unittest.TestCase):
+    """Hers: "i can't even just 'place pin on map' and use that as destination
+    easily". A long press offers the point; nothing routes until she says so."""
+
+    CHABOT = (37.8187, -122.1805)
+
+    def setUp(self):
+        prefs.reset()
+        live.reset()
+        self.page = StubPage()
+        ride_page.build(self.page, go=lambda key: None)
+
+    def _press(self, lat, lon):
+        import types
+        import flet_map as fmap
+        event = types.SimpleNamespace(coordinates=fmap.MapLatitudeLongitude(lat, lon))
+        ride_page._MAP["map"].on_long_press(event)
+
+    def _band(self):
+        return ride_page._M["pin_band"]
+
+    def _button(self, label):
+        for control in tappables(self._band()):
+            if any(label in t for t in texts(control)):
+                return control
+        self.fail(f"no {label!r} button on the pin band")
+
+    def test_a_long_press_offers_the_point_and_does_not_route_yet(self):
+        before = len(self.page.tasks)          # the Ride build queues its own (GPS)
+        self._press(*self.CHABOT)
+        self.assertTrue(self._band().visible)
+        self.assertIsNone(live.LIVE.get("dest"))
+        self.assertEqual(len(self.page.tasks), before)             # nothing routed
+        self.assertEqual(len(ride_page._MAP["dest"].markers), 1)   # the pending pin is drawn
+
+    def test_route_here_aims_there_and_routes_off_the_ui_thread(self):
+        self._press(*self.CHABOT)
+        before = len(self.page.tasks)
+        self._button("Route here").on_click(None)
+        dest = live.LIVE.get("dest")
+        self.assertAlmostEqual(dest[0], self.CHABOT[0], places=5)
+        self.assertAlmostEqual(dest[1], self.CHABOT[1], places=5)
+        added = self.page.tasks[before:]
+        self.assertEqual(len(added), 1)                            # route_async, not inline
+        self.assertEqual(added[0][0].__name__, "_route_to_pin")
+        self.assertFalse(self._band().visible)
+
+    def test_cancel_leaves_no_destination_and_no_pin(self):
+        self._press(*self.CHABOT)
+        self._button("Cancel").on_click(None)
+        self.assertIsNone(live.LIVE.get("dest"))
+        self.assertFalse(self._band().visible)
+        self.assertEqual(ride_page._MAP["dest"].markers, [])
+
+    def test_the_pin_buttons_are_glove_sized(self):
+        self._press(*self.CHABOT)
+        for target in tappables(self._band()):
+            self.assertGreaterEqual(target.height or 0, ui.TOUCH)
+
+
 class NothingFlexesInsideAWrap(unittest.TestCase):
     """The Around grey box.
 

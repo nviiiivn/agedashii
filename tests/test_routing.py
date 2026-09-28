@@ -1022,6 +1022,17 @@ class TestOfflineRouting(RoutingTestCase):
         self.assertTrue(out.offline)
         self.assertIn(Path(GRAPH).name, out.source_detail)
 
+    def test_the_eta_is_californias_not_the_worlds(self):
+        # nvii chose California road speeds ("31 realisticc i guess").
+        # Valhalla on the California tiles says 31.5 min; the old SPEED_KMH,
+        # fitted to a server using world-average speeds, said 39.3; the table
+        # measured by tools/navi-routing/fit_speed_kmh.py says 33.9. One speed
+        # per class cannot hit 31.5 exactly - but it must not drift back to 39.
+        with mock.patch.object(R, "graph_path", lambda: GRAPH), self.no_server():
+            out = R.route(OAKLAND, FREMONT)
+        self.assertTrue(out.ok, out.reason)
+        self.assertTrue(28 * 60 <= out.duration_s <= 36 * 60, out.duration_s / 60)
+
     def test_the_route_is_plausible(self):
         with mock.patch.object(R, "graph_path", lambda: GRAPH), self.no_server():
             out = R.route(OAKLAND, FREMONT)

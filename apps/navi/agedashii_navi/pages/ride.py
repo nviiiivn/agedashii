@@ -39,6 +39,8 @@ import time
 
 import flet as ft
 
+from agedashii_washi.routing import haversine_m
+
 from .. import (audio, bikes, daylight, gauges, gears, guidance, live,
                 prefs, sensors, telemetry, theme, tiles, ui, uploads)
 from ..theme import BRD, PAD, PAL, RAD
@@ -445,8 +447,94 @@ def build(page, go=None):
             width=26, height=26,
             content=ft.Container(width=22, height=22, border_radius=11,
                                  bgcolor=pal["warn"], border=BRD(pal["bg"], 2)))]
+        pin = _M.get("pin")
+        if pin is not None:
+            # The point she long-pressed, offered but not yet chosen: accent,
+            # bigger, so it is not mistaken for the destination she has.
+            dest_layer.markers = dest_layer.markers + [fmap.Marker(
+                coordinates=fmap.MapLatitudeLongitude(pin[0], pin[1]),
+                width=32, height=32,
+                content=ft.Container(width=28, height=28, border_radius=14,
+                                     bgcolor=pal["accent"], border=BRD(pal["bg"], 3)))]
 
     draw_route()
+
+    # ---------------------------------------------------------- drop a pin
+    # Hers: "i can't even just 'place pin on map' and use that as destination
+    # easily". A LONG press, so a pan or a stray tap never sets a destination;
+    # and nothing routes until she says so - the band offers the point and
+    # waits, because the app never quietly substitutes something for what she
+    # asked. flet_map hands the pressed point over as MapTapEvent.coordinates
+    # (flet_map/types.py:775).
+    pin_title = ft.Text("", size=ui.MID, weight=ft.FontWeight.W_800, color=p["text"])
+    pin_detail = ft.Text("", size=ui.SMALL, color=p["text2"])
+
+    def _pin_words(title):
+        pin = _M.get("pin")
+        if pin is None:
+            return
+        here = live.LIVE.get("pos")
+        away = (guidance.distance_text(haversine_m(here, pin), prefs.imperial())
+                if here else "")
+        pin_title.value = title
+        pin_detail.value = " · ".join(x for x in (
+            f"{pin[0]:.5f}, {pin[1]:.5f}", f"{away} away" if away else "") if x)
+
+    def _on_long_press(e):
+        point = getattr(e, "coordinates", None)
+        if point is None:
+            return
+        _M["pin"] = (float(point.latitude), float(point.longitude))
+        _pin_words("Route to this point?")
+        pin_band.visible = True
+        draw_route()
+        _update(page)
+
+    def _pin_cancel(_e=None):
+        _M["pin"] = None
+        pin_band.visible = False
+        draw_route()
+        _update(page)
+
+    def _pin_route(_e=None):
+        pin = _M.pop("pin", None)
+        if pin is None:
+            return
+        live.set_destination(pin[0], pin[1], "Dropped pin")
+        pin_band.visible = False
+        draw_route()
+        _update(page)
+        page.run_task(_route_to_pin, pin)
+
+    async def _route_to_pin(pin):
+        # Off the UI thread, like every route: the graph read would freeze the map.
+        route = await live.route_async(allow_server=False)
+        if route is None or not route.ok:
+            # Say why, and leave the pin up so she can try again or cancel.
+            _M["pin"] = pin
+            _pin_words("No route to that point")
+            pin_detail.value = (live.LIVE.get("note")
+                                or getattr(route, "reason", "") or "no route")
+            pin_band.visible = True
+        draw_route()
+        paint()
+        _update(page)
+
+    pin_band = ft.Container(
+        visible=_M.get("pin") is not None, bgcolor=p["surface"],
+        padding=ft.Padding(left=BAND_INSET, top=10, right=12, bottom=10),
+        border=ft.Border(bottom=ft.BorderSide(1, p["border"])),
+        content=ft.Column(spacing=8, tight=True, controls=[
+            pin_title, pin_detail,
+            ft.Row(spacing=10, controls=[
+                ui.button("Route here", _pin_route, icon=ft.Icons.DIRECTIONS,
+                          primary=True, expand=True),
+                ui.button("Cancel", _pin_cancel, expand=True)])]))
+    _M["pin_band"] = pin_band
+    _pin_words("Route to this point?")
+    # Re-bound on every build: the Map outlives this function (see _map_parts),
+    # and a handler bound once would call the closures of the first build.
+    the_map.on_long_press = _on_long_press
 
     def on_position(e):
         pos = getattr(e, "position", None) or e
@@ -976,7 +1064,7 @@ def build(page, go=None):
         ])))
 
     return ft.Column(spacing=0, expand=True, controls=[
-        prompt_band, turn_band,
+        prompt_band, turn_band, pin_band,
         ft.Container(expand=True, content=ft.Stack(expand=True,
                                                    controls=map_layers)),
         *band])
