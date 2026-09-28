@@ -120,6 +120,15 @@ _FLAGS = {
     # stays that way until she asks: it is a microphone, and defaulting it on
     # would be opening one without being told to.
     "mic": False,
+    # Building footprints on the vector map. They ship inside the tiles either
+    # way, so this only shows or hides a layer - no second download and no
+    # second map.
+    #
+    # Hers, and she is the one who asked for a switch rather than picking a
+    # side: buildings are landmarks in town and clutter on a twisty road, and
+    # which of those is true depends on the ride. OFF by default, because the
+    # road she is on has to win over the scenery.
+    "buildings": False,
     # Whether the surfaces that are NOT the map follow the dashboard's own
     # alola.lol palette. On by default, because they are read at a stop with the
     # phone in a hand, where looking like the rest of the family is worth more
@@ -352,6 +361,11 @@ def icon_asset():
 
 def mic():
     return bool(S.get("mic", False))
+
+
+def buildings():
+    """Whether the vector map draws building footprints."""
+    return bool(S.get("buildings", False))
 
 
 def alola_chrome():

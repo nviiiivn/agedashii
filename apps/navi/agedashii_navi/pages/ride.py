@@ -26,6 +26,16 @@ polyline's points, the text of the readouts - and calls `page.update()`. The
 page is only rebuilt from scratch when something structural changes: the theme,
 the tile style, a new route.
 
+HANDLERS ON THE MAP ARE RE-BOUND ON EVERY BUILD
+
+The Map outlives `build()` (see `_map_parts`: it is built once and reused, or
+every repaint refetched forty tiles). A handler set on it once keeps the
+closures of the build that set it - its `page`, its `paint`, its bands - and
+after the next repaint it quietly acts on controls that are no longer on
+screen. So anything assigned to the Map (`on_long_press` for drop-a-pin) is
+assigned again at the end of every `build()`. This bit the tile refetch,
+centre-on-bike and drop-a-pin; the fourth person does not have to find it.
+
 WHAT IS NOT HERE
 
 Spoken prompts. Flet has no text-to-speech on any platform and there is no

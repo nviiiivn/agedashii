@@ -113,12 +113,18 @@ def distance_text(metres, imperial=True):
     return f"{metres / 1000.0:.1f} km"
 
 
-def eta_text(seconds, now=None):
-    """Clock time of arrival, which is what a rider actually wants."""
+def eta_text(seconds, now=None, estimate=False):
+    """Clock time of arrival, which is what a rider actually wants.
+
+    `estimate` marks it "~": the offline router prices each road by one speed
+    per class (routing.SPEED_KMH), so its time is an estimate, not Valhalla's.
+    Minute resolution is kept on purpose - a time rounded to 5 minutes sits
+    frozen for 5 minutes at 60 mph and reads as a broken app.
+    """
     if seconds is None:
         return "—"
-    return time.strftime("%H:%M",
-                         time.localtime((now or time.time()) + seconds))
+    clock = time.strftime("%H:%M", time.localtime((now or time.time()) + seconds))
+    return f"~{clock}" if estimate else clock
 
 
 def limit_mph(graph, lat, lon, heading=None):
@@ -308,7 +314,8 @@ class Follower:
             "arrived": self.arrived,
             "left_m": left_m,
             "left_s": left_s,
-            "eta": eta_text(left_s, now),
+            "eta": eta_text(left_s, now,
+                            estimate=getattr(route, "source", "") == "offline"),
             "source": getattr(route, "source", ""),
             "say": say,
         }

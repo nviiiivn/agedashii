@@ -42,6 +42,31 @@ def _route(points, maneuvers=(), duration_s=600.0):
                          duration_s=duration_s)
 
 
+class AnOfflineEtaSaysItIsAnEstimate(unittest.TestCase):
+    """The offline router prices a road by ONE speed per class, so its arrival
+    time is an estimate (median +2.4% against Valhalla, not exact). It is
+    marked "~" - at minute resolution, because a time rounded to 5 minutes sits
+    frozen for 5 minutes at 60 mph and reads as a broken app. A server
+    (Valhalla) arrival time is unmarked."""
+
+    POINTS = [(37.80 + i * 0.0005, -122.27) for i in range(41)]
+
+    def _eta(self, source):
+        route = _route(self.POINTS)
+        route.source = source
+        return guidance.Follower(route, offroute_m=45).update(
+            self.POINTS[5], speed_ms=15.0, now=0)["eta"]
+
+    def test_an_offline_arrival_time_is_marked(self):
+        self.assertRegex(self._eta("offline"), r"^~\d\d:\d\d$")
+
+    def test_a_server_arrival_time_is_not(self):
+        self.assertRegex(self._eta("server"), r"^\d\d:\d\d$")
+
+    def test_no_arrival_time_is_still_a_dash(self):
+        self.assertEqual(guidance.eta_text(None, estimate=True), "—")
+
+
 def _man(instruction, street, cum_m, index):
     return routing.Maneuver(instruction=instruction, street=street,
                             distance_m=0.0, at=(0.0, 0.0), index=index,

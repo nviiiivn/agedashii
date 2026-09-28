@@ -327,6 +327,18 @@ def build(page, go=None, on_change=None):
                 "with none, the map is blank.",
                 size=ui.SMALL, color=p["text2"]),
 
+        # Only on a vector map, where buildings are a layer that can be shown
+        # or hidden. On the raster archive they are painted into the tile and
+        # no switch can take them out, so offering one there would be the same
+        # lie as the three tile styles that could never be honoured. `vector`
+        # is absent until the vector map ships, so this stays hidden until it
+        # can actually do something.
+        *([_switch_row("Buildings",
+                       "the shapes of buildings on the map - landmarks in "
+                       "town, clutter on a back road",
+                       prefs.buildings(), _flag("buildings"))]
+          if choice.get("vector") else []),
+
         ft.Text("GPS samples per second", size=ui.MID,
                 weight=ft.FontWeight.W_800, color=p["text"]),
         ft.Row(spacing=8, controls=[
