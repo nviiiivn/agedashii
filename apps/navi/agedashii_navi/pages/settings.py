@@ -163,7 +163,7 @@ def _voice_lines(page):
                 heard.value = f"{name}: nothing plays until you add it - the phone never says this one."
             else:
                 speech.play(items)
-                whose = "yours" if items[0][0] == "clip" else "the phone's voice"
+                whose = voice_import.clip_source(name) or "the phone's voice"
                 problem = speech.STATE.get("problem")
                 heard.value = f"Playing {name}, {whose}." + (f" {problem}" if problem else "")
             page.update()
@@ -207,9 +207,11 @@ def _voice_lines(page):
     refresh()
     card = ui.card(ft.Column(spacing=8, tight=True, controls=[
         ui.label("YOUR LINES"),
-        ft.Text("Tap one to hear it. Green is your recording; the rest are "
-                "said in the phone's voice until you add them. Speeding is "
-                "only ever yours.", size=ui.SMALL, color=p["text2"]),
+        ft.Text("Tap one to hear it. Green is your recording; \"built in\" "
+                "ships with the app - importing one of the same name replaces "
+                "it, and Remove voice brings it back. The rest are said in "
+                "the phone's voice. Speeding is only ever a recording.",
+                size=ui.SMALL, color=p["text2"]),
         groups,
         heard,
     ]))

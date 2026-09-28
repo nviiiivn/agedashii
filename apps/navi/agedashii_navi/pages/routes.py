@@ -117,6 +117,9 @@ def build(page, go=None):
         if row.get("dist_m") is not None:
             bits.insert(0, guidance.distance_text(row["dist_m"],
                                                   prefs.imperial()))
+        if row.get("outside"):
+            # Said first and in the warning colour: tapping it will be refused.
+            bits.insert(0, places.OUTSIDE_MAP)
         return ui.row_tap(ft.Row(spacing=10, controls=[
             ft.Icon(_KIND_ICONS.get(row.get("kind"), ft.Icons.PLACE),
                     size=20, color=pal["accent"]),
@@ -125,7 +128,7 @@ def build(page, go=None):
                         weight=ft.FontWeight.W_700, color=pal["text"],
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                 ft.Text(" · ".join(x for x in bits if x), size=ui.SMALL,
-                        color=pal["text2"])]),
+                        color=pal["warn"] if row.get("outside") else pal["text2"])]),
             ft.Icon(ft.Icons.CHEVRON_RIGHT, size=20, color=pal["text3"]),
         ]), on_click or _choose(row), height=ui.TOUCH)
 
@@ -155,6 +158,7 @@ def build(page, go=None):
         # streets, which is why "Chabot Space Science Center" found nothing.
         found, total = await _to_thread(places.search_places, _S["text"], here,
                                         PLACE_ROWS)
+        found = await _to_thread(places.mark_outside, found)
         streets = await _to_thread(places.search_streets, _S["text"], None,
                                    12 - len(found), here)
         _S["rows"] = found + streets

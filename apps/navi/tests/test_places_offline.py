@@ -338,6 +338,44 @@ def _texts(node):
             if type(c).__name__ == "Text" and getattr(c, "value", None)]
 
 
+class PlacesOutsideTheMapSaySoBeforeTheTap(unittest.TestCase):
+    """Since the routing graph was cut to the map tiles' box (her choice), a
+    third of the places list lies outside it. Tapping one is refused in words;
+    the row says so first, so the list is not wrong one time in three."""
+
+    class _Graph:
+        def covers(self, lat, lon):
+            return lat > 37.2                      # Santa Cruz is south of it
+
+    BOARDWALK = {"name": "Santa Cruz Beach Boardwalk", "lat": 36.9643, "lon": -122.0177,
+                 "kind": "poi", "detail": "attraction · Santa Cruz", "dist_m": 96000.0}
+    CHABOT = {"name": "Chabot Space and Science Center", "lat": 37.8186, "lon": -122.1807,
+              "kind": "poi", "detail": "museum · Oakland", "dist_m": 9000.0}
+
+    def test_rows_the_router_cannot_reach_are_marked(self):
+        rows = places.mark_outside([dict(self.BOARDWALK), dict(self.CHABOT)], self._Graph())
+        self.assertTrue(rows[0].get("outside"))
+        self.assertFalse(rows[1].get("outside"))
+
+    def test_with_no_graph_nothing_is_claimed(self):
+        with mock.patch.object(places.routing, "graph", return_value=None):
+            rows = places.mark_outside([dict(self.BOARDWALK)])
+        self.assertFalse(rows[0].get("outside"))
+
+    def test_the_row_says_it_first_in_the_warning_colour(self):
+        from agedashii_navi.theme import PAL
+        saved = routes_page._S.get("rows")
+        routes_page._S["rows"] = places.mark_outside([dict(self.BOARDWALK)], self._Graph())
+        try:
+            tree = routes_page.build(_StubPage(), go=lambda key: None)
+        finally:
+            routes_page._S["rows"] = saved
+        line = next(c for c in _walk(tree) if type(c).__name__ == "Text"
+                    and places.OUTSIDE_MAP in str(c.value))
+        self.assertTrue(str(line.value).startswith(places.OUTSIDE_MAP))
+        self.assertEqual(line.color, PAL()["warn"])
+
+
 class WhatTheBoxSaysWhenNothingIsFound(unittest.TestCase):
     """An empty list reads as a broken app. These say why, with the real count."""
 

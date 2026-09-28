@@ -199,6 +199,29 @@ def segment_point(graph, sid):
         return None
 
 
+#: What a result row says when the offline router cannot reach it.
+OUTSIDE_MAP = "outside the map on this phone"
+
+
+def mark_outside(rows, graph=None, timeout=20.0):
+    """Set `outside` on every row the offline router cannot reach.
+
+    The routing graph was cut to the map tiles' box (her choice, 2026-09-28);
+    the places list reaches further, so about a third of it - Santa Cruz,
+    Sonoma, Napa - is outside. Routing to one is refused in words; the row
+    says so first, before she taps. With no graph loaded nothing is claimed,
+    either way. Call from a worker thread, like search_streets.
+    """
+    g = graph if graph is not None else routing.graph(timeout=timeout)
+    if g is None:
+        return rows
+    for row in rows:
+        lat, lon = row.get("lat"), row.get("lon")
+        if lat is not None and lon is not None and not g.covers(lat, lon):
+            row["outside"] = True
+    return rows
+
+
 def search_streets(text, graph=None, limit=12, near=None, timeout=20.0):
     """Street names matching `text`, from the installed graph. Offline.
 
