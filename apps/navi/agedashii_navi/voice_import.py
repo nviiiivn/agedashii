@@ -58,6 +58,7 @@ import re
 import time
 import traceback
 import zipfile
+from pathlib import Path
 
 #: The prompts, by the file name that carries each one. Fixed: her recordings
 #: are named after these, so a name here never changes.
@@ -134,20 +135,56 @@ def voice_dir():
     return os.path.join(base, "voice")
 
 
-def clip_path(name, directory=None):
-    """The clip for prompt `name`, or None. Cheap: a few stat calls, no cache.
+_BUILTIN_DIR = str(Path(__file__).resolve().parent.parent / "assets" / "voice")
 
-    None for a name with no clip and for a name that is neither one of NAMES
-    nor a distance (`dist-<N>ft`, `dist-<N>mile(s)`).
+
+def builtin_dir():
+    """Where the voice bundled into the APK lives: the app root's assets/voice.
+
+    The same base washi finds assets/maps from on the phone. It exists only in
+    the staged navi build (build_app.sh copies her gitignored clips there);
+    in the dev tree and the web build it is absent, and nothing is built in.
     """
-    if not name or not _is_name(name):
-        return None
-    folder = directory or voice_dir()
+    return _BUILTIN_DIR
+
+
+def _find(name, folder):
+    """The file for `name` in `folder`, in EXTS order, or None."""
     for ext in EXTS:
         path = os.path.join(folder, name + ext)
         if os.path.isfile(path):
             return path
     return None
+
+
+def _lookup(name, directory=None, builtin=None):
+    """(path, "yours" | "built in") or (None, None). The ONE place the order
+    lives - clip_path and clip_source both ask it, so they cannot disagree:
+    her imported clip, then the bundled one, then nothing."""
+    if not name or not _is_name(name):
+        return None, None
+    path = _find(name, directory or voice_dir())
+    if path:
+        return path, "yours"
+    path = _find(name, builtin or builtin_dir())
+    if path:
+        return path, "built in"
+    return None, None
+
+
+def clip_path(name, directory=None, builtin=None):
+    """The clip for prompt `name`, or None. Cheap: a few stat calls, no cache.
+
+    Hers wins, then the bundled one. None for a name with no clip in either,
+    and for a name that is neither one of NAMES nor a distance.
+    `builtin` points the bundled folder elsewhere, for tests.
+    """
+    return _lookup(name, directory, builtin)[0]
+
+
+def clip_source(name, directory=None, builtin=None):
+    """"yours", "built in", or None - where clip_path(name) would come from."""
+    return _lookup(name, directory, builtin)[1]
 
 
 def _debris(parts):
@@ -297,7 +334,7 @@ def _install(folder, cand, result):
             os.remove(temp)
             result["refused"].append((label, "empty"))
             return
-        had = clip_path(name, folder) is not None
+        had = _find(name, folder) is not None          # hers only, not a bundled one
         final = os.path.join(folder, name + ext)
         os.replace(temp, final)
         for other in EXTS:
@@ -367,27 +404,35 @@ def _found(folder):
     return found, unknown
 
 
-def distance_clips(directory=None):
-    """{name: path} for every distance clip present, fixed or open-ended."""
-    folder = directory or voice_dir()
-    found, _unknown = _found(folder)
-    return {n: clip_path(n, folder) for n in _in_order(found) if distance_feet(n)}
+def distance_clips(directory=None, builtin=None):
+    """{name: path} for every distance clip there is, fixed or open-ended -
+    hers and the bundled ones together, hers winning per name. The union, so
+    Arnold's 400/800/1500 ft still round her distances after she imports one
+    of her own."""
+    hers, _unknown = _found(directory or voice_dir())
+    bundled, _ = _found(builtin or builtin_dir())
+    names = set(hers) | set(bundled)
+    return {n: clip_path(n, directory, builtin) for n in _in_order(names) if distance_feet(n)}
 
 
-def status(directory=None):
-    """What is in the voice folder, against NAMES.
+def status(directory=None, builtin=None):
+    """What there is to play, against NAMES - hers and the bundled voice.
 
-    present: names with a clip - NAMES order, then open-ended distances.
-    missing: NAMES without one, never OPTIONAL ones, and not the fixed
-    distances once any distance clip is in (the player rounds to those).
-    duplicates: name -> its files, the one clip_path plays first. unknown:
-    files that are no prompt's.
+    present: names with a clip from either - NAMES order, then open-ended
+    distances. builtin: the present names that come from the bundle (she has
+    no clip of her own for them). missing: NAMES with neither, never OPTIONAL
+    ones, and not the fixed distances once any distance clip exists (the
+    player rounds to those). duplicates and unknown: in HER folder.
     """
     found, unknown = _found(directory or voice_dir())
-    any_distance = any(distance_feet(n) for n in found)
+    bundled, _ = _found(builtin or builtin_dir())
+    have = set(found) | set(bundled)
+    any_distance = any(distance_feet(n) for n in have)
+    present = _in_order(have)
     return {
-        "present": _in_order(found),
-        "missing": [n for n in NAMES if n not in found and n not in OPTIONAL
+        "present": present,
+        "builtin": [n for n in present if n not in found],
+        "missing": [n for n in NAMES if n not in have and n not in OPTIONAL
                     and not (any_distance and n in FIXED_DISTANCES)],
         "duplicates": {n: sorted(files, key=lambda f: _RANK[os.path.splitext(f)[1]])
                        for n, files in found.items() if len(files) > 1},
@@ -402,15 +447,18 @@ def _few(items, most=4):
     return ", ".join(items[:most]) + f" and {len(items) - most} more"
 
 
-def status_text(directory=None):
+def status_text(directory=None, builtin=None):
     """One line: how much of her voice is in, and what is not."""
-    st = status(directory)
+    st = status(directory, builtin)
     if not st["present"]:
         line = "No recorded voice yet."
     else:
         lines = sum(1 for n in st["present"] if n in LINES)
+        built = sum(1 for n in st["builtin"] if n in LINES)
         dists = sum(1 for n in st["present"] if distance_feet(n))
         line = f"Recorded voice: {lines} of {len(LINES)} lines"
+        if built:
+            line += f" ({built} built in)"
         if dists:
             line += f", {dists} distance{'' if dists == 1 else 's'}"
         line += "."
@@ -531,7 +579,7 @@ def panel(page, picker=None, on_change=None):
         now = time.time()
         if now - armed["at"] > CONFIRM_S:
             armed["at"] = now
-            remove_text.value = "Tap again to remove every clip"
+            remove_text.value = "Tap again to remove your clips"
             page.update()
             return
         armed["at"] = 0.0
@@ -542,7 +590,11 @@ def panel(page, picker=None, on_change=None):
             traceback.print_exc()
             show(f"Could not remove the voice: {exc}", p["bad"])
             return
-        show(f"Removed {gone} file{'' if gone == 1 else 's'}.", p["text2"])
+        # Only her files go; the voice bundled into the app stays, so say what
+        # speaks now rather than leaving "removed" to sound like silence.
+        after = (" The built-in voice speaks again." if status()["builtin"]
+                 else " The phone's own voice speaks.")
+        show(f"Removed {gone} file{'' if gone == 1 else 's'}.{after}", p["text2"])
 
     remove_btn = ui.button("Remove voice", remove_voice, icon=ft.Icons.DELETE_OUTLINE)
     remove_text = remove_btn.content.controls[-1]

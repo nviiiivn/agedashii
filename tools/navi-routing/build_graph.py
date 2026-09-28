@@ -8,24 +8,27 @@ a9a8089930ced6ca4: one Write at 2026-09-21T00:00:18Z plus eight Edits, every
 one applied cleanly) and PROVED by re-running the recipe below: the output is
 byte-identical to the shipped graph.
 
-REBUILD RECIPE - reproduces the shipped bayarea.rg exactly:
+REBUILD RECIPE. Input for both graphs below: Geofabrik california-latest.osm.pbf,
+replication timestamp 2026-08-30T20:21:06Z (sequence 4896), 1,326,191,959 bytes.
 
-    # input: Geofabrik california-latest.osm.pbf, replication timestamp
-    #        2026-08-30T20:21:06Z (sequence 4896), 1,326,191,959 bytes
-    osmium extract -b -123.63,36.85,-121.21,38.86 -o bayarea.osm.pbf \
-        california-latest.osm.pbf
-    osmium tags-filter -o bay-drive2.osm.pbf bayarea.osm.pbf \
+    osmium extract -b BBOX -o region.osm.pbf california-latest.osm.pbf
+    osmium tags-filter -o drive.osm.pbf region.osm.pbf \
         'w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,tertiary_link,unclassified,residential,living_street,service,road' \
         'r/type=restriction'
-    osmium cat -o bay-drive2.osm.opl bay-drive2.osm.pbf
-    python3 build_graph.py bay-drive2.osm.opl bayarea.rg
+    osmium cat -o drive.osm.opl drive.osm.pbf
+    python3 build_graph.py drive.osm.opl bayarea.rg [--format 2]
 
-    -> bayarea.rg  86,090,847 bytes  md5 983501d7ea133796f4932fe299040ba5
-       725,626 nodes, 1,661,666 edges, 21,806 turn restrictions applied.
-       About 2 minutes on the Pi 5 (build 46 s, peak RSS 1.8 GB).
+  THE CURRENT GRAPH (RGRAPH03, the default): BBOX -122.65,37.20,-121.75,38.10,
+  the map tiles' own box - her choice, 2026-09-28: routing stops where the map
+  does, and a destination outside it is refused in words (routing.DEST_OUTSIDE).
+    -> 41,433,230 bytes  md5 be63ddc26942702bf4d2b8001db5929e
+       358,142 nodes, 801,552 edges, 14,152 turn restrictions. ~1 min, 0.9 GB.
 
-The bbox is the routing spike's, never chosen for the product: about six
-times the area of the map tiles (-122.65,37.20,-121.75,38.10).
+  THE GRAPH SHIPPED UNTIL THEN (RGRAPH02): BBOX -123.63,36.85,-121.21,38.86 -
+  the routing spike's, never chosen, six times the tiles' area - with
+  --format 2. Reproduces it byte for byte:
+    -> 86,090,847 bytes  md5 983501d7ea133796f4932fe299040ba5
+       725,626 nodes, 1,661,666 edges, 21,806 turn restrictions. ~2 min, 1.8 GB.
 
 A GRAPH "CLASS" IS A SPEED BUCKET, NOT A HIGHWAY TYPE. `adj_cls` is the index
 of whichever SPEED_KMH entry below is nearest the way's maxspeed (or its
@@ -50,7 +53,8 @@ ways, or the turn restrictions are silently absent.  The filter is:
 
 Layout of the .rg file (all little-endian, arrays are naturally aligned):
 
-    magic  b"RGRAPH02"      (b"RGRAPH01" = no segment grid, no restrictions)
+    magic  b"RGRAPH03"      (b"RGRAPH02" = no seg_hw/seg_flags;
+                             b"RGRAPH01" = no segment grid, no restrictions)
     u32    n_nodes, n_edges, n_segs, n_pts, n_strbytes
     u32    n_str, gw, gh
     u32    n_trie, n_trans, n_sgrid            <- v2 only
@@ -80,6 +84,10 @@ Layout of the .rg file (all little-endian, arrays are naturally aligned):
                                    unused)
       tr_gate    u8  * n_nodes     1 if any out-edge of this node opens a
                                    restriction - the search's fast reject
+      -- v3 only --
+      seg_hw     u8  * n_segs      the way's REAL highway class (CLASSES
+                                   index) - adj_cls is only a speed bucket
+      seg_flags  u8  * n_segs      bit 0: junction=roundabout or circular
       str_blob   bytes
 
 WHY A TRIE
@@ -102,6 +110,9 @@ CLS = {name: i for i, name in enumerate(CLASSES)}
 SPEED_KMH = [105, 60, 90, 55, 65, 45, 55, 40, 45, 35, 40, 30, 12, 20, 30]
 
 BANNED = 0xFFFFFFFF          # tr_next sentinel: this move is illegal
+
+#: seg_flags bits (RGRAPH03)
+SEG_ROUNDABOUT = 1           # junction=roundabout or circular
 
 UNESCAPE = re.compile(r"%([0-9a-fA-F]+)%")
 
@@ -322,8 +333,9 @@ def pass1(path, restr_ways):
             c = CLS[t["highway"]]
             sp = parse_maxspeed(t.get("maxspeed")) or SPEED_KMH[c]
             fwd, bwd = way_oneway(t)
+            flags = SEG_ROUNDABOUT if t.get("junction") in ("roundabout", "circular") else 0
             ways.append((refs, c, t.get("name") or t.get("ref") or "",
-                         fwd, bwd, sp, wid if wid in restr_ways else 0))
+                         fwd, bwd, sp, wid if wid in restr_ways else 0, flags))
             for r in refs:
                 refcount[r] = refcount.get(r, 0) + 1
             need.add(refs[0]); need.add(refs[-1])
@@ -388,7 +400,12 @@ def _bearing(alat, alon, blat, blon):
     return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
 
 
-def main(opl, out):
+def main(opl, out, fmt=3):
+    """Build `out` from `opl`. fmt=3 (default) adds each segment's highway
+    class and flags; fmt=2 writes exactly the old RGRAPH02 layout, which is
+    what reproduces the shipped bayarea.rg byte for byte."""
+    if fmt not in (2, 3):
+        raise ValueError(f"format must be 2 or 3, not {fmt}")
     t0 = time.time()
     restrictions, restr_ways, restr_nodes, restr_skipped = pass0(opl)
     t0b = time.time()
@@ -435,6 +452,8 @@ def main(opl, out):
     seg_pts = array("i")      # lat,lon *1e7 interleaved
     seg_off = array("I", [0])
     seg_name = array("I")
+    seg_hw = array("B")       # RGRAPH03: the way's real highway class
+    seg_flags = array("B")    # RGRAPH03: SEG_* bits
     out_edges = [[] for _ in range(n_nodes)]   # per node: (to, len_dm, cls, segref)
     # for the ways a restriction names: every piece of them, so the relation
     # can be resolved to directed edge ids once the CSR exists.
@@ -442,7 +461,7 @@ def main(opl, out):
     # where a slot is (node_index, position within that node's out-edge list).
     way_slots = {}
 
-    for refs, c, name, fwd, bwd, sp, wid in ways:
+    for refs, c, name, fwd, bwd, sp, wid, flags in ways:
         # cost uses the per-way speed, folded into the class-independent length;
         # we keep class for display + keep a per-segment speed by quantising it
         # back onto the class table (close enough; exact speed is stored via
@@ -475,6 +494,8 @@ def main(opl, out):
                     seg_pts.append(int(round(lo * 1e7)))
                 seg_off.append(len(seg_pts) // 2)
                 seg_name.append(ni)
+                seg_hw.append(c)
+                seg_flags.append(flags)
                 u = nid2idx[cur[0]]; v = nid2idx[r]
                 ldm = int(L * 10) or 1
                 fslot = bslot = None
@@ -665,7 +686,7 @@ def main(opl, out):
 
     # ---- write
     with open(out, "wb") as f:
-        f.write(b"RGRAPH02")
+        f.write(b"RGRAPH03" if fmt == 3 else b"RGRAPH02")
         f.write(struct.pack("<5I", n_nodes, n_edges, n_segs,
                             len(seg_pts) // 2, len(blob)))
         f.write(struct.pack("<3I", len(str_list), gw, gh))
@@ -677,6 +698,9 @@ def main(opl, out):
                   sgrid_off, sgrid_seg, tr_off, tr_edge, tr_next, tr_head):
             a.tofile(f)
         f.write(bytes(tr_gate))
+        if fmt == 3:
+            f.write(bytes(seg_hw))
+            f.write(bytes(seg_flags))
         f.write(bytes(blob))
     t5 = time.time()
     sz = os.path.getsize(out)
@@ -1018,4 +1042,10 @@ def _pack_trie(seqs, adj_to, adj_off, n_nodes, stats):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    args = sys.argv[1:]
+    fmt = 3
+    if "--format" in args:
+        i = args.index("--format")
+        fmt = int(args[i + 1])
+        del args[i:i + 2]
+    main(args[0], args[1], fmt=fmt)

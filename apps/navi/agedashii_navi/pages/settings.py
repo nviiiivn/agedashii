@@ -170,27 +170,30 @@ def _voice_lines(page):
         return handler
 
     def tile(name):
-        mine = voice_import.clip_path(name) is not None
-        if mine:
-            note = "yours"
+        # Three states, from the one lookup that also decides what plays
+        # (voice_import.clip_source / clip_path): her import, the built-in
+        # set that ships in the app, or the phone's voice.
+        source = voice_import.clip_source(name)
+        if source:
+            note = source                               # "yours" / "built in"
         elif voicelines.stand_in(name) is not None:
             note = "phone voice"
         else:
             note = "silent"
+        colour = {"yours": p["good"], "built in": p["accent"]}.get(source)
         return ft.Container(
             width=TILE_W, height=ui.TOUCH, on_click=play(name), ink=True,
             padding=ft.Padding(left=4, top=0, right=4, bottom=0),
             border_radius=RAD(12), alignment=ft.Alignment.CENTER,
             bgcolor=p["surface"],
-            border=BRD(p["good"] if mine else p["border"], 2 if mine else 1),
+            border=BRD(colour or p["border"], 2 if colour else 1),
             content=ft.Column(
                 spacing=0, tight=True,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 alignment=ft.MainAxisAlignment.CENTER, controls=[
                     ft.Text(name, size=ui.SMALL, weight=ft.FontWeight.W_700,
                             color=p["text"], text_align=ft.TextAlign.CENTER),
-                    ft.Text(note, size=ui.SMALL,
-                            color=p["good"] if mine else p["text2"])]))
+                    ft.Text(note, size=ui.SMALL, color=colour or p["text2"])]))
 
     def refresh():
         groups.controls = [

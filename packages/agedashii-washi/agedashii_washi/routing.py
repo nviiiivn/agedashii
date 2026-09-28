@@ -96,6 +96,19 @@ ENV_OVERRIDE = "AGEDASHII_ROUTE_GRAPH"
 LEGACY_ENV_OVERRIDE = "NVII_ROUTE_GRAPH"
 #: The shipped region. Same naming as bayarea.mbtiles, deliberately.
 GRAPH_FILENAME = "bayarea.rg"
+#: What the shipped graph covers, in the words a refusal uses.
+REGION = "the Bay Area"
+#: A point further than this outside the graph's own extent is outside the
+#: map. Without the check, anything within MAX_SNAP_M of the edge snapped to
+#: the last road inside it and "routed" there - a route that stops at the
+#: edge of the map, miles short, with nothing saying so.
+OUTSIDE_MARGIN_M = 250.0
+#: Hers: "i'll never have signal when i'm out n about". So the refusal says
+#: what is wrong AND what to do, the way the places list's status line does.
+DEST_OUTSIDE = (f"no offline route: that place is outside the map on this phone, "
+                f"which covers {REGION} only - try again with signal")
+START_OUTSIDE = (f"no offline route: you are outside the map on this phone, which "
+                 f"covers {REGION} only - ride back into it, or try again with signal")
 #: Server endpoint that proxies to self-hosted Valhalla (dashbored-v3.py).
 SERVER_ROUTE_PATH = "/api/valhalla/route"
 #: Beyond this, a snap means "you are not in the mapped area", not "close
@@ -113,11 +126,21 @@ HEADING_BAND_M = 45.0
 #: road - so a heading re-orders a tie and never overrides a clear winner.
 HEADING_PENALTY_M = 60.0
 
-# THESE NAMES ARE HISTORICAL LABELS, NOT WHAT THE CLASSES CONTAIN. A class is
-# whatever number the .rg builder gave an edge, and the builder did not number
-# them in this order. Trusting the names is what broke the speed table once
-# (see SPEED_KMH). What each graph class actually holds, by OSM highway tag,
-# by length driven on 200 Bay Area trips (tools/navi-routing/fit_speed_kmh.py):
+# THESE NAMES ARE HISTORICAL LABELS, NOT WHAT THE CLASSES CONTAIN.
+#
+# THE RULE: a graph class is a SPEED BUCKET. The builder
+# (tools/navi-routing/build_graph.py, cls_for_speed) stores the index of
+# whichever of its default speeds [105, 60, 90, 55, 65, 45, 55, 40, 45, 35, 40,
+# 30, 12, 20, 30] km/h is nearest the way's maxspeed - or that highway type's
+# default when it has none. So a 55 mph freeway (88.5) is class 2 "trunk", a
+# 35 mph street (56.3) class 3 "trunk_link", an unposted ramp class 1, and
+# classes 6, 8, 10 and 14 are always empty: they repeat 55, 45, 40 and 30, and
+# the nearest-match takes the first index. SPEED_KMH is fitted per bucket,
+# which is correct BECAUSE of this rule - do not "fix" the table to the labels.
+# Trusting the names is what broke the speed table once (see SPEED_KMH).
+#
+# What each bucket holds, by OSM highway tag, by length driven on 200 Bay Area
+# trips (tools/navi-routing/fit_speed_kmh.py):
 #
 #   0  "motorway"        motorway 98%
 #   1  "motorway_link"   motorway_link 100%
@@ -361,10 +384,16 @@ class Graph:
                  "olat", "olon", "mx", "my", "path", "version",
                  "sgrid_off", "sgrid_seg", "tr_off", "tr_edge", "tr_next",
                  "tr_head", "tr_gate", "ntrie", "ns", "_root", "_nogate",
+                 "seg_hw", "seg_flags", "_extent",
                  "_dist", "_par", "_prev", "_stamp", "_tgt", "_gen")
 
     MAGIC = b"RGRAPH01"
     MAGIC2 = b"RGRAPH02"
+    #: RGRAPH02 plus, per segment, the way's real highway class (CLASSES
+    #: index - NOT the speed bucket `cls` holds) and flag bits.
+    MAGIC3 = b"RGRAPH03"
+    #: seg_flags bit: the segment is part of a roundabout.
+    SEG_ROUNDABOUT = 1
     #: tr_next sentinel: taking this edge from this trie state is illegal.
     BANNED = 0xFFFFFFFF
 
@@ -372,12 +401,14 @@ class Graph:
         self.path = str(path)
         with open(path, "rb") as f:
             magic = f.read(8)
-            if magic == self.MAGIC2:
+            if magic == self.MAGIC3:
+                self.version = 3
+            elif magic == self.MAGIC2:
                 self.version = 2
             elif magic == self.MAGIC:
                 self.version = 1
             else:
-                raise ValueError("not an RGRAPH01 or RGRAPH02 graph file")
+                raise ValueError("not an RGRAPH01, RGRAPH02 or RGRAPH03 graph file")
             n, e, s, p, nblob = struct.unpack("<5I", f.read(20))
             nstr, gw, gh = struct.unpack("<3I", f.read(12))
             if self.version >= 2:
@@ -421,6 +452,13 @@ class Graph:
                 self.tr_off = self.tr_edge = self.tr_next = None
                 self.tr_head = None
                 self.tr_gate = bytes(n)
+            if self.version >= 3:
+                self.seg_hw = f.read(s)
+                self.seg_flags = f.read(s)
+                if len(self.seg_hw) != s or len(self.seg_flags) != s:
+                    raise ValueError("graph file is truncated")
+            else:
+                self.seg_hw = self.seg_flags = None
             self.blob = f.read(nblob)
             if len(self.blob) != nblob:
                 raise ValueError("graph file is truncated")
@@ -431,8 +469,30 @@ class Graph:
         self.ns = n + (ntrie - 1 if ntrie else 0)
         self._root = None
         self._nogate = None
+        self._extent = None
 
     # ---------------------------------------------------------- helpers
+    def covers(self, lat, lon, margin_m=OUTSIDE_MARGIN_M):
+        """True if (lat, lon) is inside the box the graph's junctions span,
+        give or take `margin_m`. Computed once, from the node array."""
+        if self._extent is None:
+            xs, ys = self.xy[0::2], self.xy[1::2]
+            self._extent = (min(xs), min(ys), max(xs), max(ys)) if self.n else (0, 0, 0, 0)
+        x, y = self.proj(lat, lon)
+        x0, y0, x1, y1 = self._extent
+        return (x0 - margin_m <= x <= x1 + margin_m
+                and y0 - margin_m <= y <= y1 + margin_m)
+
+    def highway(self, sid):
+        """The segment's real highway class (a CLASSES index), or None on a
+        graph older than RGRAPH03 - which only knows speed buckets."""
+        return self.seg_hw[sid] if self.seg_hw is not None else None
+
+    def roundabout(self, sid):
+        """True if the segment is part of a roundabout (RGRAPH03 only)."""
+        return bool(self.seg_flags is not None
+                    and self.seg_flags[sid] & self.SEG_ROUNDABOUT)
+
     def name(self, sid):
         i = self.seg_name[sid]
         return self.blob[self.str_off[i]:self.str_off[i + 1]].decode(
@@ -1145,13 +1205,43 @@ FORK_DEG = 60.0
 RAMP_STRAIGHT_DEG = 11.0
 
 
+#: On an RGRAPH03 graph the real highway class decides instead (CLASSES
+#: indices): motorway and trunk are freeway, their links are ramps. That sees
+#: the ramps the speed buckets hide - 11% of motorway_links and 91% of
+#: trunk_links in the Bay Area have a posted speed that files them elsewhere.
+FREEWAY_HIGHWAYS = frozenset({0, 2})
+RAMP_HIGHWAYS = frozenset({1, 3})
+
+
 def _leg_edge(leg):
     """The directed edge a leg runs along, or -1 if it was built without one."""
     return leg[5] if len(leg) > 5 else -1
 
 
+def _road_type(g, k, bucket):
+    """"freeway", "ramp" or "street" for directed edge k (or its bucket)."""
+    hw = g.highway(g.seg[k] & 0x7FFFFFFF) if k >= 0 else None
+    if hw is not None:
+        return ("freeway" if hw in FREEWAY_HIGHWAYS
+                else "ramp" if hw in RAMP_HIGHWAYS else "street")
+    return ("freeway" if bucket in FREEWAY_CLASSES
+            else "ramp" if bucket in RAMP_CLASSES else "street")
+
+
+def _road_class(g, leg):
+    """What makes two legs "the same road" - the real class when known."""
+    k = _leg_edge(leg)
+    hw = g.highway(g.seg[k] & 0x7FFFFFFF) if k >= 0 else None
+    return ("hw", hw) if hw is not None else ("bucket", leg[2])
+
+
+def _on_roundabout(g, leg):
+    k = _leg_edge(leg)
+    return k >= 0 and g.roundabout(g.seg[k] & 0x7FFFFFFF)
+
+
 def _ways_out(g, node, k_in, k_out, b0):
-    """[(heading change, class, name)] for every other way on from `node`.
+    """[(heading change, road type, name)] for every other way on from `node`.
 
     Leaves out the way being taken and the way back along the road arrived
     on (the same segment, reversed): neither is a choice being made.
@@ -1168,7 +1258,7 @@ def _ways_out(g, node, k_in, k_out, b0):
         if len(shape) < 2:
             continue
         d = (bearing(shape[0], shape[1]) - b0 + 540) % 360 - 180
-        out.append((d, g.cls[k], g.name(sid)))
+        out.append((d, _road_type(g, k, g.cls[k]), g.name(sid)))
     return out
 
 
@@ -1180,15 +1270,16 @@ def _freeway_move(g, prev, leg, delta, b0, spoken_anyway):
     trips checked against Valhalla the router spoke at 11 of 428 exits, 32
     of 193 on-ramps and 14 of 152 ramp forks.
     """
-    c_in, c_out = prev[2], leg[2]
-    fwy_in, ramp_in = c_in in FREEWAY_CLASSES, c_in in RAMP_CLASSES
-    fwy_out, ramp_out = c_out in FREEWAY_CLASSES, c_out in RAMP_CLASSES
+    t_in = _road_type(g, _leg_edge(prev), prev[2])
+    t_out = _road_type(g, _leg_edge(leg), leg[2])
+    fwy_in, ramp_in = t_in == "freeway", t_in == "ramp"
+    fwy_out, ramp_out = t_out == "freeway", t_out == "ramp"
     if not (fwy_in or ramp_in or fwy_out or ramp_out):
         return None
     name_in, nm = prev[3], leg[3]
+    same_class = _road_class(g, prev) == _road_class(g, leg)
     others = _ways_out(g, prev[4], _leg_edge(prev), _leg_edge(leg), b0)
-    fork = [o for o in others
-            if (o[1] in FREEWAY_CLASSES or o[1] in RAMP_CLASSES) and abs(o[0]) < FORK_DEG]
+    fork = [o for o in others if o[1] in ("freeway", "ramp") and abs(o[0]) < FORK_DEG]
 
     def side_of(ways):
         nearest = min(ways, key=lambda o: abs(o[0] - delta))
@@ -1199,9 +1290,9 @@ def _freeway_move(g, prev, leg, delta, b0, spoken_anyway):
     # branch keeps the freeway's name, since otherwise nothing says which
     # branch is the freeway (measured: 11 false exits of that kind).
     if fwy_in and ramp_out:
-        through = [o for o in fork if o[1] in FREEWAY_CLASSES]
+        through = [o for o in fork if o[1] == "freeway"]
     elif fwy_in and fwy_out and name_in and not nm:
-        through = [o for o in fork if o[1] in FREEWAY_CLASSES and o[2] == name_in]
+        through = [o for o in fork if o[1] == "freeway" and o[2] == name_in]
     else:
         through = []
     if through:
@@ -1212,8 +1303,8 @@ def _freeway_move(g, prev, leg, delta, b0, spoken_anyway):
     # class may change under the same name (0 to 2 on the J Arthur Younger).
     if (fwy_in or ramp_in) and (fwy_out or ramp_out) and fork and abs(delta) < FORK_DEG:
         passing = fwy_in and fwy_out and (
-            all(o[1] in RAMP_CLASSES for o in fork)
-            or (nm == name_in and (nm or c_out == c_in)))
+            all(o[1] == "ramp" for o in fork)
+            or (nm == name_in and (nm or same_class)))
         if not passing:
             side = side_of(fork)
             return f"keep {side}" + (f" onto {nm}" if nm else ""), f"slight-{side}"
@@ -1228,6 +1319,44 @@ def _freeway_move(g, prev, leg, delta, b0, spoken_anyway):
     if ramp_in and fwy_out and spoken_anyway:
         return (f"merge onto {nm}" if nm else "merge"), "merge"
     return None
+
+
+def _ordinal(n):
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}" + {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
+
+def _exits_at(g, node):
+    """How many ways lead off a roundabout at `node` (its non-ring out-edges)."""
+    if node < 0:
+        return 0
+    return sum(1 for k in range(g.off[node], g.off[node + 1])
+               if not g.roundabout(g.seg[k] & 0x7FFFFFFF))
+
+
+def _roundabout_move(g, legs, ring, i):
+    """(words, kind, street) for entering or leaving a roundabout at junction i.
+
+    Valhalla's words, and its kinds: entering is "roundabout" and names the
+    exit by count ("take the 2nd exit onto East Road"); leaving has no kind,
+    because the entering clip would be wrong on the way out and the words say
+    which road it is. Only RGRAPH03 graphs know where roundabouts are.
+    """
+    if not ring[i - 1]:
+        count = 0
+        for j in range(i, len(legs)):
+            if not ring[j]:
+                break
+            if j + 1 < len(legs) and not ring[j + 1]:
+                out_name = legs[j + 1][3]
+                return (f"enter the roundabout and take the {_ordinal(count + 1)} exit"
+                        + (f" onto {out_name}" if out_name else ""),
+                        "roundabout", out_name)
+            count += _exits_at(g, legs[j][4])
+        return "enter the roundabout", "roundabout", legs[i][3]
+    nm = legs[i][3]
+    return "exit the roundabout" + (f" onto {nm}" if nm else ""), None, nm
 
 
 def _maneuvers_from_legs(g, legs, pts, bounds, cum):
@@ -1256,10 +1385,22 @@ def _maneuvers_from_legs(g, legs, pts, bounds, cum):
                 + (f" on {cur_name}" if cur_name else ""),
                 cur_name, 0.0, pts[0], 0, 0.0, "start"])
     run = legs[0][1]
+    ring = [_on_roundabout(g, leg) for leg in legs]
     for i in range(1, len(legs)):
         nm = legs[i][3]
         s0, e0 = bounds[i - 1]
         s1, e1 = bounds[i]
+        if ring[i - 1] or ring[i]:
+            # Inside the ring nothing is said: its junctions are exits not
+            # taken, and "bear right onto Circle" at each would be noise.
+            if not (ring[i - 1] and ring[i]):
+                words, kind, street = _roundabout_move(g, legs, ring, i)
+                out[-1][2] = run
+                out.append([words, street, 0.0, pts[s1], s1, cum[s1], kind])
+                cur_name = street
+                run = 0.0
+            run += legs[i][1]
+            continue
         b0 = bearing(pts[e0 - 1], pts[e0]) if e0 > s0 else 0.0
         b1 = bearing(pts[s1], pts[s1 + 1]) if e1 > s1 else 0.0
         delta = (b1 - b0 + 540) % 360 - 180
@@ -1640,6 +1781,10 @@ def _targets_for(g, s):
 
 def _route_offline(g, frm, to, heading=None):
     t0 = time.perf_counter()
+    if not g.covers(*to):
+        return _failed("offline", DEST_OUTSIDE)
+    if not g.covers(*frm):
+        return _failed("offline", START_OUTSIDE)
     with _SEARCH_LOCK:
         a = _anchor(g, *frm, heading=heading)
         b = _anchor(g, *to)
@@ -1949,6 +2094,9 @@ def route(frm, to, *, allow_server=True, timeout=25.0, graph_timeout=None,
         # failure mode that gets someone stranded.
         out.reason = f"offline routing unavailable ({why}) - routed by the server"
         return out
+    if why in (DEST_OUTSIDE, START_OUTSIDE):
+        # What to do comes first; the server's failure is the footnote.
+        return _failed("server", f"{why} (the server could not be reached: {out.reason})")
     return _failed("server", f"{why}; and the server could not help: {out.reason}")
 
 

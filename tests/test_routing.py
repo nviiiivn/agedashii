@@ -1020,6 +1020,53 @@ class TestTurnRestrictions(LatticeTestCase):
         self.assertNotEqual(first.points, second.points)
 
 
+class TestOutsideTheMap(LatticeTestCase):
+    """Hers: "i'll never have signal when i'm out n about". The day she points
+    at somewhere the phone's map does not cover, the app must say so and say
+    what to do - not route to the nearest road on the edge, and not fail in
+    words that sound like a bug."""
+
+    EAST_1KM = (37.7980, -122.2540)          # ~1 km past the lattice's edge
+    FAR = (37.9700, -122.5300)               # ~30 km away
+
+    def test_a_destination_just_past_the_edge_is_refused_not_routed_to_the_edge(self):
+        self.build()
+        with self.no_server():
+            out = R.route(LATTICE[4], self.EAST_1KM, allow_server=False)
+        self.assertFalse(out.ok, "routed to the edge of the map instead")
+        self.assertIn("outside the map on this phone", out.reason)
+        self.assertIn("signal", out.reason)
+
+    def test_a_far_destination_says_the_same_thing(self):
+        self.build()
+        with self.no_server():
+            out = R.route(LATTICE[4], self.FAR, allow_server=False)
+        self.assertFalse(out.ok)
+        self.assertIn("outside the map on this phone", out.reason)
+        self.assertNotIn("km from the nearest road", out.reason)
+
+    def test_a_start_outside_the_map_says_where_she_is(self):
+        self.build()
+        with self.no_server():
+            out = R.route(self.FAR, LATTICE[4], allow_server=False)
+        self.assertFalse(out.ok)
+        self.assertIn("you are outside the map on this phone", out.reason)
+
+    def test_with_no_signal_either_it_still_leads_with_what_to_do(self):
+        self.build()
+        with mock.patch.object(R, "_post_json", return_value=(None, "no network")):
+            out = R.route(LATTICE[4], self.FAR)
+        self.assertFalse(out.ok)
+        self.assertTrue(out.reason.startswith("no offline route"), out.reason)
+        self.assertIn("signal", out.reason)
+
+    def test_a_point_inside_the_map_still_routes(self):
+        self.build()
+        with self.no_server():
+            out = R.route(LATTICE[0], LATTICE[8], allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+
+
 class TestGraphVersions(LatticeTestCase):
     def test_an_rgraph01_graph_still_loads_and_routes(self):
         """The old format has no segment grid; junction snapping is the answer."""
@@ -1453,27 +1500,30 @@ class TestOfflineRestrictions(RoutingTestCase):
         self.assertGreater(took, 0)
 
     def test_a_real_mid_block_fix_lands_on_the_road_not_the_corner(self):
-        mid = None
+        # A place in the real graph where the nearest JUNCTION is over 100 m
+        # away: halfway along a long segment BY LENGTH (the middle shape point
+        # by index can sit next to a corner - it did, in the Bay-only graph),
+        # 8 m to one side. The edge snap must still land on the road.
         for sid in range(2000, 80000):
-            a, b = self.g.seg_off[sid], self.g.seg_off[sid + 1]
-            if b - a < 3:
+            pts = R._seg_points(self.g, sid)
+            if len(pts) < 3 or R.haversine_m(pts[0], pts[-1]) < 300:
                 continue
-            ends = ((self.g.geom[2 * a] / 1e7, self.g.geom[2 * a + 1] / 1e7),
-                    (self.g.geom[2 * (b - 1)] / 1e7,
-                     self.g.geom[2 * (b - 1) + 1] / 1e7))
-            if R.haversine_m(*ends) < 300:
-                continue
-            m = (a + b) // 2
-            here = (self.g.geom[2 * m] / 1e7, self.g.geom[2 * m + 1] / 1e7)
-            if self.g.snap_edge(*here) is not None:
-                mid = here
+            steps = [R.haversine_m(pts[k], pts[k + 1]) for k in range(len(pts) - 1)]
+            half, acc, mid = sum(steps) / 2, 0.0, None
+            for k, s in enumerate(steps):
+                if acc + s >= half and s > 0:
+                    f = (half - acc) / s
+                    mid = (pts[k][0] + (pts[k + 1][0] - pts[k][0]) * f,
+                           pts[k][1] + (pts[k + 1][1] - pts[k][1]) * f)
+                    break
+                acc += s
+            off = (mid[0] + 8.0 / 111132.0, mid[1])    # 8 m to one side
+            _node, junction_m = self.g.snap(*off)
+            if junction_m > 100.0 and self.g.snap_edge(*off) is not None:
                 break
-        if mid is None:                                # pragma: no cover
+        else:                                          # pragma: no cover
             self.skipTest("no long segment to stand in the middle of")
-        off = (mid[0] + 8.0 / 111132.0, mid[1])        # 8 m to one side
-        _node, junction_m = self.g.snap(*off)
         self.assertLess(self.g.snap_edge(*off).dist_m, 12.0)
-        self.assertGreater(junction_m, 100.0)
 
 
 @NEEDS_GRAPH
@@ -1492,19 +1542,32 @@ class TestHeadingAwareSnap(RoutingTestCase):
     def setUpClass(cls):
         cls.g = R.Graph(GRAPH)
 
-    # (where, heading -> the segment you are actually on)
+    # (where, the two directions of travel). Asserted by direction, not by
+    # segment id: ids renumber in every rebuild of the graph, and "the
+    # carriageway going your way" is what the snap promises.
     CARRIAGEWAYS = [
-        ("I-880 Oakland", 37.794887, -122.277091, {29: 679736, 201: 377550}),
-        ("I-80 Emeryville", 37.837115, -122.302650, {86: 310933, 270: 490354}),
+        ("I-880 Oakland", 37.794887, -122.277091, (29, 201)),
+        ("I-80 Emeryville", 37.837115, -122.302650, (86, 270)),
     ]
 
+    def travel_bearing(self, snap):
+        """Which way the snapped one-way segment is driven, at the snap."""
+        pts = R._seg_points(self.g, snap.seg)
+        a, b = pts[snap.i], pts[min(snap.i + 1, len(pts) - 1)]
+        return R.bearing(a, b) if snap.fwd >= 0 else R.bearing(b, a)
+
     def test_heading_picks_the_carriageway_you_are_on(self):
-        for label, lat, lon, expected in self.CARRIAGEWAYS:
-            for heading, want in expected.items():
+        for label, lat, lon, headings in self.CARRIAGEWAYS:
+            chosen = set()
+            for heading in headings:
                 with self.subTest(place=label, heading=heading):
                     snap = self.g.snap_edge(lat, lon, heading=heading)
                     self.assertIsNotNone(snap)
-                    self.assertEqual(snap.seg, want)
+                    self.assertTrue((snap.fwd >= 0) != (snap.bwd >= 0), "not one-way")
+                    off = abs((self.travel_bearing(snap) - heading + 540) % 360 - 180)
+                    self.assertLess(off, 90, f"snapped to the carriageway going {off:.0f} deg off")
+                    chosen.add(snap.seg)
+            self.assertEqual(len(chosen), 2, f"{label}: both headings chose one carriageway")
 
     def test_without_a_heading_nothing_changes(self):
         """The whole point of the default: existing callers are untouched.

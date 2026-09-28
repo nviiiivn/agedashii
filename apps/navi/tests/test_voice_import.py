@@ -28,6 +28,7 @@ if str(APP_DIR) not in sys.path:
 from agedashii_navi import voice_import as vi                # noqa: E402
 
 _TMP = tempfile.TemporaryDirectory()
+_REAL_BUILTIN_DIR = getattr(vi, "builtin_dir", None)
 
 
 def tearDownModule():                                       # noqa: N802
@@ -47,9 +48,21 @@ class _Case(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"FLET_APP_STORAGE_DATA": _TMP.name})
         env.start()
         self.addCleanup(env.stop)
+        # No bundled voice unless a test makes one: the dev tree and the web
+        # build have none, and these must behave exactly as before there.
+        self.builtin = tempfile.mkdtemp(dir=_TMP.name, prefix="apk-voice-")
+        os.rmdir(self.builtin)
+        bundled = mock.patch.object(vi, "builtin_dir", return_value=self.builtin)
+        bundled.start()
+        self.addCleanup(bundled.stop)
         self.src = tempfile.mkdtemp(dir=_TMP.name, prefix="laptop-")
         vi.clear_voice()
         self.addCleanup(vi.clear_voice)            # runs before env.stop
+
+    def bundle(self, *names):
+        """Put clips where the APK's bundled voice would be."""
+        os.makedirs(self.builtin, exist_ok=True)
+        return [_write(self.builtin, n, b"arnold:" + n.encode()) for n in names]
 
 
 class WhereTheVoiceLives(_Case):
@@ -354,6 +367,94 @@ class DistancesAreOpenEnded(_Case):
         self.assertIn("1 distance", vi.status_text())
 
 
+class TheBuiltInVoice(_Case):
+    """Arnold, baked into the APK: it works with no import at all. Hers wins
+    wherever she has one, and Remove voice goes back to it - never silence."""
+
+    def test_the_bundled_folder_is_the_app_roots_assets_voice(self):
+        # The same base washi finds assets/maps/bayarea.mbtiles from on the
+        # phone: the staged app root. (setUp patches it; this is the real one.)
+        self.assertIsNotNone(_REAL_BUILTIN_DIR, "voice_import has no builtin_dir()")
+        self.assertEqual(_REAL_BUILTIN_DIR(), str(APP_DIR / "assets" / "voice"))
+
+    def test_a_built_in_clip_plays_with_nothing_imported(self):
+        self.bundle("arrive.mp3")
+        self.assertEqual(vi.clip_path("arrive"), os.path.join(self.builtin, "arrive.mp3"))
+        self.assertEqual(vi.clip_source("arrive"), "built in")
+
+    def test_hers_wins_over_the_built_in_one(self):
+        self.bundle("arrive.mp3")
+        vi.import_files([_write(self.src, "arrive.wav", b"hers")])
+        self.assertEqual(vi.clip_path("arrive"), os.path.join(vi.voice_dir(), "arrive.wav"))
+        self.assertEqual(vi.clip_source("arrive"), "yours")
+
+    def test_neither_is_none(self):
+        self.bundle("arrive.mp3")
+        self.assertIsNone(vi.clip_path("turn-left"))
+        self.assertIsNone(vi.clip_source("turn-left"))
+
+    def test_source_and_path_never_disagree(self):
+        self.bundle("arrive.mp3", "turn-left.mp3", "dist-400ft.mp3")
+        vi.import_files([_write(self.src, "turn-left.mp3", b"hers"),
+                         _write(self.src, "start.mp3", b"hers")])
+        for name in list(vi.NAMES) + ["dist-400ft", "dist-800ft"]:
+            path, source = vi.clip_path(name), vi.clip_source(name)
+            self.assertEqual(path is None, source is None, name)
+            if source == "yours":
+                self.assertTrue(path.startswith(vi.voice_dir()), name)
+            if source == "built in":
+                self.assertTrue(path.startswith(self.builtin), name)
+
+    def test_remove_voice_goes_back_to_the_built_in_one(self):
+        self.bundle("arrive.mp3")
+        vi.import_files([_write(self.src, "arrive.mp3", b"hers")])
+        vi.clear_voice()
+        self.assertEqual(vi.clip_source("arrive"), "built in")
+        self.assertTrue(os.path.isfile(os.path.join(self.builtin, "arrive.mp3")),
+                        "Remove voice deleted a bundled clip")
+
+    def test_importing_over_a_built_in_clip_is_not_a_replacement_of_hers(self):
+        self.bundle("arrive.mp3")
+        result = vi.import_files([_write(self.src, "arrive.mp3", b"hers")])
+        self.assertEqual(result["replaced"], [])
+
+    def test_distances_are_the_union_hers_winning(self):
+        self.bundle("dist-400ft.mp3", "dist-800ft.mp3", "dist-1500ft.mp3")
+        vi.import_files([_write(self.src, "dist-200ft.mp3"),
+                         _write(self.src, "dist-800ft.wav", b"hers")])
+        got = vi.distance_clips()
+        self.assertEqual(sorted(got), ["dist-1500ft", "dist-200ft", "dist-400ft", "dist-800ft"])
+        self.assertTrue(got["dist-800ft"].startswith(vi.voice_dir()))
+        self.assertTrue(got["dist-400ft"].startswith(self.builtin))
+
+    def test_status_counts_built_in_clips_and_says_so(self):
+        self.bundle(*(n + ".mp3" for n in vi.LINES), "dist-400ft.mp3", "dist-800ft.mp3")
+        st = vi.status()
+        self.assertEqual(st["missing"], [])
+        self.assertEqual(sorted(st["builtin"]), sorted(list(vi.LINES) + ["dist-400ft", "dist-800ft"]))
+        self.assertIn("15 of 15 lines (15 built in), 2 distances", vi.status_text())
+
+    def test_her_clip_is_not_counted_as_built_in(self):
+        self.bundle("arrive.mp3", "start.mp3")
+        vi.import_files([_write(self.src, "start.mp3", b"hers")])
+        self.assertEqual(vi.status()["builtin"], ["arrive"])
+        self.assertIn("2 of 15 lines (1 built in)", vi.status_text())
+
+    def test_no_bundled_folder_is_exactly_as_before(self):
+        self.assertFalse(os.path.exists(self.builtin))
+        self.assertIsNone(vi.clip_path("arrive"))
+        self.assertEqual(vi.status()["builtin"], [])
+        self.assertIn("No recorded voice", vi.status_text())
+
+    def test_clip_path_stays_cheap_with_two_folders(self):
+        self.bundle("arrive.mp3")
+        started = time.perf_counter()
+        for _ in range(2000):
+            vi.clip_path("turn-left")
+            vi.clip_path("arrive")
+        self.assertLess((time.perf_counter() - started) / 4000, 0.001)
+
+
 class TheRoundaboutLine(_Case):
     def test_it_is_a_name_she_may_record(self):
         self.assertIn("roundabout", vi.NAMES)
@@ -545,6 +646,16 @@ class ThePanel(_Case):
                          on_change=lambda: 1 / 0)
         _tap(_button(panel, "Import"))
         self.assertIn("Imported 1", _texts(panel))
+
+    def test_remove_says_it_removes_hers_and_what_speaks_after(self):
+        self.bundle("arrive.mp3")
+        vi.import_files([_write(self.src, "arrive.mp3", b"hers")])
+        panel = vi.panel(StubPage(), picker=FakePicker([]))
+        _tap(_button(panel, "Remove"))
+        self.assertIn("your clips", _texts(panel))
+        _tap(_button(panel, "Tap again"))
+        self.assertIn("built-in voice", _texts(panel))
+        self.assertEqual(vi.clip_source("arrive"), "built in")
 
     def test_nothing_in_the_panel_flexes(self):
         # A control with `expand` set at all, inside a wrapping Row, is a grey

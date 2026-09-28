@@ -137,11 +137,15 @@ def main():
     ap.add_argument("--bbox", default="-122.65,37.20,-121.75,38.10")
     ap.add_argument("--url", default="http://localhost:8002")
     ap.add_argument("--graph", default=str(REPO / "assets" / "maps" / "bayarea.rg"))
+    ap.add_argument("--pairs-graph", default=None,
+                    help="sample the trips from this graph instead - so two graphs "
+                         "are compared on the very same trips")
     ap.add_argument("--out", default="maneuvers.json")
     a = ap.parse_args()
 
     routing.start_loading(a.graph)
     g = routing.graph(timeout=120)
+    sampler = routing.Graph(a.pairs_graph) if a.pairs_graph else g
     captured = {}
     original = routing._maneuvers_from_legs                  # noqa: SLF001
 
@@ -158,7 +162,7 @@ def main():
 
     routing._maneuvers_from_legs = capture                  # noqa: SLF001
     rows, skipped = [], 0
-    for n, (o, d) in enumerate(pairs(g, a.pairs, a.seed, [float(x) for x in a.bbox.split(",")])):
+    for n, (o, d) in enumerate(pairs(sampler, a.pairs, a.seed, [float(x) for x in a.bbox.split(",")])):
         captured.clear()
         r = routing.route(o, d, allow_server=False)
         try:

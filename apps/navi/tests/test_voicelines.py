@@ -278,6 +278,12 @@ class _Clean(unittest.TestCase):
         self.old = os.environ.get("FLET_APP_STORAGE_DATA")
         os.environ["FLET_APP_STORAGE_DATA"] = self.folder
         os.makedirs(voice_import.voice_dir())
+        # The bundled set, empty unless a test puts a clip in it.
+        self.bundle = os.path.join(self.folder, "bundle")
+        os.makedirs(self.bundle)
+        real_builtin = voice_import.builtin_dir
+        voice_import.builtin_dir = lambda: self.bundle
+        self.addCleanup(setattr, voice_import, "builtin_dir", real_builtin)
 
     def tearDown(self):
         speech.reset()
@@ -287,10 +293,13 @@ class _Clean(unittest.TestCase):
             os.environ["FLET_APP_STORAGE_DATA"] = self.old
         shutil.rmtree(self.folder, ignore_errors=True)
 
-    def add(self, name, ext=".m4a"):
-        path = os.path.join(voice_import.voice_dir(), name + ext)
+    def add(self, name, ext=".m4a", folder=None):
+        path = os.path.join(folder or voice_import.voice_dir(), name + ext)
         Path(path).write_bytes(b"not really audio")
         return path
+
+    def built_in(self, name, ext=".mp3"):
+        return self.add(name, ext, folder=self.bundle)
 
     def capture_play(self):
         """Swap speech.play for a recorder until the test ends."""
@@ -380,6 +389,14 @@ class TheRidePage(_Clean):
 
     def test_an_open_ended_distance_clip_is_played_from_a_fix(self):
         turn, far = self.add("turn-left", ".mp3"), self.add("dist-400ft", ".mp3")
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False},
+                      "In 400 ft, turn left onto Grand Ave", fired("turn left"))
+        self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
+                                        ("clip", turn, "turn left")]])
+
+    def test_a_built_in_clip_plays_with_no_import(self):
+        turn, far = self.built_in("turn-left"), self.built_in("dist-400ft")
         prefs.set_value("voice", True)
         self.announce({"ok": True, "off_route": False},
                       "In 400 ft, turn left onto Grand Ave", fired("turn left"))
@@ -493,6 +510,21 @@ class TheSettingsPage(_Clean):
         # Once she has any distance, the fixed names she never recorded go:
         # the player rounds to hers, so they would only be nagging.
         self.assertIsNone(holder_of(built, "dist-100ft"))
+
+    def test_hers_built_in_and_phone_voice_are_told_apart(self):
+        from tests.test_road_test import holder_of, texts
+        mine = self.add("turn-left", ".wav")
+        self.built_in("turn-left")                     # hers wins over it
+        arnold = self.built_in("turn-right")
+        built = self.build()
+        self.assertIn("yours", texts(holder_of(built, "turn-left")))
+        self.assertIn("built in", texts(holder_of(built, "turn-right")))
+        self.assertIn("phone voice", texts(holder_of(built, "uturn")))
+        played = self.capture_play()
+        holder_of(built, "turn-left").on_click(None)
+        holder_of(built, "turn-right").on_click(None)
+        self.assertEqual(played, [[("clip", mine, "turn left")],
+                                  [("clip", arnold, "turn right")]])
 
     def test_the_import_panel_refreshes_the_list(self):
         from tests.test_road_test import holder_of, texts

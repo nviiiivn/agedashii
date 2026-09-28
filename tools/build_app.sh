@@ -252,6 +252,21 @@ if [ "$WANT_MAPS" = 1 ] && [ -d "$SRC/assets/maps" ]; then
 else
   echo "    maps: omitted - this app never opens one"
 fi
+# Her built-in voice lines, navi only: they play with no import, and an
+# imported clip of the same name still wins (voice_import.clip_path).
+# UNTRACKED ON PURPOSE (.gitignore): this repo also pushes to GitHub, and
+# they are hers alone. Staged at the same app-root assets/ path the map is
+# found at on the phone. Never in the web build - see EXTRA below.
+if [ "$APP" = navi ]; then
+  if ls "$SRC/assets/voice/"*.* >/dev/null 2>&1; then
+    mkdir -p "$STAGE/assets/voice"
+    cp "$SRC/assets/voice/"*.* "$STAGE/assets/voice/"
+    echo "    voice: $(ls "$STAGE/assets/voice" | wc -l) built-in clips"
+  else
+    echo "    voice: NONE - $SRC/assets/voice is empty, so the phone's voice"
+    echo "           says every line until she imports her own"
+  fi
+fi
 echo "    staged $(du -sh "$STAGE" | cut -f1)"
 
 cd "$STAGE" || exit 1
@@ -268,7 +283,9 @@ for T in "${TARGETS[@]}"; do
   # routing and tiles anyway, so the offline pack is dead weight there, and
   # baking it in is what used to OOM the CI runner.
   EXTRA=""
-  [ "$T" = web ] && EXTRA="assets/maps"
+  # assets/voice as well: her clips are hers alone and the web app cannot play
+  # them anyway (no MediaPlayer in a browser - speech.NO_BRIDGE).
+  [ "$T" = web ] && EXTRA="assets/maps assets/voice"
 
   # Android-only packages, removed from the STAGED pyproject for web.
   #
