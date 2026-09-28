@@ -39,6 +39,13 @@ dependencies = [
     # plan - see agedashii_navi/audio.py. The accelerometer, gyroscope and
     # barometer need nothing here: Flet 0.86 ships those as core services.
     "flet-audio-recorder>=0.86,<0.87",
+    # The phone's own text-to-speech engine, for spoken turns - see
+    # agedashii_navi/speech.py. pypi.flet.dev has cp314 wheels for every
+    # Android ABI. NO environment marker: `flet build` runs pip on the BUILD
+    # HOST, so `sys_platform == 'android'` is false there and the marker
+    # silently left pyjnius out of the APK (probe, 2026-09-28: "No module named
+    # 'jnius'"). The tests import it lazily and never need it installed.
+    "pyjnius",
     # Washi is the plumbing, and the two pieces that matter most here are
     # already in it: `tileserver` serves MBTiles off the device over
     # loopback so the map works with the radio off, and `routing` is a

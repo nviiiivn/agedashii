@@ -79,9 +79,11 @@ def build(page, go=None):
             "Off route needs three fixes in a row beyond the threshold, and "
             "coming back needs you well inside it - otherwise one bad fix under "
             "a bridge announces a mistake you did not make.",
-            "There is no text-to-speech on this platform yet, so a prompt is "
-            "shown large at the top rather than spoken. Announce turns in "
-            "Settings controls whether it appears at all.",
+            "Each prompt is shown large at the top and spoken by the phone's "
+            "own voice, offline, through the helmet if it is paired - your "
+            "music dips for it and comes back. Announce turns in Settings "
+            "switches both. If the phone has no offline voice, the Ride page "
+            "says so and tells you where to install one.",
         ]),
 
         _section("Where to", [

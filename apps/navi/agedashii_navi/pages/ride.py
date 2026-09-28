@@ -36,14 +36,16 @@ screen. So anything assigned to the Map (`on_long_press` for drop-a-pin) is
 assigned again at the end of every `build()`. This bit the tile refetch,
 centre-on-bike and drop-a-pin; the fourth person does not have to find it.
 
-WHAT IS NOT HERE
+SPOKEN PROMPTS
 
-Spoken prompts. Flet has no text-to-speech on any platform and there is no
-package for one, so a prompt is shown rather than said - large, at the top, for
-`PROMPT_HOLD_S` seconds. `prefs.voice()` still governs whether prompts are
-surfaced at all, and `guidance.spoken()` already produces the exact sentence a
-TTS backend will read when one exists. Claiming "voice is on" while nothing
-speaks would be the lie; showing the words is not.
+Every prompt is shown - large, at the top, for `PROMPT_HOLD_S` seconds - and,
+when "Announce turns" (`prefs.voice()`) is on, also SAID, through speech.py:
+the phone's own text-to-speech engine, reached through pyjnius because Flet has
+no speech control of its own. It is polled rather than callback-driven -
+pyjnius under Flet cannot implement a Java listener - and it asks for ducking
+audio focus with the navigation-guidance attributes, so her music dips and
+comes back. When no offline voice is installed, `voice_band` says so on this
+page in words she can act on, rather than going quietly silent.
 """
 import time
 
@@ -52,7 +54,7 @@ import flet as ft
 from agedashii_washi.routing import haversine_m
 
 from .. import (audio, bikes, daylight, gauges, gears, guidance, live,
-                prefs, sensors, telemetry, theme, tiles, ui, uploads)
+                prefs, sensors, speech, telemetry, theme, tiles, ui, uploads)
 from ..theme import BRD, PAD, PAL, RAD
 
 try:                      # optional, so the app still starts without them
@@ -378,7 +380,10 @@ def build(page, go=None):
         status = follower.status() if follower is not None else None
         if status and status.get("ok"):
             turn_band.visible = True
-            turn_glyph.icon = ui.glyph(status["icon"])
+            # No maneuver, no glyph: an arrow is an instruction.
+            turn_glyph.visible = bool(status["icon"])
+            if status["icon"]:
+                turn_glyph.icon = ui.glyph(status["icon"])
             turn_glyph.color = (pal["bad"] if status["off_route"]
                                 else pal["accent"])
             if status["off_route"]:
@@ -391,11 +396,13 @@ def build(page, go=None):
                 turn_text.value = "arrived"
                 turn_dist.value = (live.LIVE.get("dest") or ("", "", ""))[2]
             else:
-                turn_text.value = status["instruction"] or "continue"
+                # Not "continue": with no instruction the banner does not know
+                # that, and on a nav banner the word is an instruction.
+                turn_text.value = status["instruction"] or "—"
                 turn_dist.value = " · ".join(x for x in (
                     guidance.distance_text(status["turn_in_m"],
                                            prefs.imperial()),
-                    status["street"]) if x)
+                    status["street"]) if x and x != "—")
             eta_text.value = status["eta"]
             left_text.value = guidance.distance_text(status["left_m"],
                                                      prefs.imperial())
@@ -422,6 +429,11 @@ def build(page, go=None):
         prompt_band.visible = (bool(live.LIVE.get("prompt"))
                                and held < PROMPT_HOLD_S and prefs.voice())
         prompt_text.value = live.LIVE.get("prompt", "")
+        # Announce turns is on and nothing can say them: tell her, here, how to
+        # fix it. Silence that looks like it is working is this app's oldest bug.
+        problem = speech.STATE.get("problem") if prefs.voice() else ""
+        voice_band.visible = bool(problem)
+        voice_text.value = problem or ""
 
         # The gauges are rebuilt rather than mutated: each one is a stack of
         # transformed Containers whose angles ARE their construction, so there is
@@ -541,6 +553,10 @@ def build(page, go=None):
                           primary=True, expand=True),
                 ui.button("Cancel", _pin_cancel, expand=True)])]))
     _M["pin_band"] = pin_band
+    voice_text = ft.Text("", size=ui.SMALL, weight=ft.FontWeight.W_700, color=p["bg"])
+    voice_band = ft.Container(
+        visible=False, bgcolor=p["warn"], content=voice_text,
+        padding=ft.Padding(left=BAND_INSET, top=8, right=12, bottom=8))
     _pin_words("Route to this point?")
     # Re-bound on every build: the Map outlives this function (see _map_parts),
     # and a handler bound once would call the closures of the first build.
@@ -557,6 +573,10 @@ def build(page, go=None):
             heading=getattr(pos, "heading", None),
             alt_m=getattr(pos, "altitude", None),
             acc_m=getattr(pos, "accuracy", None))
+        # A new prompt fires once per band; say it as it fires. Handed to the
+        # speech worker, so this fix handler never waits on the engine.
+        if out.get("say") and prefs.voice():
+            speech.say(out["say"])
         if not out["moved"]:
             return
         # The sensors and the microphone run far faster than this 1 Hz fix, and
@@ -877,6 +897,12 @@ def build(page, go=None):
 
     # Pick the microphone back up if she left it on. Not on a bare default -
     # `prefs.mic()` ships False - so this only ever resumes a choice she made.
+    # Bring the voice up now, off the page's thread, so the first prompt of a
+    # ride does not pay for binding the engine - and so a missing voice shows
+    # up on this page before it is needed, not at the first turn.
+    if prefs.voice():
+        speech.start()
+
     if prefs.mic() and not audio.listening():
         page.run_task(audio.start)
 
@@ -1074,7 +1100,7 @@ def build(page, go=None):
         ])))
 
     return ft.Column(spacing=0, expand=True, controls=[
-        prompt_band, turn_band, pin_band,
+        prompt_band, turn_band, pin_band, voice_band,
         ft.Container(expand=True, content=ft.Stack(expand=True,
                                                    controls=map_layers)),
         *band])

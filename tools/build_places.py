@@ -81,18 +81,31 @@ def centre(geometry):
 
 #: Place nodes that name the AREA a place is in, so "berkeley stadium" finds
 #: "California Memorial Stadium": OSM names the landmark, a person names the
-#: city too. Only 7% of named places carry addr:city (measured, 76,053 of
-#: 1,046,933), so the rest take the nearest town node.
-#: a1, the town SHOWN beside a result, is addr:city or the nearest city/town
-#: node - not a village: Chabot Space and Science Center is nearer the village
-#: node "Canyon" than Oakland's, and "museum · Canyon" is wrong for a building
-#: whose address is Oakland. a2, searchable but not shown, is the nearest
-#: neighbourhood or village.
+#: city too.
+#:
+#: a1, the town SHOWN beside a result, is chosen by `pick_town`: the place's own
+#: addr:city, else the nearest addr:city within BORROW_M, else the nearest
+#: city/town node. Measured 2026-09-28 on the graph-extent extract:
+#:   - 40% of named PLACES (71,678 of the 181,136 features kind_of() keeps)
+#:     carry addr:city. (Over ALL named OSM features, streets included, it is
+#:     7% - 76,053 of 1,046,933 - which is the wrong population for this.)
+#:   - Scored against those 71,678 known answers, the nearest town node alone
+#:     was right 75.6% - it names San Jose places Campbell 2,327 times, San
+#:     Francisco ones Daly City 940 - and borrowing the nearest labelled
+#:     neighbour's town within 300 m first was right 98.3% (measured where
+#:     labels cluster, so the gain on unlabelled places may be lower). 73.7% of
+#:     unlabelled places have such a neighbour.
+#: Not a village node for a1: Chabot Space and Science Center is nearer the
+#: village node "Canyon" than Oakland's, and "museum · Canyon" is wrong for a
+#: building whose address is Oakland. a2, searchable but not shown, is the
+#: nearest neighbourhood or village.
 TOWNS = {"city", "town"}
 VILLAGES = {"village"}
 HOODS = {"suburb", "neighbourhood", "quarter"}
 TOWN_M, VILLAGE_M, HOOD_M = 15000.0, 4000.0, 1500.0
-_CELL = 0.2   # degrees; ~22 km, so a 3x3 block covers TOWN_M at this latitude
+BORROW_M = 300.0
+TOWN_CELL = 0.2       # degrees; ~22 km, so a 3x3 block covers TOWN_M at this latitude
+BORROW_CELL = 0.005   # ~0.5 km, so a 3x3 block covers BORROW_M
 
 
 def area_m2(geometry, lat):
@@ -122,14 +135,15 @@ def _metres(lat1, lon1, lat2, lon2):
 class _Nearest:
     """Nearest named place node of a set of kinds, by a coarse grid."""
 
-    def __init__(self):
+    def __init__(self, cell):
+        self.cell = cell
         self.cells = {}
 
     def add(self, name, lat, lon):
-        self.cells.setdefault((int(lat // _CELL), int(lon // _CELL)), []).append((name, lat, lon))
+        self.cells.setdefault((int(lat // self.cell), int(lon // self.cell)), []).append((name, lat, lon))
 
     def find(self, lat, lon, within_m):
-        ci, cj = int(lat // _CELL), int(lon // _CELL)
+        ci, cj = int(lat // self.cell), int(lon // self.cell)
         best, best_d = None, within_m
         for i in (ci - 1, ci, ci + 1):
             for j in (cj - 1, cj, cj + 1):
@@ -138,6 +152,12 @@ class _Nearest:
                     if d < best_d:
                         best, best_d = name, d
         return best
+
+
+def pick_town(own, lat, lon, labelled, towns):
+    """The town shown beside a place: its own addr:city, else the nearest
+    labelled place's within BORROW_M, else the nearest city/town node."""
+    return own or labelled.find(lat, lon, BORROW_M) or towns.find(lat, lon, TOWN_M)
 
 
 def features(pbf, workdir):
@@ -150,11 +170,16 @@ def features(pbf, workdir):
     out = os.path.join(workdir, "named.geojsonseq")
     subprocess.run(["osmium", "tags-filter", "-O", "-o", named, pbf, "nwr/name"], check=True)
     subprocess.run(["osmium", "export", "-O", "-f", "geojsonseq", "-o", out, named], check=True)
-    towns, villages, hoods = _Nearest(), _Nearest(), _Nearest()
+    towns, villages, hoods = _Nearest(TOWN_CELL), _Nearest(TOWN_CELL), _Nearest(TOWN_CELL)
+    labelled = _Nearest(BORROW_CELL)
     with open(out, encoding="utf-8") as f:
         for line in f:
             feat = json.loads(line.strip("\x1e"))
             props, geom = feat["properties"], feat["geometry"]
+            if props.get("addr:city") and props.get("name") and kind_of(props):
+                point = centre(geom)
+                if point is not None:
+                    labelled.add(props["addr:city"], point[0], point[1])
             if geom["type"] != "Point" or not props.get("name"):
                 continue
             lon, lat = geom["coordinates"]
@@ -175,7 +200,7 @@ def features(pbf, workdir):
                 continue
             lat, lon = point
             alts = [props[k] for k in ALT_KEYS if props.get(k) and props[k] != name]
-            city = props.get("addr:city") or towns.find(lat, lon, TOWN_M)
+            city = pick_town(props.get("addr:city"), lat, lon, labelled, towns)
             local = hoods.find(lat, lon, HOOD_M) or villages.find(lat, lon, VILLAGE_M)
             areas = [a if a != name else None for a in (city, local)]
             notable = bool(props.get("wikidata") or props.get("wikipedia"))

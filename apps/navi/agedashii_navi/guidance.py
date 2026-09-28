@@ -105,11 +105,15 @@ def distance_text(metres, imperial=True):
     if imperial:
         feet = metres * 3.280839895
         if feet < 1000:
-            return f"{int(round(feet / 50.0) * 50)} ft"
+            rounded = int(round(feet / 50.0) * 50)
+            # "0 ft" is not a distance anyone can act on, and it reads as a
+            # measurement; at the turn itself the distance is simply absent.
+            return f"{rounded} ft" if rounded else "—"
         miles = metres / 1609.344
         return f"{miles:.1f} mi" if miles < 10 else f"{miles:.0f} mi"
     if metres < 950:
-        return f"{int(round(metres / 10.0) * 10)} m"
+        rounded = int(round(metres / 10.0) * 10)
+        return f"{rounded} m" if rounded else "—"
     return f"{metres / 1000.0:.1f} km"
 
 
@@ -201,6 +205,10 @@ def turn_icon(instruction):
     shapes a rider can tell apart at a glance beat twelve they cannot.
     """
     text = (instruction or "").lower()
+    if not text.strip():
+        # No instruction is not "go straight". An arrow on a nav banner IS an
+        # instruction, read at 60 mph; with nothing to say, draw nothing.
+        return None
     if "u-turn" in text or "turn around" in text:
         return "u_turn"
     if "arrive" in text or "destination" in text:
@@ -223,7 +231,12 @@ def spoken(instruction, street, metres, imperial=True, band="near"):
     the instruction and "in 80 feet" is noise in front of it.
     """
     what = instruction or "continue"
-    where = f" onto {street}" if street and street not in what else ""
+    # Arrival has no "onto". The router gives the arrive maneuver the street
+    # it ends on, and this appended it: "In 400 ft, arrive at your destination
+    # onto Broadway" - nonsense on screen, worse said aloud (fixed when the
+    # prompts started being spoken, 2026-09-28).
+    arriving = "arrive" in what.lower() or "destination" in what.lower()
+    where = f" onto {street}" if street and street not in what and not arriving else ""
     if band == "now":
         return f"{what}{where}".strip()
     return f"In {distance_text(metres, imperial)}, {what}{where}".strip()

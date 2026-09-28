@@ -23,7 +23,7 @@ import flet as ft
 from agedashii_washi import config
 
 from .. import (audio, bikes, boot, daylight, gauges, live, prefs, sensors,
-                telemetry, theme, tiles, ui, updates, version)
+                speech, telemetry, theme, tiles, ui, updates, version)
 from ..theme import BRD, PAD, PAL, RAD
 
 _KIND_WORDS = {
@@ -352,8 +352,8 @@ def build(page, go=None, on_change=None):
                     "a phone that sleeps at 60 mph is not a navigation device",
                     prefs.keep_awake(), _flag("keep_awake")),
         _switch_row("Announce turns",
-                    "shown large at the top - there is no text-to-speech on "
-                    "this platform yet, so nothing is spoken aloud",
+                    "shown large at the top and spoken aloud - "
+                    + speech.status_text(),
                     prefs.voice(), _flag("voice")),
         _switch_row("Record automatically",
                     "start a ride log as soon as the bike is rolling",

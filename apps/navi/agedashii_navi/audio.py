@@ -38,7 +38,7 @@ import time
 
 import flet as ft
 
-from . import bikes, dsp
+from . import bikes, dsp, speech
 
 #: What the recorder is asked for. Mono, because a stereo stream doubles the
 #: bytes to carry the same information about one engine.
@@ -282,6 +282,17 @@ def on_stream(e, machine=None):
         del buf[:len(buf) - WINDOW_SAMPLES]
 
     now = time.time()
+    if speech.voice_active(now):
+        # A spoken prompt is playing, or just finished. The microphone hears
+        # the voice, and a voice has a fundamental too - minion 1's catch. So
+        # the tach stands down for the prompt and speech.TAIL_S after, and the
+        # window is emptied so no voice is left in it to analyse once it ends.
+        # A blank tach for two seconds beats a wrong RPM.
+        buf.clear()
+        STATE["rpm_est"] = None
+        STATE["rpm_hz"] = None
+        STATE["rpm_rejected"] = "voice prompt playing"
+        return
     if now - STATE["rpm_at"] < RPM_EVERY_S or len(buf) < WINDOW_SAMPLES:
         return
     STATE["rpm_at"] = now

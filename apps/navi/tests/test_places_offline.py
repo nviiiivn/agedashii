@@ -284,8 +284,11 @@ class ThePlacesListSaysWhetherItIsThere(unittest.TestCase):
 
     def test_where_to_shows_the_line_before_any_search(self):
         build_places.write_db(iter(ROWS), self.path)
-        sys.path.insert(0, str(APP_DIR / "tests"))
-        from test_shell import StubPage, texts
+        # By its package name, so discover's already-loaded module is reused.
+        # `from test_shell import` ran test_shell a second time under another
+        # name, which pointed FLET_APP_STORAGE_DATA at a new temporary directory
+        # and failed LiveState's ride-directory test in a full run.
+        from tests.test_shell import StubPage, texts
         with mock.patch.object(places, "places_path", return_value=self.path):
             tree = routes_page.build(StubPage(), go=lambda key: None)
         self.assertTrue(any("places on this phone" in t for t in texts(tree)))
@@ -318,6 +321,20 @@ class TheBuilder(unittest.TestCase):
         self.assertIsNone(build_places.kind_of({"amenity": "bench"}))
         self.assertIsNone(build_places.kind_of({"highway": "residential"}))   # streets are the graph's
         self.assertIsNone(build_places.kind_of({"public_transport": "stop_position"}))
+
+    def test_a_places_town_is_its_own_then_a_neighbours_then_the_nearest_town(self):
+        # Scored on 71,678 places whose town is known: nearest town node alone
+        # was right 75.6% (San Jose shown as Campbell 2,327 times); borrowing
+        # the nearest labelled neighbour's within 300 m, 98.3%.
+        towns = build_places._Nearest(build_places.TOWN_CELL)
+        towns.add("Piedmont", 37.8244, -122.2316)               # the nearer town node
+        towns.add("Oakland", 37.8044, -122.2712)
+        labelled = build_places._Nearest(build_places.BORROW_CELL)
+        labelled.add("Oakland", 37.81880, -122.18050)           # the museum, addr:city=Oakland
+        pick = build_places.pick_town
+        self.assertEqual(pick("Emeryville", 37.8187, -122.1803, labelled, towns), "Emeryville")
+        self.assertEqual(pick(None, 37.8187, -122.1803, labelled, towns), "Oakland")     # 20 m from the museum
+        self.assertEqual(pick(None, 37.8244, -122.2300, labelled, towns), "Piedmont")    # nobody labelled nearby
 
     def test_an_area_is_placed_at_its_middle(self):
         square = {"type": "Polygon", "coordinates": [[[0, 0], [2, 0], [2, 2], [0, 2]]]}
