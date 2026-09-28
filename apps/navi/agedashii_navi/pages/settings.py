@@ -23,7 +23,8 @@ import flet as ft
 from agedashii_washi import config
 
 from .. import (audio, bikes, boot, daylight, gauges, live, prefs, sensors,
-                speech, telemetry, theme, tiles, ui, updates, version)
+                speech, telemetry, theme, tiles, ui, updates, version,
+                voice_import, voicelines)
 from ..theme import BRD, PAD, PAL, RAD
 
 _KIND_WORDS = {
@@ -121,6 +122,88 @@ def _mic_flag(page):
 #: The last thing a switch had to say, kept across the repaint it causes.
 STATE = {"note": ""}
 
+#: Her line names in the three groups she recorded them in.
+_LINE_GROUPS = (
+    ("Turns", [n for n in voice_import.NAMES if n in voicelines.STAND_IN]),
+    ("Distances - said before the turn",
+     [n for n in voice_import.NAMES if n.startswith("dist-")]),
+    ("Situations", [n for n in voice_import.NAMES if n in voicelines.SITUATIONS]),
+)
+
+
+def _voice_lines(page):
+    """Every one of her line names, hers or not yet, with a tap to hear it.
+
+    AGEDASHII's spec: "A screen that LISTS the inventory and shows which files
+    are present and which are missing, with a play button to hear each one".
+    One tile per name - this page's own control - and a tap plays exactly what
+    a ride would: her clip, or the phone's words in its place.
+
+    Returns (card, refresh). `refresh` re-reads the folder; the import panel
+    calls it after every import and removal, or this list would go on saying
+    "missing" about a clip she has just added.
+    """
+    p = PAL()
+    groups = ft.Column(spacing=8, tight=True)
+    heard = ft.Text("", size=ui.SMALL, color=p["text2"])
+
+    def play(name):
+        def handler(_e):
+            items = voicelines.preview(name, voice_import.clip_path,
+                                       prefs.imperial())
+            if not items:
+                heard.value = f"{name}: nothing plays until you add it - the phone never says this one."
+            else:
+                speech.play(items)
+                whose = "yours" if items[0][0] == "clip" else "the phone's voice"
+                problem = speech.STATE.get("problem")
+                heard.value = f"Playing {name}, {whose}." + (f" {problem}" if problem else "")
+            page.update()
+        return handler
+
+    def tile(name):
+        mine = voice_import.clip_path(name) is not None
+        if mine:
+            note = "yours"
+        elif voicelines.stand_in(name) is not None:
+            note = "phone voice"
+        else:
+            note = "silent"
+        return ft.Container(
+            width=TILE_W, height=ui.TOUCH, on_click=play(name), ink=True,
+            padding=ft.Padding(left=4, top=0, right=4, bottom=0),
+            border_radius=RAD(12), alignment=ft.Alignment.CENTER,
+            bgcolor=p["surface"],
+            border=BRD(p["good"] if mine else p["border"], 2 if mine else 1),
+            content=ft.Column(
+                spacing=0, tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER, controls=[
+                    ft.Text(name, size=ui.SMALL, weight=ft.FontWeight.W_700,
+                            color=p["text"], text_align=ft.TextAlign.CENTER),
+                    ft.Text(note, size=ui.SMALL,
+                            color=p["good"] if mine else p["text2"])]))
+
+    def refresh():
+        groups.controls = [
+            ft.Column(spacing=6, tight=True, controls=[
+                ft.Text(title, size=ui.SMALL, weight=ft.FontWeight.W_800,
+                        color=p["text"]),
+                ft.Row(wrap=True, spacing=8, run_spacing=8,
+                       controls=[tile(n) for n in names])])
+            for title, names in _LINE_GROUPS]
+
+    refresh()
+    card = ui.card(ft.Column(spacing=8, tight=True, controls=[
+        ui.label("YOUR LINES"),
+        ft.Text("Tap one to hear it. Green is your recording; the rest are "
+                "said in the phone's voice until you add them. Speeding is "
+                "only ever yours.", size=ui.SMALL, color=p["text2"]),
+        groups,
+        heard,
+    ]))
+    return card, refresh
+
 
 def build(page, go=None, on_change=None):
     p = PAL()
@@ -207,6 +290,7 @@ def build(page, go=None, on_change=None):
         page.run_task(_save)
         _rerender(page)
 
+    lines_card, lines_refresh = _voice_lines(page)
     graph = live.graph_status()
     # What is drawn, and of every style whether choosing it would change the
     # map at all. See tiles.py: with the offline archive installed, only the
@@ -355,6 +439,14 @@ def build(page, go=None, on_change=None):
                     "shown large at the top and spoken aloud - "
                     + speech.status_text(),
                     prefs.voice(), _flag("voice")),
+        # Her own recorded lines: getting them in (minion 4's panel), what is
+        # in, and a tap to hear each one.
+        voice_import.panel(page, on_change=lines_refresh),
+        lines_card,
+        _switch_row("Say street names after your lines",
+                    "the phone's voice adds \"onto Broadway\" after a turn you "
+                    "recorded. Off: your line is the whole line.",
+                    prefs.clip_streets(), _flag("clip_streets")),
         _switch_row("Record automatically",
                     "start a ride log as soon as the bike is rolling",
                     prefs.autorecord(), _flag("autorecord")),

@@ -408,6 +408,27 @@ class ThePanel(_Case):
         self.assertIsNone(vi.clip_path("arrive"))
         self.assertIn("No recorded voice", _texts(panel))
 
+    def test_whoever_shows_the_clips_hears_when_they_change(self):
+        # Settings' per-name list goes stale unless it is told.
+        page, calls = StubPage(), []
+        path = _write(self.src, "arrive.mp3")
+        panel = vi.panel(page, picker=FakePicker([_Picked("arrive.mp3", path)]),
+                         on_change=lambda: calls.append(vi.clip_path("arrive")))
+        _tap(_button(panel, "Import"))
+        self.assertEqual(len(calls), 1)
+        self.assertIsNotNone(calls[0], "told before the clip was there")
+        _tap(_button(panel, "Remove"))
+        self.assertEqual(len(calls), 1, "arming Remove changes nothing")
+        _tap(_button(panel, "Tap again"))
+        self.assertEqual(calls[1:], [None])
+
+    def test_a_listener_that_breaks_does_not_hide_what_happened(self):
+        path = _write(self.src, "arrive.mp3")
+        panel = vi.panel(StubPage(), picker=FakePicker([_Picked("arrive.mp3", path)]),
+                         on_change=lambda: 1 / 0)
+        _tap(_button(panel, "Import"))
+        self.assertIn("Imported 1", _texts(panel))
+
     def test_nothing_in_the_panel_flexes(self):
         # A control with `expand` set at all, inside a wrapping Row, is a grey
         # box in a release build (v1.11.2). This panel sits in Settings.

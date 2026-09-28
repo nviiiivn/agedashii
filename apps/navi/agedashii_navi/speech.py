@@ -5,7 +5,7 @@ tts". Flet ships no speech control, but the phone has one - the engine every
 other navigation app on it already talks through - and pyjnius reaches it from
 this app's Python. Measured on the emulator (API 34, airplane mode on): the
 engine binds in 0.11 s, the US English voice reports it needs no network, and
-speak() returns success.
+speak() returns success - which proved NOTHING: see THE TEST WORD below.
 
 HOW IT IS DRIVEN, AND WHY IT POLLS
 
@@ -27,12 +27,19 @@ WHAT IT PROMISES
   thread; `say()` only hands over the text.
 - If there is no offline voice it says so, in `STATE["problem"]`, in words she
   can act on, and the Ride page shows it. It does not fail silently.
+- No voice is used until it has been HEARD: each candidate writes PROBE_WORD
+  to a file first, and the first that produces audio is the one used. A voice
+  that is listed as installed but writes nothing is skipped; if none writes
+  anything, that is the problem shown (NO_WORKING_VOICE).
+- Her recorded clips play through MediaPlayer even when no voice works; only
+  the phone's words are missing then, and the problem is on screen.
 - `voice_active()` stays true while a prompt plays and for TAIL_S after, so the
   microphone's RPM analysis can stand down instead of hearing the voice.
 
 A different voice later - a character voice, a model - replaces the backend and
 nothing else: callers only ever see say(), voice_active() and STATE.
 """
+import os
 import threading
 import time
 
@@ -56,6 +63,23 @@ NO_VOICE = ("Turns are shown, not spoken: this phone has no offline English "
 NO_ENGINE = ("Turns are shown, not spoken: no text-to-speech engine answered. "
              "In Settings, search \"text-to-speech\" and pick Speech Services "
              "by Google.")
+NO_WORKING_VOICE = ("Turns are shown, not spoken: every voice this phone lists "
+                    "failed a test word. In Settings, search \"text-to-speech\", "
+                    "open the Google engine's settings, Install voice data, "
+                    "English (United States) - delete it and install it again "
+                    "if it is already there.")
+
+#: THE TEST WORD. Minion 1 found Google's engine listing voices as installed
+#: that fail every prompt (error -4) while speak() returns 0 and isSpeaking()
+#: goes true - "accepted", not "spoken", and on a -no-audio emulator nobody can
+#: hear the difference. So no voice is trusted until it has written this word
+#: to a file of at least PROBE_MIN_BYTES; a failing voice writes nothing or a
+#: bare 44-byte WAV header, and a real one-word WAV is tens of kilobytes.
+PROBE_WORD = "Navi"
+PROBE_MIN_BYTES = 4096
+#: Seconds one voice gets to write it, and all of them together.
+PROBE_EACH_S = 4.0
+PROBE_BUDGET_S = 30.0
 
 STATE = {}
 _M = {}
@@ -84,6 +108,7 @@ class AndroidBackend:
         from jnius import autoclass, cast
         self._autoclass = autoclass
         ctx = autoclass("android.app.ActivityThread").currentApplication()
+        self._ctx = ctx
         self._tts_cls = autoclass("android.speech.tts.TextToSpeech")
         self.tts = self._tts_cls(ctx, None)
         Builder = autoclass("android.media.AudioAttributes$Builder")
@@ -110,30 +135,88 @@ class AndroidBackend:
         engine = self.tts.getDefaultEngine() or ""
         if lang is None or lang < -1 or not engine:
             return False, NO_ENGINE, engine, "", False
-        # Prefer an INSTALLED, on-device US voice, best quality first. Google
-        # lists network voices and not-yet-downloaded ones alongside them.
-        best = None
+        # Candidates: INSTALLED, on-device English voices - US first, then best
+        # quality, then quickest. Google lists network voices and
+        # not-yet-downloaded ones alongside them.
+        candidates = []
         voices = self.tts.getVoices()
         if voices is not None:
             it = voices.iterator()
             while it.hasNext():
                 v = it.next()
                 loc = v.getLocale()
-                if (loc.getLanguage() == "en" and loc.getCountry() == "US"
+                if (loc.getLanguage() == "en"
                         and not v.isNetworkConnectionRequired()
                         and not v.getFeatures().contains("notInstalled")):
-                    if best is None or (v.getQuality(), -v.getLatency()) > (
-                            best.getQuality(), -best.getLatency()):
-                        best = v
-        if best is not None:
-            self.tts.setVoice(best)
-        voice = self.tts.getVoice()
-        offline = bool(voice is not None and not voice.isNetworkConnectionRequired()
-                       and not voice.getFeatures().contains("notInstalled"))
-        if lang < 0 or not offline:
-            return False, NO_VOICE, engine, voice.getName() if voice else "", False
+                    candidates.append(((loc.getCountry() != "US", -v.getQuality(),
+                                        v.getLatency(), v.getName()), v))
+        if not candidates:
+            return False, NO_VOICE, engine, "", False
+        # The voice that passed last time goes first. Each silent voice costs
+        # PROBE_EACH_S; the emulator has five before a working one (24 s), and
+        # that should be paid once, not at every start.
+        cache = self._ctx.getCacheDir().getAbsolutePath()
+        remembered = os.path.join(cache, "navi-voice-ok.txt")
+        try:
+            with open(remembered, encoding="utf-8") as f:
+                good = f.read().strip()
+        except OSError:
+            good = ""
+        candidates.sort(key=lambda c: (c[0][3] != good, c[0]))
         self.tts.setAudioAttributes(self.attrs)
-        return True, "", engine, voice.getName(), True
+        # Then the one that is HEARD: the first that writes the test word.
+        path = os.path.join(cache, "navi-voice-test.wav")
+        budget = time.time() + PROBE_BUDGET_S
+        try:
+            for (_key, voice) in candidates:
+                left = budget - time.time()
+                if left <= 0:
+                    break
+                try:
+                    size = self._test_word(voice, path, min(PROBE_EACH_S, left))
+                except Exception as exc:                      # noqa: BLE001
+                    # One voice failing is that voice, not the engine.
+                    print(f"[navi] speech: test word in {voice.getName()} raised "
+                          f"{type(exc).__name__}: {exc}", flush=True)
+                    size = 0
+                heard = size >= PROBE_MIN_BYTES
+                print(f"[navi] speech: test word in {voice.getName()}: {size} bytes"
+                      f" -> {'speaks' if heard else 'SILENT'}", flush=True)
+                if heard:
+                    try:
+                        with open(remembered, "w", encoding="utf-8") as f:
+                            f.write(voice.getName())
+                    except OSError as exc:
+                        print(f"[navi] speech: could not remember the voice: {exc}",
+                              flush=True)
+                    return True, "", engine, voice.getName(), True
+        finally:
+            _discard(path)
+        return False, NO_WORKING_VOICE, engine, "", False
+
+    def _test_word(self, voice, path, seconds):
+        """Bytes `voice` wrote for PROBE_WORD within `seconds`. Polled - see
+        the module docstring for why there is no listener to wait on."""
+        self.tts.stop()
+        self.tts.setVoice(voice)
+        _discard(path)
+        # An empty map, not None: this (String, HashMap, String) overload reads
+        # it unchecked - NullPointerException on the emulator, API 34.
+        params = self._autoclass("java.util.HashMap")()
+        rc = self.tts.synthesizeToFile(PROBE_WORD, params, path)
+        if rc != 0:
+            print(f"[navi] speech: synthesizeToFile() returned {rc}", flush=True)
+            return 0
+        size, end = 0, time.time() + seconds
+        while time.time() < end:
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            if size >= PROBE_MIN_BYTES:
+                break
+            time.sleep(0.05)
+        return size
 
     def speak(self, text):
         return self.tts.speak(text, self._tts_cls.QUEUE_FLUSH, None)
@@ -146,6 +229,47 @@ class AndroidBackend:
 
     def abandon_focus(self):
         return self.audio.abandonAudioFocusRequest(self.focus)
+
+    # Her recorded lines, through android.media.MediaPlayer with the same
+    # navigation-guidance attributes, so they duck the music the same way.
+    # Any format the platform decodes: mp3, wav, m4a/aac, ogg/opus, flac.
+    _player = None
+
+    def play(self, path):
+        MediaPlayer = self._autoclass("android.media.MediaPlayer")
+        player = MediaPlayer()
+        try:
+            player.setAudioAttributes(self.attrs)
+            player.setDataSource(path)
+            player.prepare()
+            player.start()
+        except Exception:
+            # A file that will not decode still made a native player; without
+            # this it sat idle in `dumpsys audio`, one more per bad prompt.
+            player.release()
+            raise
+        self._player = player
+
+    def is_playing(self):
+        return bool(self._player is not None and self._player.isPlaying())
+
+    def stop_clip(self):
+        player, self._player = self._player, None
+        if player is not None:
+            try:
+                if player.isPlaying():
+                    player.stop()
+            finally:
+                player.release()
+
+
+def _discard(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"[navi] speech: could not remove {path}: {exc}", flush=True)
 
 
 def _android_backend():
@@ -173,20 +297,38 @@ def for_the_ear(text):
     """
     import re
     text = re.sub(r"(\d)\s*ft\b", r"\1 feet", text)
-    text = re.sub(r"\b1(?:\.0)?\s*mi\b", "1 mile", text)
+    # "2.0 mi" is "two point zero miles" out loud.
+    text = re.sub(r"(\d)\.0\s*(mi|km)\b", r"\1 \2", text)
+    # Singular only for a whole 1: "0.1 mi" is not "0.1 mile".
+    text = re.sub(r"(?<![\d.])1\s*mi\b", "1 mile", text)
     return re.sub(r"(\d)\s*mi\b", r"\1 miles", text)
 
 
-def say(text):
-    """Speak `text`, replacing anything not yet said. Never blocks."""
-    text = for_the_ear((text or "").strip())
-    if not text:
+def play(items):
+    """Play a playlist, replacing anything not yet said. Never blocks.
+
+    `items` are voicelines' (kind, value, fallback): ("tts", words, None) or
+    ("clip", path, words to say if the file will not play).
+    """
+    clean = []
+    for kind, value, fallback in items or ():
+        if kind == "tts" and value and value.strip():
+            clean.append(("tts", for_the_ear(value.strip()), None))
+        elif kind == "clip" and value:
+            clean.append(("clip", value, for_the_ear(fallback) if fallback else None))
+    if not clean:
         return False
     start()
     with _M["lock"]:
-        _M["pending"] = text
+        _M["pending"] = clean
     _M["wake"].set()
     return True
+
+
+def say(text):
+    """Speak `text` in the phone's voice, replacing anything not yet said."""
+    text = (text or "").strip()
+    return play([("tts", text, None)]) if text else False
 
 
 def voice_active(now=None):
@@ -208,9 +350,9 @@ def status_text():
 
 def _take():
     with _M["lock"]:
-        text, _M["pending"] = _M["pending"], None
+        items, _M["pending"] = _M["pending"], None
         _M["wake"].clear()
-    return text
+    return items
 
 
 def _bring_up(gen):
@@ -228,7 +370,9 @@ def _bring_up(gen):
     STATE.update(ready=ok, problem=problem, engine=engine, voice=voice, offline=offline)
     print(f"[navi] speech: ready={ok} engine={engine} voice={voice} "
           f"offline={offline} {problem}", flush=True)
-    return backend if ok else None
+    # Kept even with no working voice: her clips go through MediaPlayer, which
+    # needs no voice at all. Only the words are dropped (_speak_one).
+    return backend
 
 
 def _run(gen):
@@ -239,38 +383,76 @@ def _run(gen):
     while _M.get("gen") is gen:
         if not _M["wake"].wait(0.5) or _M.get("gen") is not gen:
             continue
-        text = _take()
-        if not text:
+        items = _take()
+        if not items:
             continue
         if backend is None:
             # Nothing can speak. The words are still on screen, and the
             # problem is in STATE for the Ride page to show.
             continue
-        _speak_one(backend, text)
+        if not STATE["ready"]:
+            # No voice passed the test word: her clips still play, the
+            # phone's words (and a broken clip's fallback) cannot.
+            items = [(k, v, None) for k, v, _f in items if k == "clip"]
+            if not items:
+                continue
+        _speak_one(backend, items)
 
 
-def _speak_one(backend, text):
-    """Say one prompt; hand over to a newer one the moment it arrives."""
+def _wait(busy, started):
+    """Poll `busy()` to start and then to finish; stop early for a newer prompt."""
+    while not busy() and time.time() - started < START_TIMEOUT_S:
+        if _M["pending"]:
+            return
+        time.sleep(POLL_S)
+    while busy() and time.time() - started < MAX_UTTERANCE_S:
+        if _M["pending"]:
+            return
+        time.sleep(POLL_S)
+
+
+def _say_words(backend, words):
+    rc = backend.speak(words)
+    if rc != 0:
+        print(f"[navi] speech: speak() returned {rc}", flush=True)
+    _wait(backend.is_speaking, time.time())
+
+
+def _play_clip(backend, path):
+    """Her clip. False if it would not play, so the caller says the words."""
+    try:
+        backend.play(path)
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[navi] speech: clip {path} will not play: {type(exc).__name__}: {exc}",
+              flush=True)
+        return False
+    try:
+        _wait(backend.is_playing, time.time())
+    finally:
+        backend.stop_clip()
+    return True
+
+
+def _speak_one(backend, items):
+    """Play one prompt's items; hand over to a newer prompt the moment it arrives."""
     focused = False
     try:
         focused = backend.request_focus() == 1          # AUDIOFOCUS_REQUEST_GRANTED
-        while text:
-            STATE.update(speaking=True, last=text,
+        while items:
+            STATE.update(speaking=True,
+                         last=" + ".join(v if k == "tts" else f"[{v.rsplit('/', 1)[-1]}]"
+                                         for k, v, _f in items),
                          quiet_until=time.time() + MAX_UTTERANCE_S)
-            rc = backend.speak(text)
-            if rc != 0:
-                print(f"[navi] speech: speak() returned {rc}", flush=True)
-            started = time.time()
-            while not backend.is_speaking() and time.time() - started < START_TIMEOUT_S:
+            for kind, value, fallback in items:
+                if kind == "clip":
+                    if not _play_clip(backend, value) and fallback:
+                        _say_words(backend, fallback)
+                else:
+                    _say_words(backend, value)
                 if _M["pending"]:
                     break
-                time.sleep(POLL_S)
-            while backend.is_speaking() and time.time() - started < MAX_UTTERANCE_S:
-                if _M["pending"]:
-                    break
-                time.sleep(POLL_S)
             STATE["spoken"] += 1
-            text = _take()                               # a newer prompt, if one came
+            items = _take()                              # a newer prompt, if one came
     except Exception as exc:                                  # noqa: BLE001
         print(f"[navi] speech: failed: {type(exc).__name__}: {exc}", flush=True)
         STATE["error"] = f"{type(exc).__name__}: {exc}"

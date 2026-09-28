@@ -129,6 +129,11 @@ _FLAGS = {
     # which of those is true depends on the ride. OFF by default, because the
     # road she is on has to win over the scenery.
     "buildings": False,
+    # Say the street name after her own recorded line ("...onto Broadway" in
+    # the phone's voice). OFF by default: her lines are whole lines in her own
+    # words, and a robot tacking "Broadway" onto "GO LEFT IF YOU WANT TO LIVE"
+    # ruins the joke, which is the point of the feature.
+    "clip_streets": False,
     # Whether the surfaces that are NOT the map follow the dashboard's own
     # alola.lol palette. On by default, because they are read at a stop with the
     # phone in a hand, where looking like the rest of the family is worth more
@@ -366,6 +371,11 @@ def mic():
 def buildings():
     """Whether the vector map draws building footprints."""
     return bool(S.get("buildings", False))
+
+
+def clip_streets():
+    """Whether the street name follows her recorded lines."""
+    return bool(S.get("clip_streets", False))
 
 
 def alola_chrome():

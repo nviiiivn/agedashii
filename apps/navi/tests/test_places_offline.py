@@ -284,14 +284,58 @@ class ThePlacesListSaysWhetherItIsThere(unittest.TestCase):
 
     def test_where_to_shows_the_line_before_any_search(self):
         build_places.write_db(iter(ROWS), self.path)
-        # By its package name, so discover's already-loaded module is reused.
-        # `from test_shell import` ran test_shell a second time under another
-        # name, which pointed FLET_APP_STORAGE_DATA at a new temporary directory
-        # and failed LiveState's ride-directory test in a full run.
-        from tests.test_shell import StubPage, texts
         with mock.patch.object(places, "places_path", return_value=self.path):
-            tree = routes_page.build(StubPage(), go=lambda key: None)
-        self.assertTrue(any("places on this phone" in t for t in texts(tree)))
+            tree = routes_page.build(_StubPage(), go=lambda key: None)
+        self.assertTrue(any("places on this phone" in t for t in _texts(tree)))
+
+
+# Built here, not imported from test_shell. Importing test_shell from another
+# test module loads a second copy whenever discover knows it by a different
+# name (`test_shell` under `-s tests`, `tests.test_shell` under `-t .`), and
+# that copy's module-level FLET_APP_STORAGE_DATA repoints the first copy's
+# storage - which failed LiveState's ride-directory test.
+
+class _Task:
+    def cancel(self):
+        pass
+
+
+class _StubPage:
+    """Enough ft.Page for the Where-to surface to build against."""
+
+    def __init__(self):
+        self.controls, self.services, self.overlay, self.tasks = [], [], [], []
+        self.updates = 0
+
+    def update(self, *_a, **_k):
+        self.updates += 1
+
+    def run_task(self, fn, *args):
+        self.tasks.append((fn, args))
+        return _Task()
+
+    def run_thread(self, fn, *args, **_kwargs):
+        self.tasks.append((fn, args))
+
+
+def _walk(node, seen=None):
+    seen = set() if seen is None else seen
+    if node is None or id(node) in seen:
+        return
+    seen.add(id(node))
+    yield node
+    for attr in ("controls", "actions", "destinations"):
+        for child in (getattr(node, attr, None) or []):
+            yield from _walk(child, seen)
+    for attr in ("content", "title", "leading"):
+        child = getattr(node, attr, None)
+        if hasattr(child, "controls") or hasattr(child, "content"):
+            yield from _walk(child, seen)
+
+
+def _texts(node):
+    return [str(c.value) for c in _walk(node)
+            if type(c).__name__ == "Text" and getattr(c, "value", None)]
 
 
 class WhatTheBoxSaysWhenNothingIsFound(unittest.TestCase):

@@ -46,6 +46,12 @@ pyjnius under Flet cannot implement a Java listener - and it asks for ducking
 audio focus with the navigation-guidance attributes, so her music dips and
 comes back. When no offline voice is installed, `voice_band` says so on this
 page in words she can act on, rather than going quietly silent.
+
+Her own recorded lines come first where she has them (voicelines.py, clips
+from voice_import): one per maneuver, a distance line before it, and four
+situations - start, off route, re-routing, speeding - each said on its edge
+(`_announce`). A clip she has not recorded yet is the phone's voice for that
+item alone, never silence.
 """
 import time
 
@@ -54,7 +60,8 @@ import flet as ft
 from agedashii_washi.routing import haversine_m
 
 from .. import (audio, bikes, daylight, gauges, gears, guidance, live,
-                prefs, sensors, speech, telemetry, theme, tiles, ui, uploads)
+                prefs, sensors, speech, telemetry, theme, tiles, ui, uploads,
+                voice_import, voicelines)
 from ..theme import BRD, PAD, PAL, RAD
 
 try:                      # optional, so the app still starts without them
@@ -92,6 +99,33 @@ RIBBON_CLEARANCE = 104
 #: particular is a Flet *service*: it is unregistered the moment nothing holds
 #: a strong reference, so rebuilding the page would silently stop the GPS.
 _M = {}
+
+
+def _announce(out, limit):
+    """Say what one taken fix calls for: situation lines on their edges, then
+    the prompt, as ONE playlist - speech plays the newest playlist and drops
+    the rest, so "re-routing" queued separately would cut "off route" off.
+
+    The edges are tracked whether or not "Announce turns" is on, so switching
+    it on mid-ride does not blurt out a state she is already in. Returns the
+    items handed to speech, for tests.
+    """
+    cues = _M.setdefault("cues", voicelines.Cues())
+    names = cues.update(out.get("status"), live.LIVE.get("dest"),
+                        out.get("reroute"),
+                        guidance.over_limit(live.LIVE.get("speed_ms"), limit),
+                        time.time())
+    if not prefs.voice():
+        return []
+    items = [item for name in names
+             for item in voicelines.situation(name, voice_import.clip_path)]
+    if out.get("say"):
+        items += voicelines.playlist(out["say"], out.get("say_parts"),
+                                     voice_import.clip_path,
+                                     prefs.clip_streets(), prefs.imperial())
+    if items:
+        speech.play(items)
+    return items
 
 
 def _update(page):
@@ -573,12 +607,11 @@ def build(page, go=None):
             heading=getattr(pos, "heading", None),
             alt_m=getattr(pos, "altitude", None),
             acc_m=getattr(pos, "accuracy", None))
-        # A new prompt fires once per band; say it as it fires. Handed to the
-        # speech worker, so this fix handler never waits on the engine.
-        if out.get("say") and prefs.voice():
-            speech.say(out["say"])
         if not out["moved"]:
             return
+        # A new prompt fires once per band; say it as it fires. Handed to the
+        # speech worker, so this fix handler never waits on the engine.
+        _announce(out, _M.get("limit", (None, ""))[0])
         # The sensors and the microphone run far faster than this 1 Hz fix, and
         # they are merged INTO the sample the fix just created rather than
         # logged on their own clock. That is what keeps one row per fix while

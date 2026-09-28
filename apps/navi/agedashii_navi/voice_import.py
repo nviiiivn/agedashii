@@ -389,10 +389,14 @@ def _page_picker(page):
     return ft.FilePicker()
 
 
-def panel(page, picker=None):
+def panel(page, picker=None, on_change=None):
     """The Settings card: what is in, Import voice, Remove voice.
 
     `picker` is for tests; on a phone it is the page's own FilePicker.
+    `on_change()` is called after an import or a removal, before the page
+    updates, so anything else showing the clips can redraw in the same frame.
+    If it raises, the traceback is printed and this card still says what
+    happened.
     """
     import flet as ft
 
@@ -409,6 +413,11 @@ def panel(page, picker=None):
         line.value = status_text()
         said.value = text
         said.color = colour
+        if on_change is not None:
+            try:
+                on_change()
+            except Exception:                                 # noqa: BLE001
+                traceback.print_exc()
         page.update()
 
     async def import_voice(_e):

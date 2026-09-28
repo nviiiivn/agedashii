@@ -303,6 +303,8 @@ def set_position(lat, lon, *, speed_ms=None, heading=None, alt_m=None,
         out["status"] = status
         if status.get("say"):
             out["say"] = status["say"]
+            # Which turn, how far, which band - for her recorded lines.
+            out["say_parts"] = status.get("say_parts")
             LIVE["prompt"] = status["say"]
             LIVE["prompt_at"] = t
         if (follower.should_reroute()

@@ -260,6 +260,7 @@ class Follower:
         self._said = set()          # (maneuver index, band) already spoken
         self._last = None
         self.reroutes = 0
+        self.fired = None           # the parts of the prompt just fired
 
     def set_route(self, route):
         """Start following a new route, forgetting everything about the old.
@@ -311,6 +312,7 @@ class Follower:
             self.arrived = True
 
         say = None
+        self.fired = None
         if not self.off_route and man is not None and not self.arrived:
             say = self._maybe_say(man, metres, speed_ms)
 
@@ -331,6 +333,7 @@ class Follower:
                             estimate=getattr(route, "source", "") == "offline"),
             "source": getattr(route, "source", ""),
             "say": say,
+            "say_parts": self.fired if say else None,
         }
         return self._last
 
@@ -397,6 +400,12 @@ class Follower:
                 self._said.add((index, other))
                 if other == band:
                     break
+            # The parts as well as the sentence: her recorded lines replace the
+            # MANEUVER and the DISTANCE, not our wording, so the voice layer
+            # needs to know which turn this is rather than re-parse the text.
+            self.fired = {"instruction": getattr(man, "instruction", ""),
+                          "street": getattr(man, "street", ""),
+                          "metres": metres, "band": band}
             return spoken(getattr(man, "instruction", ""),
                           getattr(man, "street", ""), metres,
                           self.imperial, band)
