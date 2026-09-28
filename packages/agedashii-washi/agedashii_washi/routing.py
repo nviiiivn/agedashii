@@ -113,22 +113,56 @@ HEADING_BAND_M = 45.0
 #: road - so a heading re-orders a tie and never overrides a clear winner.
 HEADING_PENALTY_M = 60.0
 
+# THESE NAMES ARE HISTORICAL LABELS, NOT WHAT THE CLASSES CONTAIN. A class is
+# whatever number the .rg builder gave an edge, and the builder did not number
+# them in this order. Trusting the names is what broke the speed table once
+# (see SPEED_KMH). What each graph class actually holds, by OSM highway tag,
+# by length driven on 200 Bay Area trips (tools/navi-routing/fit_speed_kmh.py):
+#
+#   0  "motorway"        motorway 98%
+#   1  "motorway_link"   motorway_link 100%
+#   2  "trunk"           motorway 80%, trunk 12%, motorway_link 3%, primary 3%
+#   3  "trunk_link"      secondary 57%, primary 31%, tertiary 6%, trunk 4%
+#   4  "primary"         primary 47%, secondary 19%, trunk 18%, motorway 12%
+#   5  "primary_link"    tertiary 52%, primary 20%, secondary 15%, trunk 8%
+#   6  "secondary"       EMPTY - no edge in the shipped graph
+#   7  "secondary_link"  secondary 30%, primary 23%, trunk 12%, tertiary 11%
+#   8  "tertiary"        EMPTY
+#   9  "tertiary_link"   1,179 edges; 0.29 km driven - too little to say
+#  10  "unclassified"    EMPTY
+#  11  "residential"     residential 82%, unclassified 8%, secondary 6%
+#  12  "living_street"   2,049 edges; 0.16 km driven - too little to say
+#  13  "service"         service 92%
+#  14  "road"            EMPTY
 CLASSES = ["motorway", "motorway_link", "trunk", "trunk_link", "primary",
            "primary_link", "secondary", "secondary_link", "tertiary",
            "tertiary_link", "unclassified", "residential", "living_street",
            "service", "road"]
-# Effective speeds per class, measured from Valhalla 3.6.3 motorcycle costing on
-# the California default-speed tiles (tools/navi-routing/fit_speed_kmh.py, 200
-# trips measured, 200 validated at median +2.4%). They absorb signals and turn
-# delay; the junction and U-turn penalties are search costs only.
+#: Slots no edge in the shipped graph uses. Their speeds below are
+#: placeholders that nothing is ever priced at - do not fit numbers into them.
+EMPTY_CLASSES = (6, 8, 10, 14)
+# Effective speeds per GRAPH class - index i prices the edges whose class is
+# i, whatever CLASSES[i] says. Measured from Valhalla 3.6.3 motorcycle costing
+# on the California default-speed tiles: each Valhalla edge snapped onto the
+# graph and counted under the class it lands on, 200 trips measured, then one
+# calibration factor (1.049, fitted on those same trips) so the router's own
+# ETA is not short. They absorb signals and turn delay; the junction and
+# U-turn penalties are search costs only. Checked on 200 held-out trips:
+#   ETA against Valhalla   median +0.7%, median |error| 4.8%
+#   route on Valhalla's roads, mean 83.0% of its length; 50 trips under 80%
 #
-# UNMEASURED - no usable evidence in 400 trips, so the OLD values stand and are
-# known to be old: tertiary_link 38.7 (0.42 km seen, which measured 25.8 - so
-# 38.7 is believed too fast; every other link measured 27-35), living_street
-# 12.1 and road 6.3 (0 km seen). The table this replaced was fitted to her
-# server, which used world-average speeds: ETAs ran a median 13.4% long.
-SPEED_KMH = [97.3, 49.2, 58.4, 35.0, 42.3, 27.8, 40.3, 26.9,
-             34.9, 38.7, 29.0, 17.2, 12.1, 8.9, 6.3]
+# THE TABLE THIS REPLACES filed each speed under the class NAMED like the OSM
+# tag, so every speed landed on the wrong kind of road: class 2, mostly
+# freeway, was priced at 58.4 km/h. Its totals still validated (+2.4% median)
+# because errors on different classes cancel in a sum - but the router thought
+# those freeways were slow and routed around them (mean 80.3% on Valhalla's
+# roads, 58 trips under 80%). The harm was route choice, not the ETA.
+#
+# UNMEASURED - too little evidence, so the old values stand: 9 (38.7; its 0.29
+# km measured 22.7, so 38.7 is believed too fast) and 12 (12.1). The EMPTY
+# classes keep their old numbers only to keep the list whole.
+SPEED_KMH = [91.8, 44.6, 83.9, 38.1, 46.1, 34.4, 40.3, 31.6,
+             34.9, 38.7, 29.0, 18.0, 12.1, 9.0, 6.3]
 # The A* heuristic must be admissible for the cost function actually used,
 # i.e. the fastest *calibrated* class, not the fastest signposted one.
 MAXSPEED_MS = max(SPEED_KMH) / 3.6
