@@ -858,8 +858,11 @@ class TileChoice(unittest.TestCase):
         self.assertIn("opentopomap", got["url"])
 
     def test_an_unknown_style_falls_back_to_the_default(self):
-        self.assertEqual(tiles.pick("fuchsia", archive=False)["style"],
-                         tiles.DEFAULT)
+        # Read as the default; what is DRAWN online for it is whatever can be
+        # (online Dark has no source - tiles.WHY_NOT_ONLINE).
+        got = tiles.pick("fuchsia", archive=False)
+        self.assertEqual(got["asked"], tiles.DEFAULT)
+        self.assertTrue(got["url"])
 
     def test_cycling_walks_every_style_and_comes_back(self):
         seen, style = [], tiles.DEFAULT

@@ -157,12 +157,32 @@ flet run                       # a window, if there is a display
 AGEDASHII_HEADLESS=1 flet run  # HTTP on :8554
 ```
 
-Tests — 95 of them, no device, no display, no network:
+**Seeing the tree in a browser, on the Pi.** Headless mode answers 500 here:
+the venv's `flet_web` ships without the web client. The obvious fix is wrong -
+pointing `FLET_WEB_PATH` at a saved web build (`agedashii-dist/sites/navi/web`)
+serves an index hard-wired to `pyodide: true`, which boots that build's OWN
+frozen copy of the app, so you look at the last build and not at your code.
+What works: a real copy (the static server refuses symlinks - 404), without
+the big folders, with Pyodide switched off:
+
+```bash
+rsync -a --exclude maps --exclude pyodide --exclude assets/app \
+  ~/www/agedashii-dist/sites/navi/web/ ~/Sandbox/tmp/navi-web/
+sed -i 's/pyodide: true,/pyodide: false,/' ~/Sandbox/tmp/navi-web/index.html
+cd apps/navi
+FLET_WEB_PATH=~/Sandbox/tmp/navi-web AGEDASHII_HEADLESS=1 AGEDASHII_PORT=8562 \
+  PYTHONPATH=.:../../packages/agedashii-washi:../../packages/agedashii-qi \
+  python main.py                 # then open http://127.0.0.1:8562/
+```
+
+Tests - no device, no display, no network. Run both ways: a test that only
+imports with `tests/` on the path has broken the second one before.
 
 ```bash
 cd apps/navi
-PYTHONPATH=../../packages/agedashii-washi:../../packages/agedashii-qi:. \
-  python -m unittest tests.test_core tests.test_shell
+export PYTHONPATH=.:../../packages/agedashii-washi:../../packages/agedashii-qi
+python -m unittest discover -s tests
+python -m unittest discover -s tests -t .
 ```
 
 `tests/test_core.py` pins the arithmetic — heading wrap across north, the lean

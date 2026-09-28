@@ -29,6 +29,15 @@ to offer a choice that cannot be honoured.
 
 The online styles are public endpoints, listed with their attribution because
 that is the licence condition, not a nicety.
+
+DARK IS OFFLINE ONLY (2026-09). CARTO's basemaps now answer every keyless
+request with an "API KEY REQUIRED" watermark - as a 200, so nothing errors.
+A key would ship inside the app for anyone to read, which is a credential in
+code, so there is none; and a style that draws a watermark is her "it just the
+black tiles" again, known in advance. So online Dark has no source: it is not
+offered, and says why (WHY_NOT_ONLINE). The phone inside the Bay Area archive
+is UNAFFECTED - Dark there is the archive's own rendering. The themed vector
+map brings Dark back from her theme rather than from a provider.
 """
 import os
 import sqlite3
@@ -38,9 +47,8 @@ from agedashii_washi import tileserver
 
 #: style key -> (label, url template, attribution)
 STYLES = {
-    "dark": ("Dark",
-             "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-             "CARTO / OpenStreetMap"),
+    # No online source: see DARK IS OFFLINE ONLY above.
+    "dark": ("Dark", None, "on-device archive"),
     "streets": ("Streets",
                 "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                 "OpenStreetMap"),
@@ -164,6 +172,17 @@ def pick(style=DEFAULT, archive=None):
                 "note": f"offline map - {words}",
                 "attribution": "on-device archive",
                 "zooms": tileserver.status().get("zooms")}
+    if STYLES[asked][1] is None:
+        # Asked for a style with no online source. Something real is drawn -
+        # a blank map is the grey grid this module exists to avoid - and the
+        # chip SAYS it is a stand-in, never silently.
+        drawn = next(k for k in STYLES if STYLES[k][1])
+        return {"url": STYLES[drawn][1], "offline": False, "style": drawn,
+                "asked": asked, "substituted": True,
+                "note": (f"online - {label(drawn).lower()} - "
+                         f"{label(asked).lower()} is offline only"),
+                "attribution": STYLES[drawn][2],
+                "zooms": (0, 19)}
     return {"url": STYLES[asked][1], "offline": False, "style": asked,
             "asked": asked, "substituted": False,
             "note": f"online - {STYLES[asked][0].lower()} - needs signal",
@@ -172,6 +191,13 @@ def pick(style=DEFAULT, archive=None):
             # but the layer scaling past 19 is not worth a special case.
             "zooms": (0, 19)}
 
+
+#: Why a style cannot be drawn ONLINE, by style. In her terms.
+WHY_NOT_ONLINE = {
+    "dark": ("offline only now - its provider wants a key before it will draw, "
+             "and a key in the app would be readable by anyone. The offline "
+             "map still draws it, and the themed map on the way brings it back"),
+}
 
 #: Why a style cannot be drawn when the archive is installed. In her terms,
 #: and it says the reason is the rule, not a fault.
@@ -192,8 +218,8 @@ def choices(style=DEFAULT, archive=None):
                      is, what it needs ("needs signal" for an online style)
 
     With the archive installed exactly one style is usable - the archive's
-    own - and the other three say why not. With no archive all four are
-    usable and all four need signal.
+    own - and the other three say why not. With no archive every style with
+    an online source is usable and needs signal; Dark has none (WHY_NOT_ONLINE).
     """
     choice = pick(style, archive=archive)
     rows = []
@@ -202,6 +228,9 @@ def choices(style=DEFAULT, archive=None):
             usable = key == choice["style"]
             why = ("offline - drawn from the phone, no signal needed"
                    if usable else WHY_ARCHIVE_WINS)
+        elif STYLES[key][1] is None:
+            usable = False
+            why = WHY_NOT_ONLINE.get(key, "no online source")
         else:
             usable = True
             why = "online - needs signal"

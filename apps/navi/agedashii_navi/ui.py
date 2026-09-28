@@ -43,6 +43,12 @@ TURN_GLYPHS = {
     "u_turn": ft.Icons.U_TURN_LEFT,
     "straight": ft.Icons.STRAIGHT,
     "flag": ft.Icons.FLAG,
+    # Right-hand traffic: US roundabouts turn counter-clockwise, which is the
+    # shape Material draws as ROUNDABOUT_RIGHT.
+    "roundabout": ft.Icons.ROUNDABOUT_RIGHT,
+    "merge": ft.Icons.MERGE,
+    "ramp_left": ft.Icons.RAMP_LEFT,
+    "ramp_right": ft.Icons.RAMP_RIGHT,
 }
 
 

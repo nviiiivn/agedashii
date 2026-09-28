@@ -122,7 +122,8 @@ def _announce(out, limit):
     if out.get("say"):
         items += voicelines.playlist(out["say"], out.get("say_parts"),
                                      voice_import.clip_path,
-                                     prefs.clip_streets(), prefs.imperial())
+                                     prefs.clip_streets(), prefs.imperial(),
+                                     distances=voice_import.distance_clips())
     if items:
         speech.play(items)
     return items

@@ -349,6 +349,20 @@ def on_error(name):
     return handler
 
 
+def _not_mobile(page):
+    """Why these sensors cannot run on this page, or "" when they can.
+
+    A page with no `platform` at all (a test's stand-in) counts as a phone,
+    which is what every test built against before this check existed.
+    """
+    if getattr(page, "web", False):
+        return "not on this platform (a browser)"
+    platform = getattr(page, "platform", None)
+    if platform is not None and not platform.is_mobile():
+        return f"not on this platform ({platform.value})"
+    return ""
+
+
 def attach(page, interval_ms=INTERVAL_MS):
     """Subscribe to every sensor this device has. Idempotent.
 
@@ -359,6 +373,21 @@ def attach(page, interval_ms=INTERVAL_MS):
     if _M["services"] and _M["page"] is page:
         return _M["services"]
     made = []
+    # NOT IN A BROWSER, NOR ON A DESKTOP. The five motion sensors and
+    # ScreenBrightness raise FletUnsupportedPlatformException from their
+    # before_update() when `page.web or not page.platform.is_mobile()` - Flet
+    # 0.86.5's own test, used here so the two cannot drift apart. The raise
+    # comes at the next page update after they are registered, NOT when they
+    # are built, so the try/except below never saw it: it surfaced at the next
+    # service anyone built, the Ride page's Geolocator, and the Ride page never
+    # finished. Every web build since these sensors were added sat on "LOADING
+    # UI" for ever (found at v1.14.0; nothing watches the web app).
+    #
+    # Checked in the same Flet: of the other services this app builds, Battery,
+    # SharedPreferences and flet_geolocator's Geolocator have no such check;
+    # FilePicker refuses the web only in get_directory_path(), which nothing
+    # here calls; the web bundle carries no AudioRecorder at all (audio.attach).
+    elsewhere = _not_mobile(page)
     for cls, handler, name, every in (
             (ft.Accelerometer, on_accelerometer, "accelerometer", interval_ms),
             (ft.UserAccelerometer, on_user_accelerometer,
@@ -366,6 +395,10 @@ def attach(page, interval_ms=INTERVAL_MS):
             (ft.Gyroscope, on_gyroscope, "gyroscope", interval_ms),
             (ft.Barometer, on_barometer, "barometer", BARO_INTERVAL_MS),
             (ft.Magnetometer, on_magnetometer, "magnetometer", interval_ms)):
+        if elsewhere:
+            # Said, not skipped quietly: Settings lists these as missing.
+            STATE["errors"][name] = elsewhere
+            continue
         try:
             made.append(cls(interval=ft.Duration(milliseconds=every),
                             on_reading=handler, on_error=on_error(name)))
@@ -385,12 +418,15 @@ def attach(page, interval_ms=INTERVAL_MS):
         _M["battery"] = battery
     except Exception as exc:                    # noqa: BLE001
         STATE["errors"]["battery"] = str(exc)
-    try:
-        brightness = ft.ScreenBrightness()
-        made.append(brightness)
-        _M["brightness"] = brightness
-    except Exception as exc:                    # noqa: BLE001
-        STATE["errors"]["brightness"] = str(exc)
+    if elsewhere:
+        STATE["errors"]["brightness"] = elsewhere
+    else:
+        try:
+            brightness = ft.ScreenBrightness()
+            made.append(brightness)
+            _M["brightness"] = brightness
+        except Exception as exc:                # noqa: BLE001
+            STATE["errors"]["brightness"] = str(exc)
 
     if isinstance(getattr(page, "services", None), list):
         page.services.extend(made)

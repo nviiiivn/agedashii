@@ -122,13 +122,21 @@ def _mic_flag(page):
 #: The last thing a switch had to say, kept across the repaint it causes.
 STATE = {"note": ""}
 
-#: Her line names in the three groups she recorded them in.
-_LINE_GROUPS = (
-    ("Turns", [n for n in voice_import.NAMES if n in voicelines.STAND_IN]),
-    ("Distances - said before the turn",
-     [n for n in voice_import.NAMES if n.startswith("dist-")]),
-    ("Situations", [n for n in voice_import.NAMES if n in voicelines.SITUATIONS]),
-)
+def _line_groups():
+    """Her line names in the three groups she recorded them in.
+
+    Distances are whatever she HAS - Arnold's are 200, 400, 800 and 1500 ft -
+    because the player rounds to those. The first-list names are shown only
+    while she has none, as the suggestion; after that they would be nagging
+    about files that would never play.
+    """
+    have = list(voice_import.distance_clips())
+    return (
+        ("Turns", [n for n in voice_import.NAMES if n in voicelines.STAND_IN]),
+        ("Distances - said before the turn",
+         have or list(voice_import.FIXED_DISTANCES)),
+        ("Situations", [n for n in voice_import.NAMES if n in voicelines.SITUATIONS]),
+    )
 
 
 def _voice_lines(page):
@@ -191,7 +199,7 @@ def _voice_lines(page):
                         color=p["text"]),
                 ft.Row(wrap=True, spacing=8, run_spacing=8,
                        controls=[tile(n) for n in names])])
-            for title, names in _LINE_GROUPS]
+            for title, names in _line_groups()]
 
     refresh()
     card = ui.card(ft.Column(spacing=8, tight=True, controls=[
@@ -400,10 +408,11 @@ def build(page, go=None, on_change=None):
             for row in tile_rows if row["usable"]]),
         ft.Text(f"now: {choice['note']} · {choice['attribution']}",
                 size=ui.SMALL, color=p["text2"]),
-        *([ft.Text(
-            f"{', '.join(row['label'] for row in cannot)}: "
-            f"{tiles.WHY_ARCHIVE_WINS}.", size=ui.SMALL, color=p["text2"])]
-          if cannot else []),
+        # One line per reason, from the rows themselves: there are two now
+        # (the archive wins; Dark has no online source).
+        *[ft.Text(f"{', '.join(r['label'] for r in cannot if r['why'] == why)}: "
+                  f"{why}.", size=ui.SMALL, color=p["text2"])
+          for why in dict.fromkeys(r["why"] for r in cannot)],
         ft.Text(("The theme recolours the buttons, the gauges and these "
                  "pages. It cannot recolour the map: the offline map is one "
                  "rendering, drawn in advance.") if choice["offline"] else

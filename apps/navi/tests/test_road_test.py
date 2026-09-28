@@ -213,12 +213,54 @@ class TheTilePickerTellsTheTruth(_Clean):
             if row["key"] != "dark":
                 self.assertEqual(row["why"], tiles.WHY_ARCHIVE_WINS)
 
-    def test_without_an_archive_every_style_needs_signal_and_says_so(self):
+    def test_without_an_archive_every_drawable_style_needs_signal_and_says_so(self):
         choice, rows = tiles.choices("topo", archive=False)
         self.assertFalse(choice["offline"])
         self.assertIn("needs signal", choice["note"])
-        self.assertTrue(all(r["usable"] for r in rows))
-        self.assertTrue(all("needs signal" in r["why"] for r in rows))
+        for row in rows:
+            if row["key"] != "dark":
+                self.assertTrue(row["usable"], row["key"])
+                self.assertIn("needs signal", row["why"])
+
+    # CARTO's basemaps answer every keyless request since 2026-09 with an "API
+    # KEY REQUIRED" watermark, as a 200. A style that draws a watermark is her
+    # "it just the black tiles" again, known in advance - so it is not offered.
+    def test_online_dark_is_not_offered_and_says_why(self):
+        _choice, rows = tiles.choices("topo", archive=False)
+        dark = next(r for r in rows if r["key"] == "dark")
+        self.assertFalse(dark["usable"])
+        self.assertEqual(dark["why"], tiles.WHY_NOT_ONLINE["dark"])
+        self.assertIn("key", dark["why"])
+        self.assertNotIn("dark", tiles.usable("topo", archive=False))
+
+    def test_no_style_fetches_from_carto(self):
+        for key, (_label, url, _credit) in tiles.STYLES.items():
+            self.assertNotIn("cartocdn", url or "", key)
+
+    def test_dark_asked_for_with_no_archive_draws_a_real_map_and_says_so(self):
+        got = tiles.pick("dark", archive=False)
+        self.assertTrue(got["url"])
+        self.assertNotIn("cartocdn", got["url"])
+        self.assertTrue(got["substituted"])
+        self.assertEqual(got["style"], "streets")
+        self.assertIn("dark", got["note"].lower())
+
+    def test_with_the_archive_dark_is_unaffected(self):
+        got = tiles.pick("dark", archive=self.archive)
+        self.assertTrue(got["offline"])
+        self.assertEqual(got["style"], "dark")
+        self.assertIn("dark", tiles.usable(archive=self.archive))
+
+    def test_settings_says_why_dark_is_missing_with_no_archive(self):
+        prefs.set_value("tiles", "dark")
+        with mock.patch.object(M, "mbtiles_path", return_value=None):
+            built = settings_page.build(self.page)
+        offered = tappable_texts(built)
+        self.assertNotIn("Dark", offered)
+        for name in ("Streets", "Satellite", "Topo"):
+            self.assertIn(name, offered)
+        self.assertTrue(any(tiles.WHY_NOT_ONLINE["dark"] in t for t in texts(built)),
+                        texts(built))
 
     def test_an_archive_that_does_not_say_is_unknown_not_guessed(self):
         other = tempfile.TemporaryDirectory()

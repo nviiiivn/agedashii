@@ -20,10 +20,12 @@ with a file path, or "tts" with words - and speech.py plays it.
 import math
 
 from . import guidance
+from .voice_import import FIXED_DISTANCES, distance_feet
 
 #: Instruction words -> her maneuver clip, checked in order. The offline router
 #: says "bear" where the clips say "slight"; server routes may say either.
-MANEUVERS = (("u-turn", "uturn"), ("turn around", "uturn"),
+MANEUVERS = (("roundabout", "roundabout"),
+             ("u-turn", "uturn"), ("turn around", "uturn"),
              ("sharp left", "sharp-left"), ("sharp right", "sharp-right"),
              ("bear left", "slight-left"), ("slight left", "slight-left"),
              ("bear right", "slight-right"), ("slight right", "slight-right"),
@@ -32,10 +34,14 @@ MANEUVERS = (("u-turn", "uturn"), ("turn around", "uturn"),
              ("arrive", "arrive"), ("destination", "arrive"),
              ("continue", "continue"), ("straight", "continue"))
 
-#: Her eight distance clips, in feet.
-DISTANCES = ((100, "dist-100ft"), (200, "dist-200ft"), (300, "dist-300ft"),
-             (500, "dist-500ft"), (1320, "dist-quarter"), (2640, "dist-half"),
-             (5280, "dist-1mile"), (10560, "dist-2miles"))
+#: How far off one of her distance clips may be and still be said: a factor of
+#: 1.5 either way. Her Arnold set (200, 400, 800, 1500 ft) then covers 133 to
+#: 2250 ft without a gap. Beyond it the phone says the distance: "two hundred"
+#: for a turn a mile away is a wrong instruction, and at 60 mph a wrong
+#: distance is far worse than a robot saying the right one. Agreed with minion 2
+#: for the Kotlin app, which reads the same files and uses the same table.
+DIST_FACTOR = 1.5
+FT_PER_M = 3.280839895
 
 #: What the phone says for a situation she has no clip for. `speeding` has
 #: none on purpose: a robot nagging about speed is not what she asked for, so
@@ -59,13 +65,28 @@ def maneuver_name(instruction):
     return None
 
 
-def distance_name(metres):
-    """The nearest of her distance clips, judged by ratio - 700 ft is nearer
-    500 ft than a quarter mile, 1000 ft nearer a quarter. None for no distance."""
+def distance_clip(metres, clips):
+    """(name, path) of the distance clip she HAS nearest `metres`, or None.
+
+    `clips` is {name: path}: any `dist-<N>ft`, `dist-<N>mile(s)`, dist-quarter
+    or dist-half (voice_import.distance_clips). Nearest by ratio - 700 ft is
+    nearer 500 than 1000 - and no further off than DIST_FACTOR. A tie goes to
+    the shorter one, so a turn is never announced as further than it is.
+    """
     if not metres or metres <= 0:
         return None
-    feet = metres * 3.280839895
-    return min(DISTANCES, key=lambda d: abs(math.log(feet / d[0])))[1]
+    feet = metres * FT_PER_M
+    best = None
+    for name, path in (clips or {}).items():
+        at = distance_feet(name)
+        if not at or not path:
+            continue
+        key = (round(abs(math.log(feet / at)), 9), at)
+        if best is None or key < best[0]:
+            best = (key, name, path)
+    if best is None or best[0][0] > round(math.log(DIST_FACTOR), 9):
+        return None
+    return best[1], best[2]
 
 
 def _bare(instruction):
@@ -73,12 +94,14 @@ def _bare(instruction):
     return (instruction or "continue").split(" onto ")[0].strip()
 
 
-def playlist(text, parts, clip_path, streets=False, imperial=True):
+def playlist(text, parts, clip_path, streets=False, imperial=True, distances=None):
     """The items to play for one fired prompt.
 
     `parts` is what guidance fired ({instruction, street, metres, band}) or
     None; `clip_path(name)` gives a file or None; `streets` is her switch for
-    saying the street name after her line (off by default).
+    saying the street name after her line (off by default); `distances` is
+    {name: path} of every distance clip she has - by default the fixed names,
+    looked up through `clip_path`.
     """
     if not parts:
         return [("tts", text, None)]
@@ -86,8 +109,10 @@ def playlist(text, parts, clip_path, streets=False, imperial=True):
     metres = parts.get("metres") if band != "now" else None
     man = maneuver_name(parts.get("instruction"))
     man_clip = clip_path(man) if man else None
-    dist = distance_name(metres) if metres else None
-    dist_clip = clip_path(dist) if dist else None
+    if distances is None:
+        distances = {n: clip_path(n) for n in FIXED_DISTANCES}
+    found = distance_clip(metres, distances) if metres else None
+    dist_clip = found[1] if found else None
     if man_clip is None and dist_clip is None:
         return [("tts", text, None)]          # none of hers applies: our sentence
     items = []
@@ -120,16 +145,17 @@ STAND_IN = {"turn-left": "turn left", "turn-right": "turn right",
             "sharp-left": "sharp left", "sharp-right": "sharp right",
             "uturn": "make a U-turn", "continue": "continue straight",
             "merge": "merge", "exit": "take the exit",
-            "arrive": "arrive at your destination"}
+            "arrive": "arrive at your destination",
+            "roundabout": "take the roundabout"}
 
 
 def stand_in(name, imperial=True):
     """The phone's words for `name` when she has no clip, or None (speeding)."""
     if name in STAND_IN:
         return STAND_IN[name]
-    for feet, dist in DISTANCES:
-        if dist == name:
-            return f"In {guidance.distance_text(feet / 3.280839895, imperial)},"
+    feet = distance_feet(name)
+    if feet:
+        return f"In {guidance.distance_text(feet / FT_PER_M, imperial)},"
     return SITUATIONS.get(name)
 
 

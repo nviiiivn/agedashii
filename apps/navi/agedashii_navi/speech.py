@@ -63,6 +63,10 @@ NO_VOICE = ("Turns are shown, not spoken: this phone has no offline English "
 NO_ENGINE = ("Turns are shown, not spoken: no text-to-speech engine answered. "
              "In Settings, search \"text-to-speech\" and pick Speech Services "
              "by Google.")
+#: No pyjnius: the web and desktop builds, where the Android steps above would
+#: be advice about a phone to someone at a laptop.
+NO_BRIDGE = ("Turns are shown, not spoken: this build cannot reach a voice. "
+             "Only the Android app speaks them.")
 NO_WORKING_VOICE = ("Turns are shown, not spoken: every voice this phone lists "
                     "failed a test word. In Settings, search \"text-to-speech\", "
                     "open the Google engine's settings, Install voice data, "
@@ -363,7 +367,8 @@ def _bring_up(gen):
         print(f"[navi] speech: no text-to-speech: {type(exc).__name__}: {exc}",
               flush=True)
         if _M.get("gen") is gen:
-            STATE.update(ready=False, problem=NO_ENGINE, error=f"{type(exc).__name__}: {exc}")
+            problem = NO_BRIDGE if isinstance(exc, ImportError) else NO_ENGINE
+            STATE.update(ready=False, problem=problem, error=f"{type(exc).__name__}: {exc}")
         return None
     if _M.get("gen") is not gen:
         return None

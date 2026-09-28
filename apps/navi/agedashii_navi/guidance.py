@@ -201,18 +201,27 @@ def turn_icon(instruction):
     """A glyph name for an instruction, chosen off its words.
 
     Reads the instruction text because that is what `routing` produces -
-    there is no maneuver type code to switch on. Deliberately coarse: four
-    shapes a rider can tell apart at a glance beat twelve they cannot.
+    there is no maneuver type code to switch on. Deliberately coarse: a few
+    shapes a rider can tell apart at a glance beat many they cannot.
     """
     text = (instruction or "").lower()
     if not text.strip():
         # No instruction is not "go straight". An arrow on a nav banner IS an
         # instruction, read at 60 mph; with nothing to say, draw nothing.
         return None
+    if "roundabout" in text:
+        # Before "exit": "take the 2nd exit at the roundabout" is a roundabout.
+        return "roundabout"
     if "u-turn" in text or "turn around" in text:
         return "u_turn"
     if "arrive" in text or "destination" in text:
         return "flag"
+    # A merge or a ramp drawn as a 90-degree turn arrow would be a wrong
+    # instruction at a glance, so they get their own shapes.
+    if "merge" in text:
+        return "merge"
+    if "exit" in text or "ramp" in text:
+        return "ramp_left" if "left" in text else "ramp_right"
     if "left" in text:
         if "sharp" in text:
             return "sharp_left"

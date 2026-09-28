@@ -44,6 +44,13 @@ it, so an import that fails partway leaves the old clip playable.
 The file name is the prompt: `turn-left.mp3` is the turn-left clip. Case, and
 underscores or spaces for the dash, are forgiven; anything that is not one of
 NAMES is left out and named in the result, never guessed at.
+
+DISTANCES ARE OPEN-ENDED. Her Arnold set says 400, 800 and 1500 feet, not the
+eight distances first listed, so any `dist-<N>ft`, `dist-<N>mile` or
+`dist-<N>miles` is a distance clip, N a positive number (a decimal is fine:
+`dist-0.5mile`). The player rounds to the nearest one she has. `dist-quarter`
+and `dist-half` keep their names. Agreed with the Kotlin app, which reads the
+same files.
 """
 import asyncio
 import os
@@ -59,9 +66,50 @@ NAMES = (
     "sharp-right", "uturn", "continue", "merge", "exit", "arrive",
     "dist-100ft", "dist-200ft", "dist-300ft", "dist-500ft", "dist-quarter",
     "dist-half", "dist-1mile", "dist-2miles", "offroute", "rerouting", "start",
-    "speeding",
+    "speeding", "roundabout",
 )
 _NAMES = frozenset(NAMES)
+#: Names she may record and is never told are missing. A roundabout clip was
+#: added after the set went to her; without one, the words are spoken.
+OPTIONAL = frozenset({"roundabout"})
+#: The fixed distance names. Once she has any distance clip, these stop being
+#: "missing": the player rounds to what she has.
+FIXED_DISTANCES = tuple(n for n in NAMES if n.startswith("dist-"))
+#: Every line that is not a distance and not optional - what "N of 15" counts.
+LINES = tuple(n for n in NAMES if n not in FIXED_DISTANCES and n not in OPTIONAL)
+
+#: dist-<N>ft / dist-<N>mile / dist-<N>miles. N is a positive number with no
+#: leading zero ("012") and no bare point (".5", "5."), so each distance has
+#: one spelling. The dash before the unit is optional on the way in
+#: ("dist_5_mile") and dropped from the stored name.
+_DISTANCE = re.compile(r"^dist-((?:0|[1-9][0-9]*)(?:\.[0-9]+)?)-?(ft|mile|miles)$")
+_FEET_PER = {"ft": 1.0, "mile": 5280.0, "miles": 5280.0}
+_NAMED_FEET = {"dist-quarter": 1320.0, "dist-half": 2640.0}
+
+
+def distance_feet(name):
+    """How far a distance clip's name says, in feet; None if it is not one."""
+    if name in _NAMED_FEET:
+        return _NAMED_FEET[name]
+    m = _DISTANCE.match(name or "")
+    if not m:
+        return None
+    feet = float(m.group(1)) * _FEET_PER[m.group(2)]
+    return feet if feet > 0 else None
+
+
+def _canonical(name):
+    """The stored spelling of a prompt name, or None if it names nothing."""
+    if name in _NAMES:
+        return name
+    m = _DISTANCE.match(name)
+    if m and float(m.group(1)) > 0:
+        return f"dist-{m.group(1)}{m.group(2)}"
+    return None
+
+
+def _is_name(name):
+    return name in _NAMES or (_canonical(name) == name)
 
 #: What the player can play, in the order one wins when a name has two.
 EXTS = (".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac")
@@ -89,9 +137,10 @@ def voice_dir():
 def clip_path(name, directory=None):
     """The clip for prompt `name`, or None. Cheap: a few stat calls, no cache.
 
-    None for a name with no clip and for a name that is not one of NAMES.
+    None for a name with no clip and for a name that is neither one of NAMES
+    nor a distance (`dist-<N>ft`, `dist-<N>mile(s)`).
     """
-    if name not in _NAMES:
+    if not name or not _is_name(name):
         return None
     folder = directory or voice_dir()
     for ext in EXTS:
@@ -114,7 +163,7 @@ def _clip_name(filename):
     if ext not in _RANK:
         return None, ext
     name = re.sub(r"[\s_]+", "-", stem.strip().lower())
-    return (name if name in _NAMES else None), ext
+    return _canonical(name), ext
 
 
 class _TooBig(Exception):
@@ -229,9 +278,8 @@ def import_files(paths, directory=None):
                 result["duplicates"][name] = [c[2] for c in ordered]
         if chosen:
             os.makedirs(folder, exist_ok=True)
-        for name in NAMES:
-            if name in chosen:
-                _install(folder, chosen[name], result)
+        for name in _in_order(chosen):
+            _install(folder, chosen[name], result)
     finally:
         for zf in zips:
             zf.close()
@@ -293,13 +341,16 @@ def clear_voice(directory=None):
     return removed
 
 
-def status(directory=None):
-    """What is in the voice folder, against NAMES.
+def _in_order(names):
+    """NAMES order first, then open-ended distances nearest first."""
+    fixed = [n for n in NAMES if n in names]
+    extra = sorted((n for n in names if n not in _NAMES),
+                   key=lambda n: (distance_feet(n) or 0.0, n))
+    return fixed + extra
 
-    present / missing: names, in NAMES order. duplicates: name -> its files,
-    the one clip_path plays first. unknown: files that are no prompt's.
-    """
-    folder = directory or voice_dir()
+
+def _found(folder):
+    """({name: [its files]}, [files that are no prompt's]) in `folder`."""
     try:
         entries = sorted(os.listdir(folder))
     except FileNotFoundError:
@@ -309,13 +360,35 @@ def status(directory=None):
         if entry.startswith(_INCOMING) or not os.path.isfile(os.path.join(folder, entry)):
             continue
         stem, ext = os.path.splitext(entry)
-        if stem in _NAMES and ext in _RANK:
+        if ext in _RANK and _is_name(stem):
             found.setdefault(stem, []).append(entry)
         else:
             unknown.append(entry)
+    return found, unknown
+
+
+def distance_clips(directory=None):
+    """{name: path} for every distance clip present, fixed or open-ended."""
+    folder = directory or voice_dir()
+    found, _unknown = _found(folder)
+    return {n: clip_path(n, folder) for n in _in_order(found) if distance_feet(n)}
+
+
+def status(directory=None):
+    """What is in the voice folder, against NAMES.
+
+    present: names with a clip - NAMES order, then open-ended distances.
+    missing: NAMES without one, never OPTIONAL ones, and not the fixed
+    distances once any distance clip is in (the player rounds to those).
+    duplicates: name -> its files, the one clip_path plays first. unknown:
+    files that are no prompt's.
+    """
+    found, unknown = _found(directory or voice_dir())
+    any_distance = any(distance_feet(n) for n in found)
     return {
-        "present": [n for n in NAMES if n in found],
-        "missing": [n for n in NAMES if n not in found],
+        "present": _in_order(found),
+        "missing": [n for n in NAMES if n not in found and n not in OPTIONAL
+                    and not (any_distance and n in FIXED_DISTANCES)],
         "duplicates": {n: sorted(files, key=lambda f: _RANK[os.path.splitext(f)[1]])
                        for n, files in found.items() if len(files) > 1},
         "unknown": unknown,
@@ -332,11 +405,15 @@ def _few(items, most=4):
 def status_text(directory=None):
     """One line: how much of her voice is in, and what is not."""
     st = status(directory)
-    have = len(st["present"])
-    if not have:
+    if not st["present"]:
         line = "No recorded voice yet."
     else:
-        line = f"Recorded voice: {have} of {len(NAMES)} clips."
+        lines = sum(1 for n in st["present"] if n in LINES)
+        dists = sum(1 for n in st["present"] if distance_feet(n))
+        line = f"Recorded voice: {lines} of {len(LINES)} lines"
+        if dists:
+            line += f", {dists} distance{'' if dists == 1 else 's'}"
+        line += "."
         if st["missing"]:
             line += f" Missing: {_few(st['missing'])}."
     for name, files in st["duplicates"].items():
@@ -364,7 +441,7 @@ def summary(result):
         parts.append("Could not read: " + _few(f"{label} ({why})"
                                                for label, why in result["failed"]) + ".")
     if result["ignored"]:
-        parts.append(f"Left out, not one of the {len(NAMES)} names: "
+        parts.append("Left out, not a prompt or distance name: "
                      + _few(result["ignored"]) + ".")
     return " ".join(parts)
 
@@ -443,7 +520,11 @@ def panel(page, picker=None, on_change=None):
             return
         result["failed"] += [(name, "the phone did not hand it over")
                              for name in unread]
-        trouble = result["failed"] or result["refused"] or result["duplicates"]
+        # Anything that did not arrive is trouble, however much else did.
+        # v1.14.0 showed "Imported 16 clips. Left out, ...: dist-400ft.mp3" in
+        # green, and green is read as "that worked" before the words are.
+        trouble = (result["failed"] or result["refused"] or result["duplicates"]
+                   or result["ignored"])
         show(summary(result), p["warn"] if trouble else p["good"])
 
     def remove_voice(_e):

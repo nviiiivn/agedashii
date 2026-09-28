@@ -135,11 +135,22 @@ class SilenceIsNeverQuiet(_Clean):
 
     def test_no_engine_at_all_is_said_and_does_not_crash(self):
         def broken():
-            raise ImportError("No module named 'jnius'")
+            raise RuntimeError("JVM exception occurred: TextToSpeech")
         speech._M["factory"] = broken                       # noqa: SLF001
         speech.say("turn right")
         self.assertTrue(wait_for(lambda: speech.STATE["problem"]))
         self.assertEqual(speech.STATE["problem"], speech.NO_ENGINE)
+
+    def test_a_browser_is_not_told_to_install_an_android_engine(self):
+        # Seen in the web build: "pick Speech Services by Google" in a browser.
+        # No pyjnius means no bridge to any voice, whatever the platform.
+        def no_bridge():
+            raise ModuleNotFoundError("No module named 'jnius'")
+        speech._M["factory"] = no_bridge                    # noqa: SLF001
+        speech.say("turn right")
+        self.assertTrue(wait_for(lambda: speech.STATE["problem"]))
+        self.assertEqual(speech.STATE["problem"], speech.NO_BRIDGE)
+        self.assertNotIn("Google", speech.STATE["problem"])
 
     def test_the_ride_page_shows_the_problem_when_announce_is_on(self):
         from agedashii_navi.pages import ride as ride_page
@@ -355,6 +366,22 @@ class TheBannerDoesNotInvent(unittest.TestCase):
         self.assertIsNone(guidance.turn_icon(""))
         self.assertIsNone(guidance.turn_icon(None))
         self.assertEqual(guidance.turn_icon("turn left"), "left")
+
+    def test_the_new_offline_maneuvers_draw_their_own_shape(self):
+        # minion 4 is teaching the offline router sharp/merge/exit/roundabout.
+        # A merge or a ramp drawn as a 90-degree turn arrow is a wrong
+        # instruction at a glance.
+        self.assertEqual(guidance.turn_icon("roundabout"), "roundabout")
+        self.assertEqual(guidance.turn_icon("take the 2nd exit at the roundabout"),
+                         "roundabout")
+        self.assertEqual(guidance.turn_icon("merge left"), "merge")
+        self.assertEqual(guidance.turn_icon("take the exit on the left"), "ramp_left")
+        self.assertEqual(guidance.turn_icon("take the ramp on the right"), "ramp_right")
+        self.assertEqual(guidance.turn_icon("take the exit"), "ramp_right")
+        self.assertEqual(guidance.turn_icon("sharp left"), "sharp_left")
+        from agedashii_navi import ui
+        for name in ("roundabout", "merge", "ramp_left", "ramp_right"):
+            self.assertIn(name, ui.TURN_GLYPHS)
 
     def test_no_distance_is_ever_zero_feet(self):
         self.assertEqual(guidance.distance_text(3.0), "—")

@@ -56,8 +56,9 @@ class WhereTheVoiceLives(_Case):
     def test_it_is_the_apps_own_storage_under_voice(self):
         self.assertEqual(vi.voice_dir(), os.path.join(_TMP.name, "voice"))
 
-    def test_the_names_are_the_twenty_three_fixed_ones(self):
-        self.assertEqual(len(vi.NAMES), 23)
+    def test_the_names_are_the_twenty_three_fixed_ones_and_roundabout(self):
+        self.assertEqual(len(vi.NAMES), 24)
+        self.assertEqual(vi.OPTIONAL, frozenset({"roundabout"}))
         for name in ("turn-left", "dist-quarter", "dist-2miles", "offroute",
                      "rerouting", "start", "speeding", "uturn"):
             self.assertIn(name, vi.NAMES)
@@ -167,7 +168,7 @@ class ReplacingAVoice(_Case):
     def test_remove_voice_clears_every_clip(self):
         vi.import_files([_write(self.src, n + ".mp3") for n in vi.NAMES])
         removed = vi.clear_voice()
-        self.assertEqual(removed, 23)
+        self.assertEqual(removed, len(vi.NAMES))
         self.assertTrue(all(vi.clip_path(n) is None for n in vi.NAMES))
         self.assertEqual(vi.status()["present"], [])
 
@@ -272,11 +273,105 @@ class ImportingAZip(_Case):
         self.assertEqual(sorted(result["imported"]), ["arrive", "turn-left"])
 
 
+class DistancesAreOpenEnded(_Case):
+    """Her Arnold ZIP says 400, 800 and 1500 feet, not the eight we listed.
+
+    A distance clip is any dist-<N>ft or dist-<N>mile(s); the player rounds to
+    the nearest one she has.
+    """
+
+    def _zip(self, names):
+        path = os.path.join(self.src, "arnold.zip")
+        with zipfile.ZipFile(path, "w") as zf:
+            for n in names:
+                zf.writestr("arnold/" + n, b"x" + n.encode())
+        return path
+
+    def test_her_arnold_distances_import(self):
+        result = vi.import_files([self._zip(
+            ["dist-200ft.mp3", "dist-400ft.mp3", "dist-800ft.mp3", "dist-1500ft.mp3"])])
+        self.assertEqual(sorted(result["imported"]),
+                         ["dist-1500ft", "dist-200ft", "dist-400ft", "dist-800ft"])
+        self.assertEqual(result["ignored"], [])
+        self.assertTrue(vi.clip_path("dist-800ft").endswith("dist-800ft.mp3"))
+
+    def test_miles_and_the_usual_forgiveness(self):
+        result = vi.import_files([_write(self.src, "DIST 3MILES.wav"),
+                                  _write(self.src, "dist_5_mile.mp3"),
+                                  _write(self.src, "Dist-1Mile.mp3")])
+        self.assertEqual(sorted(result["imported"]),
+                         ["dist-1mile", "dist-3miles", "dist-5mile"])
+        self.assertTrue(vi.clip_path("dist-5mile").endswith("dist-5mile.mp3"))
+
+    def test_a_decimal_distance_is_a_distance(self):
+        result = vi.import_files([_write(self.src, "dist-0.5mile.mp3"),
+                                  _write(self.src, "dist-1.5miles.wav"),
+                                  _write(self.src, "dist-250.5ft.mp3")])
+        self.assertEqual(sorted(result["imported"]),
+                         ["dist-0.5mile", "dist-1.5miles", "dist-250.5ft"])
+        self.assertTrue(vi.clip_path("dist-0.5mile").endswith("dist-0.5mile.mp3"))
+        self.assertEqual(sorted(vi.distance_clips()),
+                         ["dist-0.5mile", "dist-1.5miles", "dist-250.5ft"])
+
+    def test_nonsense_distances_are_still_left_out(self):
+        bad = ["dist-abcft.mp3", "dist-0ft.mp3", "dist-0.0mile.mp3", "dist-012ft.mp3",
+               "dist-12km.mp3", "dist--5ft.mp3", "dist-ft.mp3", "dist-.5mile.mp3",
+               "dist-5.ft.mp3", "dist-1e3ft.mp3"]
+        result = vi.import_files([_write(self.src, n) for n in bad])
+        self.assertEqual(result["imported"], [])
+        self.assertEqual(sorted(result["ignored"]), sorted(bad))
+        self.assertIsNone(vi.clip_path("dist-0ft"))
+        self.assertIsNone(vi.clip_path("dist-abcft"))
+
+    def test_how_far_each_distance_name_is(self):
+        self.assertEqual(vi.distance_feet("dist-400ft"), 400)
+        self.assertEqual(vi.distance_feet("dist-0.5mile"), 2640)
+        self.assertEqual(vi.distance_feet("dist-2miles"), 10560)
+        self.assertEqual(vi.distance_feet("dist-quarter"), 1320)
+        self.assertEqual(vi.distance_feet("dist-half"), 2640)
+        self.assertIsNone(vi.distance_feet("turn-left"))
+        self.assertIsNone(vi.distance_feet("dist-0ft"))
+
+    def test_distance_clips_lists_fixed_and_open_ended(self):
+        vi.import_files([_write(self.src, "dist-quarter.mp3"),
+                         _write(self.src, "dist-400ft.wav"),
+                         _write(self.src, "arrive.mp3")])
+        got = vi.distance_clips()
+        self.assertEqual(sorted(got), ["dist-400ft", "dist-quarter"])
+        self.assertTrue(got["dist-400ft"].endswith("dist-400ft.wav"))
+
+    def test_no_distances_means_none(self):
+        self.assertEqual(vi.distance_clips(), {})
+
+    def test_other_distances_stop_the_fixed_ones_being_missing(self):
+        vi.import_files([_write(self.src, "dist-400ft.mp3"),
+                         _write(self.src, "arrive.mp3")])
+        st = vi.status()
+        self.assertIn("dist-400ft", st["present"])
+        self.assertFalse([n for n in st["missing"] if n.startswith("dist-")])
+        self.assertEqual(st["unknown"], [])
+        self.assertNotIn("dist-100ft", vi.status_text())
+        self.assertIn("1 distance", vi.status_text())
+
+
+class TheRoundaboutLine(_Case):
+    def test_it_is_a_name_she_may_record(self):
+        self.assertIn("roundabout", vi.NAMES)
+        result = vi.import_files([_write(self.src, "Roundabout.mp3")])
+        self.assertEqual(result["imported"], ["roundabout"])
+        self.assertIn("roundabout", vi.status()["present"])
+
+    def test_it_is_never_nagged_about(self):
+        vi.import_files([_write(self.src, "arrive.mp3")])
+        self.assertNotIn("roundabout", vi.status()["missing"])
+        self.assertNotIn("roundabout", vi.status_text())
+
+
 class StatusSaysWhatIsThere(_Case):
     def test_nothing_yet(self):
         st = vi.status()
         self.assertEqual(st["present"], [])
-        self.assertEqual(st["missing"], list(vi.NAMES))
+        self.assertEqual(st["missing"], [n for n in vi.NAMES if n != "roundabout"])
         self.assertIn("No recorded voice", vi.status_text())
 
     def test_some_of_them(self):
@@ -284,12 +379,12 @@ class StatusSaysWhatIsThere(_Case):
                          _write(self.src, "start.mp3")])
         st = vi.status()
         self.assertEqual(st["present"], ["arrive", "start"])
-        self.assertIn("2 of 23", vi.status_text())
+        self.assertIn("2 of 15 lines", vi.status_text())
         self.assertIn("turn-left", vi.status_text())
 
     def test_all_of_them(self):
         vi.import_files([_write(self.src, n + ".mp3") for n in vi.NAMES])
-        self.assertIn("23 of 23", vi.status_text())
+        self.assertIn("15 of 15 lines, 8 distances", vi.status_text())
         self.assertNotIn("Missing", vi.status_text())
 
     def test_a_stray_file_in_the_folder_is_reported(self):
@@ -383,9 +478,31 @@ class ThePanel(_Case):
         _tap(_button(panel, "Import"))
         self.assertTrue(picker.calls[0]["allow_multiple"])
         self.assertEqual(vi.status()["present"], ["arrive", "start"])
-        self.assertIn("2 of 23", _texts(panel))
+        self.assertIn("2 of 15 lines", _texts(panel))
         self.assertIn("Imported 2", _texts(panel))
         self.assertGreater(page.updates, 0)
+
+    def test_files_left_out_are_never_reported_in_green(self):
+        # v1.14.0 on her phone: "Imported 16 clips. Left out, ...: dist-400ft.mp3"
+        # in the colour of success. She reads the first three words.
+        from agedashii_navi.theme import PAL
+        paths = [_write(self.src, "arrive.mp3"), _write(self.src, "song.mp3")]
+        panel = vi.panel(StubPage(), picker=FakePicker(
+            [_Picked(os.path.basename(p), p) for p in paths]))
+        _tap(_button(panel, "Import"))
+        said = next(c for c in _walk(panel) if type(c).__name__ == "Text"
+                    and str(c.value).startswith("Imported"))
+        self.assertIn("song.mp3", said.value)
+        self.assertEqual(said.color, PAL()["warn"])
+
+    def test_a_clean_import_is_green(self):
+        from agedashii_navi.theme import PAL
+        path = _write(self.src, "arrive.mp3")
+        panel = vi.panel(StubPage(), picker=FakePicker([_Picked("arrive.mp3", path)]))
+        _tap(_button(panel, "Import"))
+        said = next(c for c in _walk(panel) if type(c).__name__ == "Text"
+                    and str(c.value).startswith("Imported"))
+        self.assertEqual(said.color, PAL()["good"])
 
     def test_cancelling_the_picker_changes_nothing(self):
         panel = vi.panel(StubPage(), picker=FakePicker([]))

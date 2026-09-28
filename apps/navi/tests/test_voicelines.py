@@ -81,19 +81,57 @@ class WhichClip(unittest.TestCase):
     def test_every_clip_name_is_one_of_hers_and_every_one_of_hers_is_used(self):
         names = set(voice_import.NAMES)
         used = ({n for _w, n in voicelines.MANEUVERS}
-                | {n for _f, n in voicelines.DISTANCES} | set(voicelines.SITUATIONS))
+                | set(voice_import.FIXED_DISTANCES) | set(voicelines.SITUATIONS))
         self.assertEqual(used, names)
         self.assertEqual(set(voicelines.STAND_IN), {n for _w, n in voicelines.MANEUVERS})
 
-    def test_distance_goes_to_the_nearest_clip_by_ratio(self):
-        ft_ = 1 / 3.280839895
-        self.assertEqual(voicelines.distance_name(100 * ft_), "dist-100ft")
-        self.assertEqual(voicelines.distance_name(700 * ft_), "dist-500ft")
-        self.assertEqual(voicelines.distance_name(1000 * ft_), "dist-quarter")
-        self.assertEqual(voicelines.distance_name(1609.344), "dist-1mile")
-        self.assertEqual(voicelines.distance_name(5 * 1609.344), "dist-2miles")
-        self.assertIsNone(voicelines.distance_name(0))
-        self.assertIsNone(voicelines.distance_name(None))
+    def test_a_roundabout_is_its_own_clip(self):
+        self.assertEqual(voicelines.maneuver_name("take the 2nd exit at the roundabout"),
+                         "roundabout")
+
+
+#: Arnold's set, as AGEDASHII handed it to her: bare numbers, in feet.
+ARNOLD = {"dist-200ft": "/voice/dist-200ft.mp3", "dist-400ft": "/voice/dist-400ft.mp3",
+          "dist-800ft": "/voice/dist-800ft.mp3", "dist-1500ft": "/voice/dist-1500ft.mp3"}
+FT = 1 / 3.280839895
+
+
+def dist(feet, clips=ARNOLD):
+    found = voicelines.distance_clip(feet * FT, clips)
+    return found[0] if found else None
+
+
+class WhichDistance(unittest.TestCase):
+    """The nearest distance clip SHE HAS - within a factor of 1.5, or none.
+    The same table is minion 2's, for the Kotlin app reading the same files."""
+
+    def test_her_set_covers_133_to_2250_feet(self):
+        self.assertEqual(dist(148), "dist-200ft")
+        self.assertEqual(dist(200), "dist-200ft")
+        self.assertEqual(dist(279), "dist-200ft")
+        self.assertEqual(dist(289), "dist-400ft")
+        self.assertEqual(dist(820), "dist-800ft")
+        self.assertEqual(dist(1640), "dist-1500ft")
+        self.assertEqual(dist(2247), "dist-1500ft")
+
+    def test_outside_the_bound_it_is_the_phone_voice_not_a_wrong_number(self):
+        # "Two hundred" for a turn a mile away is a wrong instruction.
+        self.assertIsNone(dist(98))
+        self.assertIsNone(dist(2251))
+        self.assertIsNone(dist(5280))
+        self.assertIsNone(voicelines.distance_clip(0, ARNOLD))
+        self.assertIsNone(voicelines.distance_clip(None, ARNOLD))
+        self.assertIsNone(voicelines.distance_clip(100, {}))
+
+    def test_a_tie_goes_to_the_shorter_distance(self):
+        # Never announce a turn as further away than it is.
+        self.assertEqual(dist((200 * 400) ** 0.5), "dist-200ft")
+
+    def test_named_and_mile_distances_count(self):
+        clips = {"dist-quarter": "/q.mp3", "dist-0.5mile": "/h.mp3", "dist-2miles": "/2.mp3"}
+        self.assertEqual(dist(1300, clips), "dist-quarter")
+        self.assertEqual(dist(2700, clips), "dist-0.5mile")
+        self.assertEqual(dist(10000, clips), "dist-2miles")
 
 
 class TheRule(unittest.TestCase):
@@ -116,6 +154,20 @@ class TheRule(unittest.TestCase):
         items = voicelines.playlist(self.SAY, fired("turn left"), clips("dist-500ft"))
         self.assertEqual(items, [("clip", "/voice/dist-500ft.m4a", "In 400 ft,"),
                                  ("tts", "turn left", None)])
+
+    def test_arnolds_distance_with_his_turn(self):
+        items = voicelines.playlist("In 400 ft, turn left onto Grand Ave",
+                                    fired("turn left"), clips("turn-left"),
+                                    distances=ARNOLD)
+        self.assertEqual(items, [("clip", "/voice/dist-400ft.mp3", "In 400 ft,"),
+                                 ("clip", "/voice/turn-left.m4a", "turn left")])
+
+    def test_a_distance_too_far_from_any_of_his_is_ours(self):
+        items = voicelines.playlist("In 0.5 mi, turn left onto Grand Ave",
+                                    fired("turn left", metres=804.67), clips("turn-left"),
+                                    distances=ARNOLD)
+        self.assertEqual(items, [("tts", "In 0.5 mi,", None),
+                                 ("clip", "/voice/turn-left.m4a", "turn left")])
 
     def test_street_names_only_when_asked(self):
         both = clips("turn-left", "dist-500ft")
@@ -305,6 +357,14 @@ class TheRidePage(_Clean):
                "reroute": reroute}
         return self.ride._announce(out, None)              # noqa: SLF001
 
+    def test_an_open_ended_distance_clip_is_played_from_a_fix(self):
+        turn, far = self.add("turn-left", ".mp3"), self.add("dist-400ft", ".mp3")
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False},
+                      "In 400 ft, turn left onto Grand Ave", fired("turn left"))
+        self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
+                                        ("clip", turn, "turn left")]])
+
     def test_her_turn_clip_is_played_from_a_fix(self):
         path = self.add("turn-left")
         prefs.set_value("voice", True)
@@ -380,6 +440,17 @@ class TheSettingsPage(_Clean):
         not_yet.on_click(None)
         self.assertEqual(played, [[("clip", path, "turn left")],
                                   [("tts", "turn right", None)]])
+
+    def test_a_distance_she_named_herself_gets_a_tile(self):
+        from tests.test_road_test import holder_of, texts
+        self.add("dist-400ft", ".mp3")
+        built = self.build()
+        tile = holder_of(built, "dist-400ft")
+        self.assertIsNotNone(tile)
+        self.assertIn("yours", texts(tile))
+        # Once she has any distance, the fixed names she never recorded go:
+        # the player rounds to hers, so they would only be nagging.
+        self.assertIsNone(holder_of(built, "dist-100ft"))
 
     def test_the_import_panel_refreshes_the_list(self):
         from tests.test_road_test import holder_of, texts
