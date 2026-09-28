@@ -178,6 +178,64 @@ class HerSevenSearches(unittest.TestCase):
         names = [r["name"] for r in self.first("berkeley stadium", n=3)]
         self.assertIn("California Memorial Stadium", names)
 
+    def test_chabot_is_the_museum_not_its_car_park(self):
+        # Her first complaint. A parking garage is part of a place, not a
+        # destination, however big its outline.
+        self.assertEqual(self.first("chabot space science")[0]["name"], "Chabot Space and Science Center")
+
+    def test_ikea_is_the_store_before_its_car_park(self):
+        names = [r["name"] for r in self.first("ikea", n=2)]
+        self.assertNotIn("Ikea Parking Lot", names)
+
+    def test_a_city_name_is_the_city(self):
+        top = self.first("berkeley")[0]
+        self.assertEqual((top["name"], top["detail"]), ("Berkeley", "city"))
+
+
+class HowRankingWorks(unittest.TestCase):
+    """The ranking rules, on a list small enough to see the reason in."""
+
+    NEAR = (37.8044, -122.2712)
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, places.PLACES_FILENAME)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def build(self, rows):
+        build_places.write_db(iter(rows), self.path)
+
+    def names(self, text):
+        return [r["name"] for r in places.search_places(text, near=self.NEAR, path=self.path)[0]]
+
+    def test_a_perfect_name_100_km_away_never_beats_a_poor_one_1_km_away(self):
+        self.build([
+            ("Rose Garden", "garden", 38.7044, -122.2712, [], 5e6, True, ["Far Town", None]),       # ~100 km, big, notable
+            ("Old Rose Garden Tea Room", "cafe", 37.8134, -122.2712, [], 0.0, False, [None, None]),  # 1 km
+        ])
+        self.assertEqual(self.names("rose garden")[0], "Old Rose Garden Tea Room")
+
+    def test_a_town_word_needs_a_name_word_too(self):
+        self.build([("Memorial Stadium", "stadium", 37.87, -122.25, [], 30000.0, True, ["Berkeley", None])])
+        self.assertEqual(self.names("berkeley stadium"), ["Memorial Stadium"])
+        self.assertEqual(self.names("berkeley"), [])       # "berkeley" is not in its name
+
+    def test_a_word_only_in_an_alternative_name_counts_for_less(self):
+        self.build([
+            ("Spees Building", "building", 37.8187, -122.1805, ["Chabot Science Center Spees Building"], 3000.0, False, [None, None]),
+            ("Chabot Science Center", "museum", 37.8188, -122.1804, [], 0.0, False, [None, None]),
+        ])
+        self.assertEqual(self.names("chabot science")[0], "Chabot Science Center")
+
+    def test_the_kind_she_names_wins_a_near_tie(self):
+        self.build([
+            ("Pacifica Beach Hotel", "hotel", 37.62, -122.49, [], 9000.0, False, ["Pacifica", None]),
+            ("Pacifica State Beach", "beach", 37.62, -122.49, [], 9000.0, False, ["Pacifica", None]),
+        ])
+        self.assertEqual(self.names("pacifica beach")[0], "Pacifica State Beach")
+
 
 class ThePlacesListSaysWhetherItIsThere(unittest.TestCase):
     """Where-to states, before any search, whether the offline list is on the

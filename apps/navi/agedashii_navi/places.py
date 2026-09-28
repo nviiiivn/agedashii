@@ -29,6 +29,7 @@ SPECIFIC 'RIDES'/'ROUTES'" - with a deliberately forgiving parser: it takes
 from different tools disagree about which one a planned route lives in, and
 refusing a file over that distinction would be useless pedantry.
 """
+import bisect
 import math
 import re
 import sqlite3
@@ -417,11 +418,6 @@ def places_status(path=None):
     return rows, f"{rows:,} places on this phone, searchable without signal"
 
 
-#: Where a typed word was found (tools/build_places.py writes these): the name
-#: or an alternative name, the kind ("beach", "stadium"), or the area the
-#: place is in ("berkeley" - OSM names the stadium, she names the city).
-_SRC_NAME, _SRC_KIND, _SRC_AREA = 0, 1, 2
-
 # RANKING. A place's cost is how well its name answers the words (below) plus
 # how far away it is; lowest first. Distance counts DIST_WEIGHT per doubling of
 # (1 + km), and the name score is clamped to Q_RANGE, whose width (5.5) is
@@ -433,23 +429,48 @@ DIST_WEIGHT = 1.5
 Q_RANGE = (-2.5, 3.0)
 NOT_EXACT = 1.0      # the name is more than exactly the words typed
 KIND_HIT = 1.5       # a typed word says what it IS: "pacifica BEACH" -> natural=beach
-AREA_WORD = 1.0      # a word matched only the area (weaker than the name)
+AREA_WORD = 1.0      # a word matched only the town/neighbourhood (weaker than the name)
 KIND_WORD = 0.5      # a word matched only the kind ("chabot museum")
 EXTRA_WORD = 0.1     # each name word she did not type - a tie-break, no more
+ALT_WORD = 0.75      # a word found only in an ALTERNATIVE name: the Spees Building's
+                     # official name mentions Chabot; the museum is what she means
 SIZE = 0.25          # per tenfold of area in m2: a big park before a kiosk
 NOTABLE = 0.5        # has a Wikidata/Wikipedia entry
+#: A town is stored as one point but stands for the whole town, so "berkeley"
+#: means Berkeley before "Berkeley Yeast". Sizes in m2, treated as its area.
+TOWN_SIZE = {"city": 1e8, "town": 1e7, "village": 1e6}
+#: Parts of a place rather than places: a car park, a taxi rank, a plain named
+#: building. They rank below the place they serve and get no credit for size -
+#: the Chabot parking garage outranked the museum on its outline alone.
+PART_OF = {"parking", "parking space", "taxi", "building", "bicycle parking", "motorcycle parking"}
+PART_OF_COST = 1.0
+
+
+def _prefix(con, table, column, word):
+    """Values of `column` whose `table.t` begins with the word or its long/short form."""
+    out = set()
+    for form in (word,) + _SAME_WORD.get(word, ()):
+        out.update(r[0] for r in con.execute(
+            f"SELECT {column} FROM {table} WHERE t >= ? AND t < ?", (form, form + "\uffff")))
+    return out
 
 
 def search_places(text, near=None, limit=12, path=None):
     """(rows, how many places the list holds) for a named place. Offline.
 
     Every word typed must begin a word of the place's name, its kind or its
-    area, and at least one must be in the NAME - so "berkeley" alone does not
-    return every place in Berkeley, and "ikea" never returns a shop that is
-    not called IKEA. Ranked by `DIST_WEIGHT` and the weights above. A row's
-    detail is its kind and town ("furniture \u00b7 Emeryville"), so two IKEAs can
-    be told apart. The count is 0 when no list is installed, so the screen can
-    say WHY nothing was found instead of showing an empty list.
+    town/neighbourhood, and at least one must be in the NAME - so "berkeley"
+    alone does not return every place in Berkeley, and "ikea" never returns a
+    shop that is not called IKEA. "berkeley stadium" finds California Memorial
+    Stadium: "stadium" is in its name, "berkeley" is its town. Ranked by
+    distance and the weights above. A row's detail is its kind and town
+    ("furniture · Emeryville"), so two IKEAs can be told apart. The count is 0
+    when no list is installed, so the screen can say WHY nothing was found.
+
+    Scored nearest-first, stopping once no remaining place can make the list:
+    the name score is bounded by Q_RANGE, so a place whose distance alone
+    already costs more than the last kept result cannot beat it. Same answer as
+    scoring everything; a 2-letter search stops paying for thousands of rows.
     """
     path = path or places_path()
     if path is None:
@@ -460,64 +481,81 @@ def search_places(text, near=None, limit=12, path=None):
         words = [w for w in norm_tokens(text) if w not in _STOP_WORDS and len(w) >= MIN_WORD]
         if not words:
             return [], total
-        # A list built before areas and kinds were indexed (schema 1) has no
-        # `src` and no size columns; it still searches, by name only.
-        tok_cols = {r[1] for r in con.execute("PRAGMA table_info(tok)")}
-        place_cols = {r[1] for r in con.execute("PRAGMA table_info(place)")}
-        src_sql = "src" if "src" in tok_cols else "0"
-        extra_sql = ("area_m2, notable, city" if {"area_m2", "notable", "city"} <= place_cols
-                     else "0, 0, NULL")
-        per_word = []                                   # [{id: best src}] per word
-        # Longest word first: it is the most selective, so the set shrinks fastest.
-        for w in sorted(set(words), key=len, reverse=True):
-            best = {}
-            for form in (w,) + _SAME_WORD.get(w, ()):
-                for pid, src in con.execute(
-                        f"SELECT id, {src_sql} FROM tok WHERE t >= ? AND t < ?",
-                        (form, form + "\uffff")):
-                    if src < best.get(pid, 9):
-                        best[pid] = src
-            per_word.append(best)
-        ids = set(per_word[0])
-        for best in per_word[1:]:
-            ids &= best.keys()
-        ids = [i for i in ids if any(best[i] == _SRC_NAME for best in per_word)]
-        if not ids:
-            return [], total
+        words = list(dict.fromkeys(words))
+        tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        v2 = {"area", "area_tok", "kind_tok"} <= tables     # schema 1: names only
+        by_name = [_prefix(con, "tok", "id", w) for w in words]
+        kinds_for = [_prefix(con, "kind_tok", "kind", w) if v2 else set() for w in words]
+        areas_for = [_prefix(con, "area_tok", "aid", w) if v2 else set() for w in words]
+        pool = sorted(set().union(*by_name))           # at least one word is in the name
+        cols = "id, name, kind, lat, lon, " + ("area_m2, notable, a1, a2" if v2 else "0, 0, NULL, NULL")
         rows = []
-        for i in range(0, len(ids), _IN_CHUNK):
-            chunk = ids[i:i + _IN_CHUNK]
-            rows += con.execute(
-                f"SELECT id, name, kind, lat, lon, {extra_sql} FROM place "
-                f"WHERE id IN ({','.join('?' * len(chunk))})", chunk).fetchall()
+        for i in range(0, len(pool), _IN_CHUNK):
+            chunk = pool[i:i + _IN_CHUNK]
+            rows += con.execute(f"SELECT {cols} FROM place WHERE id IN ({','.join('?' * len(chunk))})",
+                                chunk).fetchall()
+        kept = []
+        for row in rows:
+            pid, kind, a1, a2 = row[0], row[2], row[7], row[8]
+            srcs = []
+            for i in range(len(words)):
+                if pid in by_name[i]:
+                    srcs.append("name")
+                elif kind in kinds_for[i]:
+                    srcs.append("kind")
+                elif (a1 is not None and a1 in areas_for[i]) or (a2 is not None and a2 in areas_for[i]):
+                    srcs.append("area")
+                else:
+                    break
+            else:
+                dist = routing.haversine_m(near, (row[3], row[4])) if near else None
+                dcost = DIST_WEIGHT * math.log2(1.0 + dist / 1000.0) if near else 0.0
+                kept.append((dcost, dist, row, srcs))
+        kept.sort(key=lambda k: k[0])
+
+        # Compare on canonical words, so "mt diablo" scores "Mount Diablo" as exact.
+        canon = {"mt": "mount", "ft": "fort", "pt": "point"}
+        typed = [canon.get(w, w) for w in words]
+        want = " ".join(typed)
+        kind_words = {}
+        best = []                                       # sorted (cost, name, dist, row)
+        for dcost, dist, row, srcs in kept:
+            if len(best) >= limit and Q_RANGE[0] + dcost > best[limit - 1][0]:
+                break
+            pid, name, kind, lat, lon, size, notable, a1, _a2 = row
+            have = [canon.get(w, w) for w in norm_tokens(name) if w not in _STOP_WORDS]
+            q = 0.0 if " ".join(have) == want else NOT_EXACT
+            if kind not in kind_words:
+                kind_words[kind] = norm_tokens(kind)
+            if any(k.startswith(w) for w in typed for k in kind_words[kind]):
+                q -= KIND_HIT
+            for w, src in zip(typed, srcs):
+                if src == "area":
+                    q += AREA_WORD
+                elif src == "kind":
+                    q += KIND_WORD
+                elif not any(h.startswith(w) for h in have):
+                    q += ALT_WORD       # in an alternative name only, not the one shown
+            q += EXTRA_WORD * sum(1 for h in have if not any(h.startswith(w) for w in typed))
+            if kind in PART_OF:
+                q += PART_OF_COST
+            else:
+                q -= SIZE * math.log10(1.0 + max(size or 0.0, TOWN_SIZE.get(kind, 0.0)))
+            q -= NOTABLE if notable else 0.0
+            q = min(max(q, Q_RANGE[0]), Q_RANGE[1])
+            bisect.insort(best, (q + dcost, name, dist, row))
+            del best[limit:]
+        need = [r[3][7] for r in best if r[3][7] is not None]
+        towns = dict(con.execute(f"SELECT aid, name FROM area WHERE aid IN ({','.join('?' * len(need))})",
+                                 need).fetchall()) if v2 and need else {}
     finally:
         con.close()
-    # Compare on canonical words, so "mt diablo" scores "Mount Diablo" as exact.
-    canon = {"mt": "mount", "ft": "fort", "pt": "point"}
-    typed = [canon.get(w, w) for w in words]
-    want = " ".join(typed)
     out = []
-    for pid, name, kind, lat, lon, size, notable, city in rows:
-        have = [canon.get(w, w) for w in norm_tokens(name) if w not in _STOP_WORDS]
-        q = 0.0 if " ".join(have) == want else NOT_EXACT
-        kinds = norm_tokens(kind)
-        if any(k.startswith(w) for w in typed for k in kinds):
-            q -= KIND_HIT
-        for best in per_word:
-            q += {_SRC_AREA: AREA_WORD, _SRC_KIND: KIND_WORD}.get(best[pid], 0.0)
-        q += EXTRA_WORD * sum(1 for h in have if not any(h.startswith(w) for w in typed))
-        q -= SIZE * math.log10(1.0 + (size or 0.0))
-        q -= NOTABLE if notable else 0.0
-        q = min(max(q, Q_RANGE[0]), Q_RANGE[1])
-        row = {"name": name, "lat": lat, "lon": lon, "kind": "poi",
-               "detail": " \u00b7 ".join(x for x in (kind, city) if x), "dist_m": None}
-        cost = q
-        if near:
-            row["dist_m"] = routing.haversine_m(near, (lat, lon))
-            cost += DIST_WEIGHT * math.log2(1.0 + row["dist_m"] / 1000.0)
-        out.append((cost, name, row))
-    out.sort(key=lambda r: r[:2])
-    return [r[2] for r in out[:limit]], total
+    for _cost, name, dist, (pid, _n, kind, lat, lon, *_rest) in best:
+        a1 = _rest[2]
+        out.append({"name": name, "lat": lat, "lon": lon, "kind": "poi",
+                    "detail": " · ".join(x for x in (kind, towns.get(a1)) if x), "dist_m": dist})
+    return out, total
 
 
 # ------------------------------------------------------ online, and said so

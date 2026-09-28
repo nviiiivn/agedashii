@@ -18,6 +18,7 @@ searches with, so the two can never split a name differently.
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import pathlib
 import sqlite3
@@ -78,12 +79,89 @@ def centre(geometry):
     return (sum(p[1] for p in pts) / len(pts), sum(p[0] for p in pts) / len(pts))
 
 
+#: Place nodes that name the AREA a place is in, so "berkeley stadium" finds
+#: "California Memorial Stadium": OSM names the landmark, a person names the
+#: city too. Only 7% of named places carry addr:city (measured, 76,053 of
+#: 1,046,933), so the rest take the nearest town node.
+#: a1, the town SHOWN beside a result, is addr:city or the nearest city/town
+#: node - not a village: Chabot Space and Science Center is nearer the village
+#: node "Canyon" than Oakland's, and "museum · Canyon" is wrong for a building
+#: whose address is Oakland. a2, searchable but not shown, is the nearest
+#: neighbourhood or village.
+TOWNS = {"city", "town"}
+VILLAGES = {"village"}
+HOODS = {"suburb", "neighbourhood", "quarter"}
+TOWN_M, VILLAGE_M, HOOD_M = 15000.0, 4000.0, 1500.0
+_CELL = 0.2   # degrees; ~22 km, so a 3x3 block covers TOWN_M at this latitude
+
+
+def area_m2(geometry, lat):
+    """Size of a polygon in square metres (0 for points and lines) - how big a
+    place is, which says something about how likely it is to be the one meant."""
+    t, c = geometry["type"], geometry["coordinates"]
+    if t == "Polygon":
+        rings = c[:1]
+    elif t == "MultiPolygon":
+        rings = [p[0] for p in c]
+    else:
+        return 0.0
+    kx, ky = 111320.0 * math.cos(math.radians(lat)), 110574.0
+    total = 0.0
+    for ring in rings:
+        s = sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:]))
+        total += abs(s) / 2 * kx * ky
+    return total
+
+
+def _metres(lat1, lon1, lat2, lon2):
+    dy = (lat2 - lat1) * 110574.0
+    dx = (lon2 - lon1) * 111320.0 * math.cos(math.radians((lat1 + lat2) / 2))
+    return math.hypot(dx, dy)
+
+
+class _Nearest:
+    """Nearest named place node of a set of kinds, by a coarse grid."""
+
+    def __init__(self):
+        self.cells = {}
+
+    def add(self, name, lat, lon):
+        self.cells.setdefault((int(lat // _CELL), int(lon // _CELL)), []).append((name, lat, lon))
+
+    def find(self, lat, lon, within_m):
+        ci, cj = int(lat // _CELL), int(lon // _CELL)
+        best, best_d = None, within_m
+        for i in (ci - 1, ci, ci + 1):
+            for j in (cj - 1, cj, cj + 1):
+                for name, plat, plon in self.cells.get((i, j), ()):
+                    d = _metres(lat, lon, plat, plon)
+                    if d < best_d:
+                        best, best_d = name, d
+        return best
+
+
 def features(pbf, workdir):
-    """(name, kind, lat, lon, [alt names]) for every named place, points first."""
+    """(name, kind, lat, lon, [alt names], area m2, notable, [areas]) per place.
+
+    Two passes over the export: the first collects the town and neighbourhood
+    nodes, the second places each named thing in them.
+    """
     named = os.path.join(workdir, "named.osm.pbf")
     out = os.path.join(workdir, "named.geojsonseq")
     subprocess.run(["osmium", "tags-filter", "-O", "-o", named, pbf, "nwr/name"], check=True)
     subprocess.run(["osmium", "export", "-O", "-f", "geojsonseq", "-o", out, named], check=True)
+    towns, villages, hoods = _Nearest(), _Nearest(), _Nearest()
+    with open(out, encoding="utf-8") as f:
+        for line in f:
+            feat = json.loads(line.strip("\x1e"))
+            props, geom = feat["properties"], feat["geometry"]
+            if geom["type"] != "Point" or not props.get("name"):
+                continue
+            lon, lat = geom["coordinates"]
+            place = props.get("place")
+            for kinds, grid in ((TOWNS, towns), (VILLAGES, villages), (HOODS, hoods)):
+                if place in kinds:
+                    grid.add(props["name"], lat, lon)
     with open(out, encoding="utf-8") as f:
         for line in f:
             feat = json.loads(line.strip("\x1e"))
@@ -95,37 +173,85 @@ def features(pbf, workdir):
             point = centre(feat["geometry"])
             if point is None:
                 continue
+            lat, lon = point
             alts = [props[k] for k in ALT_KEYS if props.get(k) and props[k] != name]
-            yield name, kind, point[0], point[1], alts
+            city = props.get("addr:city") or towns.find(lat, lon, TOWN_M)
+            local = hoods.find(lat, lon, HOOD_M) or villages.find(lat, lon, VILLAGE_M)
+            areas = [a if a != name else None for a in (city, local)]
+            notable = bool(props.get("wikidata") or props.get("wikipedia"))
+            yield name, kind, lat, lon, alts, area_m2(feat["geometry"], lat), notable, areas
+
+
+#: Schema 2: `tok` holds NAME words only, as in schema 1. Kinds and areas are
+#: few and shared, so they are indexed once each (`kind_tok`, `area` +
+#: `area_tok`) and a place points at its areas by id (a1 = town, a2 =
+#: neighbourhood). A token row per place for every area and kind word doubled
+#: the file (34.6 MB, measured); this keeps it near schema 1's size.
+SCHEMA = 2
 
 
 def write_db(rows, out, meta=None):
-    """Write the list. `rows` is (name, kind, lat, lon, alt names); returns the count kept."""
+    """Write the list; returns the count kept.
+
+    A row is (name, kind, lat, lon, alt names) or, from `features`, also
+    (area m2, notable, [area names]). The same place drawn twice (a point and a
+    building outline) is kept once, at the first position, with the LARGER
+    size and either copy's notability - the outline is where the size is.
+    """
     tmp = str(out) + ".tmp"
     if os.path.exists(tmp):
         os.remove(tmp)
     con = sqlite3.connect(tmp)
     con.executescript("""
         CREATE TABLE place (id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
-                            lat REAL NOT NULL, lon REAL NOT NULL);
+                            lat REAL NOT NULL, lon REAL NOT NULL, area_m2 REAL NOT NULL,
+                            notable INTEGER NOT NULL, a1 INTEGER, a2 INTEGER);
         CREATE TABLE tok (t TEXT NOT NULL, id INTEGER NOT NULL);
+        CREATE TABLE area (aid INTEGER PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE area_tok (t TEXT NOT NULL, aid INTEGER NOT NULL);
+        CREATE TABLE kind_tok (t TEXT NOT NULL, kind TEXT NOT NULL);
         CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
     """)
-    seen = set()
+    seen, area_ids, kinds = {}, {}, set()
+
+    def aid(area):
+        if area is None:
+            return None
+        if area not in area_ids:
+            area_ids[area] = len(area_ids) + 1
+            con.execute("INSERT INTO area VALUES (?, ?)", (area_ids[area], area))
+            con.executemany("INSERT INTO area_tok VALUES (?, ?)",
+                            [(w, area_ids[area]) for w in set(norm_tokens(area))])
+        return area_ids[area]
+
     n = 0
-    for name, kind, lat, lon, alts in rows:
+    for row in rows:
+        name, kind, lat, lon, alts = row[:5]
+        size, notable, areas = (row[5], row[6], row[7]) if len(row) > 5 else (0.0, False, [])
         key = (" ".join(norm_tokens(name)), kind, round(lat / DEDUP_DEG), round(lon / DEDUP_DEG))
         if key in seen:
+            pid = seen[key]
+            con.execute("UPDATE place SET area_m2 = max(area_m2, ?), notable = max(notable, ?) WHERE id = ?",
+                        (round(size), int(notable), pid))
             continue
-        seen.add(key)
         n += 1
-        con.execute("INSERT INTO place VALUES (?, ?, ?, ?, ?)", (n, name, kind, round(lat, 6), round(lon, 6)))
+        seen[key] = n
+        town, hood = (list(areas) + [None, None])[:2]
+        con.execute("INSERT INTO place VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (n, name, kind, round(lat, 6), round(lon, 6), round(size), int(notable),
+                     aid(town), aid(hood)))
+        if kind not in kinds:
+            kinds.add(kind)
+            con.executemany("INSERT INTO kind_tok VALUES (?, ?)", [(w, kind) for w in set(norm_tokens(kind))])
         words = set(norm_tokens(name))
         for alt in alts:
             words.update(norm_tokens(alt))
         con.executemany("INSERT INTO tok VALUES (?, ?)", [(w, n) for w in words])
     con.execute("CREATE INDEX tok_t ON tok (t)")
-    info = dict(meta or {}, count=n, built_utc=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"))
+    con.execute("CREATE INDEX area_tok_t ON area_tok (t)")
+    con.execute("CREATE INDEX kind_tok_t ON kind_tok (t)")
+    info = dict(meta or {}, count=n, schema=SCHEMA,
+                built_utc=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"))
     con.executemany("INSERT INTO meta VALUES (?, ?)", [(k, str(v)) for k, v in info.items()])
     con.commit()
     con.execute("VACUUM")
