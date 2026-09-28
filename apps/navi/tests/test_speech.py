@@ -345,6 +345,25 @@ class TheFirstPromptOfARoute(_Clean):
         self.assertIn("turn left", first["say"])
 
 
+class TheSettingsRowDoesNotContradictItself(_Clean):
+    """Seen on screen: "spoken aloud - Turns are shown, not spoken: ..."."""
+
+    def test_a_problem_replaces_the_promise(self):
+        from agedashii_navi.pages import settings
+        from tests.test_road_test import Page, texts
+        speech.STATE.update(started=True, problem=speech.NO_BRIDGE)
+        words = " ".join(texts(settings.build(Page())))
+        self.assertIn(speech.NO_BRIDGE, words)
+        self.assertNotIn("spoken aloud - Turns are shown", words)
+
+    def test_a_working_voice_still_says_spoken_aloud(self):
+        from agedashii_navi.pages import settings
+        from tests.test_road_test import Page, texts
+        speech.STATE.update(started=True, ready=True, engine="e", voice="v")
+        words = " ".join(texts(settings.build(Page())))
+        self.assertIn("spoken aloud", words)
+
+
 class TheWordsAreTrue(unittest.TestCase):
     def test_arrival_is_not_onto_a_street(self):
         line = guidance.spoken("arrive at your destination", "Broadway", 120, True, "near")
@@ -379,6 +398,12 @@ class TheBannerDoesNotInvent(unittest.TestCase):
         self.assertEqual(guidance.turn_icon("take the ramp on the right"), "ramp_right")
         self.assertEqual(guidance.turn_icon("take the exit"), "ramp_right")
         self.assertEqual(guidance.turn_icon("sharp left"), "sharp_left")
+        self.assertEqual(guidance.turn_icon("keep right onto I 80"), "slight_right")
+        # The router's kind, when there is one, beats the words.
+        self.assertEqual(guidance.turn_icon("go", kind="sharp-left"), "sharp_left")
+        self.assertEqual(guidance.turn_icon("take the exit on the left", kind="exit"),
+                         "ramp_left")
+        self.assertEqual(guidance.turn_icon("head north", kind="start"), "straight")
         from agedashii_navi import ui
         for name in ("roundabout", "merge", "ramp_left", "ramp_right"):
             self.assertIn(name, ui.TURN_GLYPHS)

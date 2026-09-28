@@ -27,8 +27,8 @@ whatever it describes, and the publish step reads it straight from here rather
 than being told separately.
 """
 
-VERSION_NAME = "1.14.1"
-VERSION_CODE = 26092806
+VERSION_NAME = "1.15.0"
+VERSION_CODE = 26092807
 
 
 def label():

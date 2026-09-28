@@ -444,8 +444,11 @@ def build(page, go=None, on_change=None):
         _switch_row("Keep the screen on",
                     "a phone that sleeps at 60 mph is not a navigation device",
                     prefs.keep_awake(), _flag("keep_awake")),
+        # A problem REPLACES the promise: it read "spoken aloud - Turns are
+        # shown, not spoken" in the browser, one sentence saying both.
         _switch_row("Announce turns",
-                    "shown large at the top and spoken aloud - "
+                    speech.STATE.get("problem")
+                    or "shown large at the top and spoken aloud - "
                     + speech.status_text(),
                     prefs.voice(), _flag("voice")),
         # Her own recorded lines: getting them in (minion 4's panel), what is

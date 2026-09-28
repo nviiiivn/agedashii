@@ -376,6 +376,20 @@ class TestManeuverWording(RoutingTestCase):
         self.assertEqual(R.turn_word(350), "continue straight")
         self.assertEqual(R.turn_word(-350), "continue straight")
 
+    def test_turns_start_at_45_and_sharp_at_136(self):
+        # Valhalla's own classifier (baldr/turn.cc, identical in 3.6.3 and
+        # 3.8.3), which the Kotlin app uses too. Measured: at 45-50 degrees
+        # Valhalla said turn 21 times and slight 0.
+        self.assertEqual(R.turn_word(44.9), "bear right")
+        self.assertEqual(R.turn_word(45), "turn right")
+        self.assertEqual(R.turn_word(-45), "turn left")
+        self.assertEqual(R.turn_word(135), "turn right")
+        self.assertEqual(R.turn_word(-135), "turn left")
+        self.assertEqual(R.turn_word(136), "make a sharp right")
+        self.assertEqual(R.turn_word(-136), "make a sharp left")
+        self.assertEqual(R.turn_word(159.9), "make a sharp right")
+        self.assertEqual(R.turn_word(160), "make a U-turn")
+
     def test_compass_words(self):
         self.assertEqual(R.compass_word(0), "north")
         self.assertEqual(R.compass_word(45), "northeast")
@@ -387,6 +401,61 @@ class TestManeuverWording(RoutingTestCase):
                                0.0, places=3)
         self.assertAlmostEqual(R.bearing((37.0, -122.0), (37.0, -121.9)),
                                90.0, places=1)
+
+
+class TestManeuverKinds(RoutingTestCase):
+    """The kind is the clip contract: her recordings are named these."""
+
+    def test_the_kinds_are_the_clip_names(self):
+        self.assertEqual(R.KINDS, (
+            "turn-left", "turn-right", "slight-left", "slight-right",
+            "sharp-left", "sharp-right", "uturn", "continue", "merge", "exit",
+            "arrive", "start", "roundabout"))
+
+    def test_every_band_has_a_kind(self):
+        cases = {0: "continue", 19.9: "continue", -19.9: "continue",
+                 20: "slight-right", -20: "slight-left", 44.9: "slight-right",
+                 45: "turn-right", -45: "turn-left", 135: "turn-right",
+                 -135: "turn-left", 136: "sharp-right", -136: "sharp-left",
+                 159.9: "sharp-right", -159.9: "sharp-left", 160: "uturn",
+                 -160: "uturn", 180: "uturn", 350: "continue"}
+        for delta, kind in cases.items():
+            self.assertEqual(R.turn_kind(delta), kind, delta)
+
+    def test_the_words_and_the_kind_never_disagree(self):
+        # The banner reads the words, her voice plays the kind. A "bear left"
+        # on screen with her TURN LEFT in her ears is a wrong instruction.
+        says = {"make a U-turn": "uturn", "make a sharp left": "sharp-left",
+                "make a sharp right": "sharp-right", "turn left": "turn-left",
+                "turn right": "turn-right", "bear left": "slight-left",
+                "bear right": "slight-right", "continue straight": "continue"}
+        for tenth in range(-1800, 1801):
+            delta = tenth / 10
+            self.assertEqual(says[R.turn_word(delta)], R.turn_kind(delta), delta)
+
+    def test_a_maneuver_built_without_a_kind_still_builds(self):
+        m = R.Maneuver("turn left", "", 0.0, (0.0, 0.0), 0, 0.0)
+        self.assertIsNone(m.kind)
+
+    def test_the_server_route_carries_kinds_from_valhallas_types(self):
+        shape = [(37.80 + i * 0.001, -122.27) for i in range(12)]
+
+        def man(t, i, before=0, after=0, text="x"):
+            return {"type": t, "instruction": text, "begin_shape_index": i,
+                    "length": 0.1, "bearing_before": before, "bearing_after": after}
+
+        data = {"trip": {"summary": {"length": 1.2, "time": 90}, "legs": [{
+            "shape": _encode6(shape),
+            "maneuvers": [man(1, 0), man(10, 1), man(11, 2), man(16, 3),
+                          man(20, 4), man(18, 5, 0, 30), man(19, 6, 0, 270),
+                          man(23, 7), man(24, 8), man(25, 9), man(26, 10),
+                          man(27, 10), man(28, 10), man(12, 10), man(8, 11),
+                          man(4, 11)]}]}}
+        out = R.parse_valhalla(data)
+        self.assertEqual([m.kind for m in out.maneuvers], [
+            "start", "turn-right", "sharp-right", "slight-left", "exit",
+            "slight-right", "turn-left", "slight-right", "slight-left",
+            "merge", "roundabout", None, None, "uturn", "continue", "arrive"])
 
 
 # ----------------------------------------------------- distance and timing
@@ -989,6 +1058,142 @@ class TestGraphVersions(LatticeTestCase):
             R.Graph(path)
 
 
+# Graph class numbers as the shipped .rg uses them (measured against OSM
+# tags: 0 is motorway, 1 is motorway_link, 2 is mostly motorway).
+FWY, RAMP, FWY2, STREET, RES = 0, 1, 2, 4, 11
+
+
+def _mid(a, b):
+    return ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+
+
+class TestFreewayManeuvers(RoutingTestCase):
+    """Exits, ramps, merges, forks and sharp turns on small made-up roads.
+
+    Before this the offline router had no rule that fired on leaving a
+    freeway: an unnamed ramp at 13 degrees is neither a name change nor a
+    turn, so she was told nothing. Measured over 300 trips against Valhalla:
+    it spoke at 11 of 428 exits.
+    """
+
+    def route(self, nodes, segs, a, b):
+        path = Path(self._tmproot.name) / "fwy.rg"
+        _pack_graph(path, nodes, segs)
+        os.environ[R.ENV_OVERRIDE] = str(path)
+        R.reset()
+        with self.no_server():
+            out = R.route(a, b, allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        return out
+
+    #  3 . . . . . .           9
+    #  |                       |
+    #  2 <------ on-ramp ----- 8   Oak Street
+    #  |                       |
+    #  1 --- exit ramp --> 4   7
+    #  |                  / \
+    #  0              6-/   \-5  Exit Street
+    FREEWAY = [(37.800, -122.2700), (37.810, -122.2700), (37.820, -122.2700),
+               (37.830, -122.2700), (37.815, -122.2685), (37.815, -122.2600),
+               (37.810, -122.2685), (37.810, -122.2715), (37.8155, -122.2715),
+               (37.825, -122.2715)]
+    FREEWAY_SEGS = [(0, 1, "Test Freeway", True, FWY), (1, 2, "Test Freeway", True, FWY),
+                    (2, 3, "Test Freeway", True, FWY), (1, 4, "", True, RAMP),
+                    (4, 5, "Exit Street", False, RES), (4, 6, "Exit Street", False, RES),
+                    (7, 8, "Oak Street", False, STREET), (8, 9, "Oak Street", False, STREET),
+                    (8, 2, "", True, RAMP)]
+
+    def said(self, out):
+        return [(m.instruction, m.kind) for m in out.maneuvers]
+
+    def test_leaving_the_freeway_is_an_exit_on_its_side(self):
+        f = self.FREEWAY
+        out = self.route(f, self.FREEWAY_SEGS, _mid(f[0], f[1]), _mid(f[4], f[5]))
+        self.assertEqual(self.said(out), [
+            ("head north on Test Freeway", "start"),
+            ("take the exit on the right", "exit"),
+            ("turn right onto Exit Street", "turn-right"),
+            ("arrive at your destination", "arrive")])
+
+    def test_driving_past_an_exit_says_nothing(self):
+        f = self.FREEWAY
+        out = self.route(f, self.FREEWAY_SEGS, _mid(f[0], f[1]), _mid(f[2], f[3]))
+        self.assertEqual([k for _, k in self.said(out)], ["start", "arrive"])
+
+    def test_an_on_ramp_is_taken_by_its_angle_then_merged_from(self):
+        f = self.FREEWAY
+        out = self.route(f, self.FREEWAY_SEGS, _mid(f[7], f[8]), _mid(f[2], f[3]))
+        self.assertEqual(self.said(out), [
+            ("head north on Oak Street", "start"),
+            ("take the ramp on the right", "slight-right"),
+            ("merge onto Test Freeway", "merge"),
+            ("arrive at your destination", "arrive")])
+
+    #        3   2        West Freeway / North Freeway
+    #         \ /
+    #          1
+    #          |          Split Freeway
+    #          0
+    FORK = [(37.800, -122.2700), (37.810, -122.2700), (37.820, -122.2672),
+            (37.820, -122.2728)]
+    FORK_SEGS = [(0, 1, "Split Freeway", True, FWY), (1, 2, "North Freeway", True, FWY),
+                 (1, 3, "West Freeway", True, FWY)]
+
+    def test_a_freeway_split_is_keep_right_or_keep_left(self):
+        f = self.FORK
+        right = self.route(f, self.FORK_SEGS, _mid(f[0], f[1]), _mid(f[1], f[2]))
+        self.assertIn(("keep right onto North Freeway", "slight-right"), self.said(right))
+        left = self.route(f, self.FORK_SEGS, _mid(f[0], f[1]), _mid(f[1], f[3]))
+        self.assertIn(("keep left onto West Freeway", "slight-left"), self.said(left))
+
+    def test_an_exit_onto_an_unnamed_freeway_grade_ramp_is_still_an_exit(self):
+        # Exit 9 off I-80 at Emeryville is exactly this in the shipped graph:
+        # the ramp is class 2 like the freeway, and has no name.
+        nodes = [(37.800, -122.2700), (37.810, -122.2700), (37.820, -122.2700),
+                 (37.815, -122.2685), (37.815, -122.2600)]
+        segs = [(0, 1, "Bay Freeway", True, FWY2), (1, 2, "Bay Freeway", True, FWY2),
+                (1, 3, "", True, FWY2), (3, 4, "Frontage Road", False, STREET)]
+        out = self.route(nodes, segs, _mid(nodes[0], nodes[1]), _mid(nodes[3], nodes[4]))
+        self.assertIn(("take the exit on the right", "exit"), self.said(out))
+
+    def test_the_same_freeway_changing_class_past_an_exit_says_nothing(self):
+        # Measured: "keep left onto J Arthur Younger Freeway" where the freeway
+        # just went on under its own name while a ramp left it.
+        nodes = [(37.800, -122.2700), (37.810, -122.2700), (37.820, -122.2700),
+                 (37.815, -122.2685)]
+        segs = [(0, 1, "Bay Freeway", True, FWY), (1, 2, "Bay Freeway", True, FWY2),
+                (1, 3, "", True, FWY2)]
+        out = self.route(nodes, segs, _mid(nodes[0], nodes[1]), _mid(nodes[1], nodes[2]))
+        self.assertEqual([k for _, k in self.said(out)], ["start", "arrive"])
+
+    def test_losing_the_name_is_not_an_exit_unless_the_name_goes_on_beside(self):
+        # Two unnamed-and-other branches: nothing says which one is the
+        # freeway, so it is a fork, not an exit.
+        nodes = [(37.800, -122.2700), (37.810, -122.2700), (37.820, -122.2715),
+                 (37.815, -122.2685)]
+        segs = [(0, 1, "Bay Freeway", True, FWY2), (1, 2, "Other Freeway", True, FWY2),
+                (1, 3, "", True, FWY2)]
+        out = self.route(nodes, segs, _mid(nodes[0], nodes[1]), _mid(nodes[1], nodes[3]))
+        self.assertNotIn("exit", [k for _, k in self.said(out)])
+        self.assertIn(("keep right", "slight-right"), self.said(out))
+
+    def test_a_hairpin_is_a_sharp_turn(self):
+        nodes = [(37.800, -122.2700), (37.810, -122.2700), (37.805, -122.2665),
+                 (37.820, -122.2700)]
+        segs = [(0, 1, "A Street", False, RES), (1, 3, "A Street", False, RES),
+                (1, 2, "B Street", False, RES)]
+        out = self.route(nodes, segs, _mid(nodes[0], nodes[1]), _mid(nodes[1], nodes[2]))
+        self.assertIn(("make a sharp right onto B Street", "sharp-right"), self.said(out))
+
+    def test_every_offline_maneuver_has_a_kind(self):
+        f = self.FREEWAY
+        for a, b in ((_mid(f[7], f[8]), _mid(f[2], f[3])),
+                     (_mid(f[0], f[1]), _mid(f[4], f[6]))):
+            out = self.route(f, self.FREEWAY_SEGS, a, b)
+            for m in out.maneuvers:
+                self.assertIn(m.kind, R.KINDS, m.instruction)
+
+
 # ------------------------------------------- the real graph, when installed
 
 GRAPH = R.graph_path()
@@ -1125,6 +1330,53 @@ class TestOfflineRouting(RoutingTestCase):
         left, _ = R.remaining(base, here)
         self.assertAlmostEqual(again.distance_m, left,
                                delta=max(250.0, left * 0.05))
+
+
+@NEEDS_GRAPH
+class TestRealJunctions(RoutingTestCase):
+    """Junctions in the shipped graph whose right answer is known.
+
+    Each is one Valhalla (the server path) names the same way: the University
+    Avenue on-ramp to I-80 ("Take the I 80 West ramp on the right"), I-80
+    exit 9 at Powell Street ("Take exit 9 on the right"), and two turns
+    Valhalla calls sharp - Doolittle Drive onto Davis Street (138 degrees) and
+    San Benito Road onto Visitacion Avenue (143).
+    """
+
+    def route(self, a, b):
+        with mock.patch.object(R, "graph_path", lambda: GRAPH), self.no_server():
+            out = R.route(a, b, allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        return out
+
+    def test_berkeley_to_emeryville_on_ramp_merge_and_exit(self):
+        out = self.route((37.8699, -122.2953), (37.8385, -122.2930))
+        said = [(m.instruction, m.kind) for m in out.maneuvers]
+        ramp = said.index(("take the ramp on the right", "slight-right"))
+        merge = said.index(("merge onto Eastshore Freeway", "merge"))
+        exit_ = said.index(("take the exit on the right", "exit"))
+        frontage = [i for i, (words, _) in enumerate(said) if "Frontage Road" in words][0]
+        self.assertLess(ramp, merge)
+        self.assertLess(merge, exit_)
+        self.assertLess(exit_, frontage)
+        self.assertLess(R.haversine_m(out.maneuvers[ramp].at, (37.86667, -122.30448)), 50)
+
+    def test_doolittle_onto_davis_is_a_sharp_right(self):
+        out = self.route((37.715378, -122.186418), (37.716587, -122.185716))
+        self.assertEqual([(m.instruction, m.kind) for m in out.maneuvers][1],
+                         ("make a sharp right onto Davis Street", "sharp-right"))
+
+    def test_san_benito_onto_visitacion_is_a_sharp_right(self):
+        out = self.route((37.68021, -122.403167), (37.680629, -122.40314))
+        self.assertEqual([(m.instruction, m.kind) for m in out.maneuvers][1],
+                         ("make a sharp right onto Visitacion Avenue", "sharp-right"))
+
+    def test_a_long_route_has_a_kind_everywhere(self):
+        out = self.route(OAKLAND, FREMONT)
+        self.assertEqual(out.maneuvers[0].kind, "start")
+        self.assertEqual(out.maneuvers[-1].kind, "arrive")
+        for m in out.maneuvers:
+            self.assertIn(m.kind, R.KINDS, m.instruction)
 
 
 @NEEDS_GRAPH

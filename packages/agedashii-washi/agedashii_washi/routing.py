@@ -994,7 +994,8 @@ def total_time_s(g, edges):
 
 # --------------------------------------------------------------- maneuvers
 
-Maneuver = namedtuple("Maneuver", "instruction street distance_m at index cum_m")
+Maneuver = namedtuple("Maneuver", "instruction street distance_m at index cum_m kind",
+                      defaults=(None,))
 Maneuver.__doc__ = """One turn-by-turn instruction.
 
 instruction  what to do, e.g. "turn left onto Harrison Street"
@@ -1003,7 +1004,17 @@ distance_m   how far you then drive before the next instruction
 at           (lat, lon) of the point the instruction applies at
 index        that point's index into Route.points
 cum_m        distance from the start of the route to that point
+kind         one of KINDS, or None where no clip says it honestly (leaving a
+             roundabout, a ferry) - the words are then spoken instead
 """
+
+#: What a maneuver IS, as opposed to how it is worded: the key her recorded
+#: clips are named by, shared with the Kotlin app so one set of her files
+#: works in both. The instruction string stays the words; never derive one
+#: from the other by matching text.
+KINDS = ("turn-left", "turn-right", "slight-left", "slight-right",
+         "sharp-left", "sharp-right", "uturn", "continue", "merge", "exit",
+         "arrive", "start", "roundabout")
 
 
 def bearing(a, b):
@@ -1015,26 +1026,174 @@ def bearing(a, b):
     return (math.degrees(math.atan2(y, x)) + 360) % 360
 
 
-TURNS = [(-180, -160, "make a U-turn"), (-160, -50, "turn left"),
-         (-50, -20, "bear left"), (-20, 20, "continue straight"),
-         (20, 50, "bear right"), (50, 160, "turn right"),
-         (160, 180, "make a U-turn")]
+# Heading-change bands. SLIGHT_DEG and up are Valhalla's own classifier
+# (baldr/turn.cc make_turn_type_lut, byte-identical in 3.6.3 - the phone's -
+# and 3.8.3 - the server's), which the Kotlin app uses too, so the two apps
+# cannot disagree about a turn: turn 45-135, sharp 136-159, U-turn 160+.
+# Measured over 37,771 junctions on 300 Bay Area trips routed both ways
+# (tools/navi-routing/measure_maneuvers.py): Valhalla's ordinary turns never
+# exceed 135 and its sharps run 137-150; at 45-50 it said turn 21 times and
+# slight 0, which is why "turn" now starts at 45 rather than 50.
+#
+# ONE DELIBERATE DIFFERENCE: Valhalla's slight starts at 11; here straight
+# runs to 20. This router also speaks junctions where only the street name
+# changes, and at those with an 11-20 degree bend Valhalla said nothing 138
+# times and slight 12 - so her slight clip would be wrong far more often than
+# right. Accepted as permanent (AGEDASHII); noted on the Kotlin side too.
+STRAIGHT_DEG = 20.0
+SLIGHT_DEG = 45.0
+TURN_DEG = 135.0
+SHARP_DEG = 160.0
+
+TURNS = [(-180, -SHARP_DEG, "make a U-turn"),
+         (-SHARP_DEG, -TURN_DEG, "make a sharp left"),
+         (-TURN_DEG, -SLIGHT_DEG, "turn left"),
+         (-SLIGHT_DEG, -STRAIGHT_DEG, "bear left"),
+         (-STRAIGHT_DEG, STRAIGHT_DEG, "continue straight"),
+         (STRAIGHT_DEG, SLIGHT_DEG, "bear right"),
+         (SLIGHT_DEG, TURN_DEG, "turn right"),
+         (TURN_DEG, SHARP_DEG, "make a sharp right"),
+         (SHARP_DEG, 180, "make a U-turn")]
 
 COMPASS = ["north", "northeast", "east", "southeast",
            "south", "southwest", "west", "northwest"]
 
 
+def _turn(delta, straight=STRAIGHT_DEG):
+    """(words, kind) for a heading change in degrees.
+
+    Banded on the size of the change and then given its side, so +135 and
+    -135 are the same kind of turn. `straight` is where "continue" ends;
+    ramps and forks use Valhalla's 11, since there is no name-change case.
+    """
+    delta = (delta + 540) % 360 - 180
+    a = abs(delta)
+    side = "right" if delta > 0 else "left"
+    if a >= SHARP_DEG:
+        return "make a U-turn", "uturn"
+    if a > TURN_DEG:
+        return f"make a sharp {side}", f"sharp-{side}"
+    if a >= SLIGHT_DEG:
+        return f"turn {side}", f"turn-{side}"
+    if a >= straight:
+        return f"bear {side}", f"slight-{side}"
+    return "continue straight", "continue"
+
+
 def turn_word(delta):
     """The instruction verb for a heading change in degrees, -180..180."""
-    delta = (delta + 540) % 360 - 180
-    for lo, hi, word in TURNS:
-        if lo <= delta < hi or (hi == 180 and delta == 180):
-            return word
-    return "continue straight"                        # unreachable in practice
+    return _turn(delta)[0]
+
+
+def turn_kind(delta):
+    """The maneuver kind (one of KINDS) for the same heading change."""
+    return _turn(delta)[1]
 
 
 def compass_word(deg):
     return COMPASS[int((deg + 22.5) % 360 / 45)]
+
+
+# ------------------------------------------------ exits, ramps, merges, forks
+#
+# Graph classes by what they CONTAIN, not by their CLASSES labels, which do
+# not describe the shipped graph. Measured against OSM highway tags on 80
+# map-matched routes: class 1 is 100% motorway_link; class 0 is 97% motorway;
+# class 2 is 75% motorway, 12% motorway_link, 11% trunk. Nothing here relies
+# on any other class.
+RAMP_CLASSES = frozenset({1})
+FREEWAY_CLASSES = frozenset({0, 2})
+#: Another way on within this of the incoming heading makes a fork rather
+#: than a side road.
+FORK_DEG = 60.0
+#: Where "continue" ends for a ramp: Valhalla's own 11, since a ramp is never
+#: the name-change-only case that STRAIGHT_DEG exists for.
+RAMP_STRAIGHT_DEG = 11.0
+
+
+def _leg_edge(leg):
+    """The directed edge a leg runs along, or -1 if it was built without one."""
+    return leg[5] if len(leg) > 5 else -1
+
+
+def _ways_out(g, node, k_in, k_out, b0):
+    """[(heading change, class, name)] for every other way on from `node`.
+
+    Leaves out the way being taken and the way back along the road arrived
+    on (the same segment, reversed): neither is a choice being made.
+    """
+    if node < 0:
+        return []
+    seg_in = (g.seg[k_in] & 0x7FFFFFFF) if k_in >= 0 else -1
+    out = []
+    for k in range(g.off[node], g.off[node + 1]):
+        sid = g.seg[k] & 0x7FFFFFFF
+        if k == k_out or sid == seg_in:
+            continue
+        shape = _edge_points(g, k)
+        if len(shape) < 2:
+            continue
+        d = (bearing(shape[0], shape[1]) - b0 + 540) % 360 - 180
+        out.append((d, g.cls[k], g.name(sid)))
+    return out
+
+
+def _freeway_move(g, prev, leg, delta, b0, spoken_anyway):
+    """(words, kind) for a junction the freeway rules name, else None.
+
+    Before these, leaving a freeway was never said offline: an unnamed ramp
+    peeling off at 13 degrees is neither a turn nor a name change. Over 300
+    trips checked against Valhalla the router spoke at 11 of 428 exits, 32
+    of 193 on-ramps and 14 of 152 ramp forks.
+    """
+    c_in, c_out = prev[2], leg[2]
+    fwy_in, ramp_in = c_in in FREEWAY_CLASSES, c_in in RAMP_CLASSES
+    fwy_out, ramp_out = c_out in FREEWAY_CLASSES, c_out in RAMP_CLASSES
+    if not (fwy_in or ramp_in or fwy_out or ramp_out):
+        return None
+    name_in, nm = prev[3], leg[3]
+    others = _ways_out(g, prev[4], _leg_edge(prev), _leg_edge(leg), b0)
+    fork = [o for o in others
+            if (o[1] in FREEWAY_CLASSES or o[1] in RAMP_CLASSES) and abs(o[0]) < FORK_DEG]
+
+    def side_of(ways):
+        nearest = min(ways, key=lambda o: abs(o[0] - delta))
+        return "right" if delta > nearest[0] else "left"
+
+    # Leaving the freeway while it carries on beside: onto a ramp, or onto an
+    # unnamed piece of freeway-grade road - but only then when the other
+    # branch keeps the freeway's name, since otherwise nothing says which
+    # branch is the freeway (measured: 11 false exits of that kind).
+    if fwy_in and ramp_out:
+        through = [o for o in fork if o[1] in FREEWAY_CLASSES]
+    elif fwy_in and fwy_out and name_in and not nm:
+        through = [o for o in fork if o[1] in FREEWAY_CLASSES and o[2] == name_in]
+    else:
+        through = []
+    if through:
+        return f"take the exit on the {side_of(through)}", "exit"
+    # A fork inside the freeway system - unless it is just the freeway going
+    # on past an exit, which Valhalla (and every rider) says nothing about:
+    # every other way is a ramp, or this way keeps the freeway's name. The
+    # class may change under the same name (0 to 2 on the J Arthur Younger).
+    if (fwy_in or ramp_in) and (fwy_out or ramp_out) and fork and abs(delta) < FORK_DEG:
+        passing = fwy_in and fwy_out and (
+            all(o[1] in RAMP_CLASSES for o in fork)
+            or (nm == name_in and (nm or c_out == c_in)))
+        if not passing:
+            side = side_of(fork)
+            return f"keep {side}" + (f" onto {nm}" if nm else ""), f"slight-{side}"
+    # Onto a ramp from an ordinary road: taken at its angle.
+    if ramp_out and not (fwy_in or ramp_in) and others:
+        words, kind = _turn(delta, straight=RAMP_STRAIGHT_DEG)
+        if kind in ("continue", "slight-left", "slight-right"):
+            return f"take the ramp on the {side_of(others)}", kind
+        return f"{words} to take the ramp", kind
+    # Off a ramp onto the freeway. Only where a maneuver was already spoken:
+    # this renames "continue straight onto I-80" rather than adding noise.
+    if ramp_in and fwy_out and spoken_anyway:
+        return (f"merge onto {nm}" if nm else "merge"), "merge"
+    return None
 
 
 def _maneuvers_from_legs(g, legs, pts, bounds, cum):
@@ -1045,11 +1204,14 @@ def _maneuvers_from_legs(g, legs, pts, bounds, cum):
     changes. Without the degree test every kink in a road becomes a "bear
     left" and the list is unreadable.
 
-    A leg is (points, length_m, class, street name, node it ends at). Most
-    are whole graph edges; the first and last may be part of one, which is
-    the point - the "head <compass>" now describes the direction the rider
-    is really facing rather than the direction out of a junction they are
-    nowhere near.
+    A leg is (points, length_m, class, street name, node it ends at, the
+    directed edge it runs along). Most are whole graph edges; the first and
+    last may be part of one, which is the point - the "head <compass>" now
+    describes the direction the rider is really facing rather than the
+    direction out of a junction they are nowhere near.
+
+    Every maneuver carries its kind (KINDS), decided together with its words
+    so the two never disagree.
     """
     if not legs:
         return []
@@ -1058,7 +1220,7 @@ def _maneuvers_from_legs(g, legs, pts, bounds, cum):
     start_b = bearing(pts[0], pts[1]) if len(pts) > 1 else 0.0
     out.append([f"head {compass_word(start_b)}"
                 + (f" on {cur_name}" if cur_name else ""),
-                cur_name, 0.0, pts[0], 0, 0.0])
+                cur_name, 0.0, pts[0], 0, 0.0, "start"])
     run = legs[0][1]
     for i in range(1, len(legs)):
         nm = legs[i][3]
@@ -1069,24 +1231,28 @@ def _maneuvers_from_legs(g, legs, pts, bounds, cum):
         delta = (b1 - b0 + 540) % 360 - 180
         node = legs[i - 1][4]
         degree = (g.off[node + 1] - g.off[node]) if node >= 0 else 0
-        significant = (abs(delta) > 25 and degree > 2) or (nm != cur_name and nm)
-        if significant:
+        significant = bool((abs(delta) > 25 and degree > 2) or (nm != cur_name and nm))
+        move = (_freeway_move(g, legs[i - 1], legs[i], delta, b0, significant)
+                if node >= 0 and e0 > s0 and e1 > s1 else None)
+        if move is None and significant:
+            words, kind = _turn(delta)
+            move = (words + (f" onto {nm}" if nm else ""), kind)
+        if move is not None:
             out[-1][2] = run
-            out.append([turn_word(delta) + (f" onto {nm}" if nm else ""),
-                        nm, 0.0, pts[s1], s1, cum[s1]])
+            out.append([move[0], nm, 0.0, pts[s1], s1, cum[s1], move[1]])
             cur_name = nm
             run = 0.0
         run += legs[i][1]
     out[-1][2] = run
     out.append(["arrive at your destination", cur_name, 0.0,
-                pts[-1], len(pts) - 1, cum[-1]])
+                pts[-1], len(pts) - 1, cum[-1], "arrive"])
     return [Maneuver(*m) for m in out]
 
 
 def _edge_leg(g, k):
     """One whole directed edge, as a leg."""
     return (_edge_points(g, k), g.len[k] / 10.0, g.cls[k],
-            g.name(g.seg[k] & 0x7FFFFFFF), g.to[k])
+            g.name(g.seg[k] & 0x7FFFFFFF), g.to[k], k)
 
 
 def _same_point(a, b):
@@ -1120,7 +1286,7 @@ def _part_leg(g, snap, k, to_end, head):
         length = snap.frac * snap.len_m
     if len(chunk) < 2 or length < 0.05:
         return None
-    return (chunk, length, g.cls[k], g.name(snap.seg), head)
+    return (chunk, length, g.cls[k], g.name(snap.seg), head, k)
 
 
 def _seg_points(g, sid):
@@ -1151,7 +1317,7 @@ def _mid_leg(g, snap_a, snap_b, k, forward):
     length = abs(snap_b.frac - snap_a.frac) * snap_a.len_m
     if len(out) < 2 or length < 0.05:
         return None
-    return (out, length, g.cls[k], g.name(snap_a.seg), -1)
+    return (out, length, g.cls[k], g.name(snap_a.seg), -1, k)
 
 
 # ------------------------------------------------------------------- Route
@@ -1563,6 +1729,34 @@ def decode_polyline6(encoded):
     return coords
 
 
+#: Valhalla maneuver type -> kind. Its types, not its words: the words change
+#: with signage ("Take exit 9 on the right toward ...") and the type does not.
+#: Leaving a roundabout (27), ferries (28, 29) and transit get no kind, so the
+#: words are spoken rather than a clip that would be wrong.
+_VALHALLA_KINDS = {
+    1: "start", 2: "start", 3: "start", 4: "arrive", 5: "arrive", 6: "arrive",
+    7: "continue", 8: "continue", 9: "slight-right", 10: "turn-right",
+    11: "sharp-right", 12: "uturn", 13: "uturn", 14: "sharp-left",
+    15: "turn-left", 16: "slight-left", 20: "exit", 21: "exit",
+    22: "continue", 23: "slight-right", 24: "slight-left", 25: "merge",
+    26: "roundabout", 37: "merge", 38: "merge",
+}
+#: On-ramps (17 straight, 18 right, 19 left) are not exits: they are taken at
+#: their angle, like the offline router's, when Valhalla says what it is.
+_VALHALLA_RAMPS = {17: "continue", 18: "slight-right", 19: "slight-left"}
+
+
+def valhalla_kind(m):
+    """The kind (KINDS, or None) for one Valhalla maneuver dict."""
+    t = m.get("type")
+    if t in _VALHALLA_RAMPS:
+        if m.get("bearing_before") is not None and m.get("bearing_after") is not None:
+            return _turn(m["bearing_after"] - m["bearing_before"],
+                         straight=RAMP_STRAIGHT_DEG)[1]
+        return _VALHALLA_RAMPS[t]
+    return _VALHALLA_KINDS.get(t)
+
+
 def parse_valhalla(data):
     """Turn a Valhalla /route response into a Route. Pure; no network.
 
@@ -1594,7 +1788,8 @@ def parse_valhalla(data):
                       max(len(pts) - 1, 0))
             street = " / ".join(m.get("street_names") or [])
             turns.append([m.get("instruction") or "continue", street,
-                          float(m.get("length") or 0.0) * 1000.0, idx])
+                          float(m.get("length") or 0.0) * 1000.0, idx,
+                          valhalla_kind(m)])
     if len(pts) < 2:
         return _failed("server", "the server's route has no drawable shape")
     cum = cumulative_m(pts)
@@ -1604,8 +1799,8 @@ def parse_valhalla(data):
     if distance <= 0:
         distance = cum[-1]
     built = [Maneuver(instruction=i, street=s, distance_m=d, at=pts[k],
-                      index=k, cum_m=cum[k] if k < len(cum) else cum[-1])
-             for i, s, d, k in turns]
+                      index=k, cum_m=cum[k] if k < len(cum) else cum[-1], kind=kind)
+             for i, s, d, k, kind in turns]
     return Route(ok=True, source="server", source_detail="server · Valhalla",
                  points=pts, maneuvers=built, distance_m=distance,
                  duration_s=duration, cum_m=cum)

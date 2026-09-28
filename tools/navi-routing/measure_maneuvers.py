@@ -123,7 +123,7 @@ def junctions(g, legs, pts, bounds, cum):
         delta = (b1 - b0 + 540) % 360 - 180
         node = legs[i - 1][4]
         degree = (g.off[node + 1] - g.off[node]) if node >= 0 else 0
-        out.append({"at": pts[s1], "cum": cum[s1], "delta": round(delta, 1), "degree": degree,
+        out.append({"s1": s1, "at": pts[s1], "cum": cum[s1], "delta": round(delta, 1), "degree": degree,
                     "cls_in": routing.CLASSES[legs[i - 1][2]], "cls_out": routing.CLASSES[legs[i][2]],
                     "name_in": legs[i - 1][3], "name_out": legs[i][3],
                     "len_in": round(legs[i - 1][1], 1), "len_out": round(legs[i][1], 1)})
@@ -147,7 +147,14 @@ def main():
 
     def capture(g_, legs, pts, bounds, cum):
         captured["j"] = junctions(g_, legs, pts, bounds, cum)
-        return original(g_, legs, pts, bounds, cum)
+        made = original(g_, legs, pts, bounds, cum)
+        # What the offline router itself said at each junction, if anything.
+        said = {m.index: m for m in made[1:-1]}
+        for j in captured["j"]:
+            m = said.get(j["s1"])
+            j["o_text"] = m.instruction if m else ""
+            j["o_kind"] = getattr(m, "kind", None) if m else None
+        return made
 
     routing._maneuvers_from_legs = capture                  # noqa: SLF001
     rows, skipped = [], 0

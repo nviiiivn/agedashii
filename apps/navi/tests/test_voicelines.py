@@ -85,6 +85,27 @@ class WhichClip(unittest.TestCase):
         self.assertEqual(used, names)
         self.assertEqual(set(voicelines.STAND_IN), {n for _w, n in voicelines.MANEUVERS})
 
+    def test_keep_left_is_a_slight_left(self):
+        # minion 4's new offline words; "left" alone would make it a turn.
+        self.assertEqual(voicelines.maneuver_name("keep left onto I 80"), "slight-left")
+        self.assertEqual(voicelines.maneuver_name("keep right"), "slight-right")
+
+    def test_the_routers_kind_picks_the_clip_over_the_words(self):
+        items = voicelines.playlist("turn right to take the ramp",
+                                    dict(fired("turn right to take the ramp", band="now"),
+                                         kind="slight-right"),
+                                    clips("slight-right", "turn-right"))
+        self.assertEqual(items, [("clip", "/voice/slight-right.m4a",
+                                  "turn right to take the ramp")])
+
+    def test_the_depart_is_never_her_start_line(self):
+        # kind "start" is "head north on First St"; her "start" clip is the
+        # situation line, already said once when the route begins.
+        items = voicelines.playlist("head north on First St",
+                                    dict(fired("head north", band="now"), kind="start"),
+                                    clips("start"))
+        self.assertEqual(items, [("tts", "head north on First St", None)])
+
     def test_a_roundabout_is_its_own_clip(self):
         self.assertEqual(voicelines.maneuver_name("take the 2nd exit at the roundabout"),
                          "roundabout")
@@ -391,6 +412,27 @@ class TheRidePage(_Clean):
         self.assertFalse(prefs.clip_streets())
         prefs.set_value("clip_streets", True)
         self.assertTrue(prefs.clip_streets())
+
+    def test_a_follower_fires_the_routers_kind(self):
+        points = [(37.80 + i * 0.0005, -122.27) for i in range(41)]
+        cum = routing.cumulative_m(points)
+        route = routing.Route(ok=True, source="offline", points=points, cum_m=cum,
+                              maneuvers=[
+                                  routing.Maneuver(instruction="head north", street="First St",
+                                                   distance_m=0.0, at=(0.0, 0.0), index=0,
+                                                   cum_m=0.0, kind="start"),
+                                  routing.Maneuver(instruction="keep left", street="I 80",
+                                                   distance_m=0.0, at=(0.0, 0.0), index=20,
+                                                   cum_m=cum[20], kind="slight-left")],
+                              distance_m=cum[-1], duration_s=600.0)
+        follower = guidance.Follower(route, offroute_m=45)
+        for point in points[:20]:
+            status = follower.update(point, speed_ms=15.0)
+            if status.get("say"):
+                self.assertEqual(status["say_parts"]["kind"], "slight-left")
+                self.assertEqual(status["icon"], "slight_left")
+                return
+        self.fail("no prompt fired")
 
     def test_a_follower_fires_the_parts_as_well_as_the_sentence(self):
         points = [(37.80 + i * 0.0005, -122.27) for i in range(41)]

@@ -197,14 +197,29 @@ def prompt_points(speed_ms):
     return {band: speed_ms * secs for secs, band in PROMPT_BANDS}
 
 
-def turn_icon(instruction):
-    """A glyph name for an instruction, chosen off its words.
+#: routing.KINDS -> glyph. "exit" is left out: its side is in the words.
+_KIND_ICON = {"turn-left": "left", "turn-right": "right",
+              "slight-left": "slight_left", "slight-right": "slight_right",
+              "sharp-left": "sharp_left", "sharp-right": "sharp_right",
+              "uturn": "u_turn", "continue": "straight", "start": "straight",
+              "merge": "merge", "arrive": "flag", "roundabout": "roundabout"}
 
-    Reads the instruction text because that is what `routing` produces -
-    there is no maneuver type code to switch on. Deliberately coarse: a few
-    shapes a rider can tell apart at a glance beat many they cannot.
+
+def turn_icon(instruction, kind=None):
+    """A glyph name for a maneuver: from the router's `kind`, else its words.
+
+    KIND BEATS WORDS. Words are for her to read; `kind` (routing.KINDS) is for
+    the machine to switch on. Parsing the sentence broke the first time the
+    router reworded anything: its new offline "keep left" read as a full left
+    turn, wrong arrow included. The words are the fallback for a maneuver
+    with no kind (a server route's roundabout exit, an older route). An exit
+    still reads its side from the words, which is the only place it is said.
+    Deliberately coarse: a few shapes a rider can tell apart at a glance beat
+    many they cannot.
     """
     text = (instruction or "").lower()
+    if kind in _KIND_ICON and text.strip():
+        return _KIND_ICON[kind]
     if not text.strip():
         # No instruction is not "go straight". An arrow on a nav banner IS an
         # instruction, read at 60 mph; with nothing to say, draw nothing.
@@ -225,11 +240,13 @@ def turn_icon(instruction):
     if "left" in text:
         if "sharp" in text:
             return "sharp_left"
-        return "slight_left" if ("slight" in text or "bear" in text) else "left"
+        return ("slight_left" if any(w in text for w in ("slight", "bear", "keep"))
+                else "left")
     if "right" in text:
         if "sharp" in text:
             return "sharp_right"
-        return "slight_right" if ("slight" in text or "bear" in text) else "right"
+        return ("slight_right" if any(w in text for w in ("slight", "bear", "keep"))
+                else "right")
     return "straight"
 
 
@@ -331,7 +348,8 @@ class Follower:
             "maneuver": man,
             "instruction": getattr(man, "instruction", "") if man else "",
             "street": getattr(man, "street", "") if man else "",
-            "icon": turn_icon(getattr(man, "instruction", "") if man else ""),
+            "icon": turn_icon(getattr(man, "instruction", "") if man else "",
+                              getattr(man, "kind", None)),
             "turn_in_m": metres,
             "off_route_m": off,
             "off_route": self.off_route,
@@ -413,6 +431,7 @@ class Follower:
             # MANEUVER and the DISTANCE, not our wording, so the voice layer
             # needs to know which turn this is rather than re-parse the text.
             self.fired = {"instruction": getattr(man, "instruction", ""),
+                          "kind": getattr(man, "kind", None),
                           "street": getattr(man, "street", ""),
                           "metres": metres, "band": band}
             return spoken(getattr(man, "instruction", ""),

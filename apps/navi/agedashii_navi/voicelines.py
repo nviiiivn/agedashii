@@ -28,7 +28,9 @@ MANEUVERS = (("roundabout", "roundabout"),
              ("u-turn", "uturn"), ("turn around", "uturn"),
              ("sharp left", "sharp-left"), ("sharp right", "sharp-right"),
              ("bear left", "slight-left"), ("slight left", "slight-left"),
+             ("keep left", "slight-left"),
              ("bear right", "slight-right"), ("slight right", "slight-right"),
+             ("keep right", "slight-right"),
              ("turn left", "turn-left"), ("turn right", "turn-right"),
              ("merge", "merge"), ("exit", "exit"), ("ramp", "exit"),
              ("arrive", "arrive"), ("destination", "arrive"),
@@ -48,6 +50,12 @@ FT_PER_M = 3.280839895
 #: it only ever plays her own line.
 SITUATIONS = {"offroute": "Off route.", "rerouting": "Re-routing.",
               "start": "Starting the route.", "speeding": None}
+
+
+#: Her maneuver clip names - what a router's `kind` may be taken as directly.
+#: routing.KINDS also has "start" (the depart, "head north ..."), which is NOT
+#: her "start" line: that is the situation, said once as the route begins.
+CLIP_KINDS = frozenset(name for _words, name in MANEUVERS)
 
 
 def maneuver_name(instruction):
@@ -107,7 +115,17 @@ def playlist(text, parts, clip_path, streets=False, imperial=True, distances=Non
         return [("tts", text, None)]
     band = parts.get("band")
     metres = parts.get("metres") if band != "now" else None
-    man = maneuver_name(parts.get("instruction"))
+    # KIND BEATS WORDS: words are for her to read, the router's kind is for the
+    # machine to switch on (decided with the words offline, from Valhalla's
+    # maneuver TYPE on server routes). Matching the sentence broke the first
+    # time anything was reworded. The words only when there is no kind.
+    kind = parts.get("kind")
+    if kind in CLIP_KINDS:
+        man = kind
+    elif kind:
+        man = None                          # "start": the depart has no clip
+    else:
+        man = maneuver_name(parts.get("instruction"))
     man_clip = clip_path(man) if man else None
     if distances is None:
         distances = {n: clip_path(n) for n in FIXED_DISTANCES}
