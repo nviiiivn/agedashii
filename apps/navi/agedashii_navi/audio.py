@@ -51,6 +51,17 @@ CHANNELS = 1
 WINDOW_SAMPLES = 4096
 #: How often the RPM estimate is recomputed. Loudness updates on every chunk.
 RPM_EVERY_S = 1.0
+#: How long a reading may stand after the last window that ACCEPTED it.
+#:
+#: A rejected window used to leave the previous figure up for ever, and that
+#: figure was also `previous_rpm` - the continuity reference every later window
+#: is judged against. So once a stale number was standing it rejected the REAL
+#: engine speed as "an implausible jump from the last reading", for as long as
+#: it stood, and the gauge held a wrong number that defended itself.
+#:
+#: Two seconds rides out one bad window in a corner without letting a dead
+#: reading become the thing that keeps the live one out.
+RPM_HOLD_S = 2.0
 #: Below this the band is silence, not an engine, and no RPM is claimed.
 QUIET_DBFS = -55.0
 #: Full scale for a 16-bit sample.
@@ -104,6 +115,7 @@ def reset():
         "rpm_est": None,
         "rpm_hz": None,
         "rpm_at": 0.0,
+        "rpm_ok_at": 0.0,         # when the reading now standing was ACCEPTED
         "rpm_rejected": "",       # why the last pick was thrown away, if it was
         "chunks": 0,
         "listening": False,
@@ -292,10 +304,19 @@ def on_stream(e, machine=None):
     STATE["rpm_rejected"] = got["rejected"]
     # A rejected pick leaves the previous reading standing rather than blanking
     # the gauge: one bad window in a corner should not wipe a figure that was
-    # correct a second ago.
+    # correct a second ago. But only for RPM_HOLD_S - see the constant. Holding
+    # it for ever made the stale figure the continuity reference, and it then
+    # rejected the real engine speed for as long as it stood.
     if got["rpm"] is not None:
         STATE["rpm_est"] = got["rpm"]
         STATE["rpm_hz"] = got["hz"]
+        STATE["rpm_ok_at"] = now
+    elif now - STATE["rpm_ok_at"] > RPM_HOLD_S:
+        # Blank the figure, KEEP the reason: an empty gauge that says why is
+        # honest, and the next window is now judged against nothing rather
+        # than against a number that has stopped being true.
+        STATE["rpm_est"] = None
+        STATE["rpm_hz"] = None
 
 
 def on_state_change(e):

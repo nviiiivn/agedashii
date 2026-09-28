@@ -132,6 +132,53 @@ class StreetResultsAreWhereTheStreetIs(unittest.TestCase):
         self.assertLess(rows[0]["dist_m"], 5000, rows[0])
 
 
+class HerSevenSearches(unittest.TestCase):
+    """The seven queries she typed on the phone, against the REAL list, from
+    Oakland. Two bugs: distance barely counted (Sacramento's IKEA at 107 km
+    beat Emeryville's at 3.5; a Japanese garden 93 km out came first), and a
+    landmark named with its city ("berkeley stadium") found nothing, because
+    OSM names the stadium, not the city. NAVI_PLACES_DB points at a list to
+    check; otherwise the shipped one."""
+
+    OAKLAND = (37.8044, -122.2712)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.db = os.environ.get("NAVI_PLACES_DB") or str(REPO / "assets" / "maps" / places.PLACES_FILENAME)
+        if not os.path.isfile(cls.db):
+            raise unittest.SkipTest("no places list installed in this checkout")
+
+    def first(self, text, n=1):
+        rows = places.search_places(text, near=self.OAKLAND, path=self.db)[0]
+        self.assertTrue(rows, f"{text!r} found nothing")
+        return rows[:n]
+
+    def test_japanese_garden_is_lakesides_first(self):
+        top = self.first("japanese garden")[0]
+        self.assertLess(top["dist_m"], 1500, top)          # Lakeside Park, 0.7 mi - not one 93 km out
+
+    def test_de_young_museum(self):
+        self.assertEqual(self.first("de young museum")[0]["name"], "de Young Museum")
+
+    def test_pacifica_beach_is_the_beach_not_the_hotel(self):
+        self.assertEqual(self.first("pacifica beach")[0]["name"], "Pacifica State Beach")
+
+    def test_pyramid_to_moses(self):
+        self.assertEqual(self.first("pyramid to moses")[0]["name"], "Pyramid to Moses")
+
+    def test_ikea_is_emeryville_first(self):
+        top = self.first("ikea")[0]
+        self.assertEqual(top["name"].lower(), "ikea")
+        self.assertLess(top["dist_m"], 4000, top)          # Emeryville, 2.2 mi - not Sacramento's
+
+    def test_uss_hornet(self):
+        self.assertEqual(self.first("uss hornet")[0]["name"], "USS Hornet (CV 12)")
+
+    def test_berkeley_stadium_finds_memorial_stadium(self):
+        names = [r["name"] for r in self.first("berkeley stadium", n=3)]
+        self.assertIn("California Memorial Stadium", names)
+
+
 class ThePlacesListSaysWhetherItIsThere(unittest.TestCase):
     """Where-to states, before any search, whether the offline list is on the
     phone and how big it is - so "not installed" can never pass for "no
