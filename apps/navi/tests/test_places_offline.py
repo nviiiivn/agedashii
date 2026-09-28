@@ -10,6 +10,7 @@ import importlib.util
 import os
 import pathlib
 import sys
+import sqlite3
 import tempfile
 import unittest
 from unittest import mock
@@ -129,6 +130,60 @@ class StreetResultsAreWhereTheStreetIs(unittest.TestCase):
                 self.assertTrue(36.0 <= row["lat"] <= 39.5 and -124.5 <= row["lon"] <= -120.5,
                                 (row["lat"], row["lon"]))
         self.assertLess(rows[0]["dist_m"], 5000, rows[0])
+
+
+class ThePlacesListSaysWhetherItIsThere(unittest.TestCase):
+    """Where-to states, before any search, whether the offline list is on the
+    phone and how big it is - so "not installed" can never pass for "no
+    results". The count is COUNTED, not read from the file's own claim: a line
+    saying "found" can be true while the list holds four rows."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, places.PLACES_FILENAME)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_an_installed_list_gives_its_real_count(self):
+        build_places.write_db(iter(ROWS), self.path)
+        count, words = places.places_status(self.path)
+        self.assertEqual(count, len(ROWS) - 1)
+        self.assertIn(f"{len(ROWS) - 1:,} places on this phone", words)
+
+    def test_no_list_says_what_that_means_in_words_she_can_act_on(self):
+        with mock.patch.object(places, "places_path", return_value=None):
+            count, words = places.places_status()
+        self.assertIsNone(count)
+        self.assertIn("street names", words)
+        self.assertNotIn(".sqlite", words)
+
+    def test_an_unreadable_list_says_so_and_leaves_a_trace(self):
+        with open(self.path, "wb") as f:
+            f.write(b"not a database" * 100)
+        with mock.patch("traceback.print_exc") as trace:
+            count, words = places.places_status(self.path)
+        self.assertIsNone(count)
+        self.assertIn("could not be read", words)
+        trace.assert_called()
+
+    def test_a_list_whose_rows_disagree_with_its_own_count_is_damaged(self):
+        build_places.write_db(iter(ROWS), self.path)
+        con = sqlite3.connect(self.path)
+        con.execute("DELETE FROM place WHERE id > 2")          # truncated
+        con.commit()
+        con.close()
+        count, words = places.places_status(self.path)
+        self.assertIsNone(count)
+        self.assertIn("damaged", words)
+
+    def test_where_to_shows_the_line_before_any_search(self):
+        build_places.write_db(iter(ROWS), self.path)
+        sys.path.insert(0, str(APP_DIR / "tests"))
+        from test_shell import StubPage, texts
+        with mock.patch.object(places, "places_path", return_value=self.path):
+            tree = routes_page.build(StubPage(), go=lambda key: None)
+        self.assertTrue(any("places on this phone" in t for t in texts(tree)))
 
 
 class WhatTheBoxSaysWhenNothingIsFound(unittest.TestCase):

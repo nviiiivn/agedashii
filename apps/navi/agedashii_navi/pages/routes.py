@@ -297,11 +297,19 @@ def build(page, go=None):
             ui.icon_button(ft.Icons.CLOSE, _clear, "Clear the destination"),
         ])))
 
+    # Whether the offline places list is on this phone, and how many places it
+    # really holds - stated BEFORE any search, so a missing list can never pass
+    # for "nothing by that name". Counted, not claimed; see places_status.
+    places_count, places_words = places.places_status()
+    places_line = ft.Text(places_words, size=ui.SMALL,
+                          color=p["text2"] if places_count else p["warn"])
+
     return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, controls=[
         *header,
         ft.Row(spacing=8, controls=[
             box,
             ui.icon_button(ft.Icons.SEARCH, _search, "Search this device")]),
+        places_line,
         ui.button("Places (needs signal)",
                   lambda e: page.run_task(_search_online),
                   icon=ft.Icons.PUBLIC, expand=True),

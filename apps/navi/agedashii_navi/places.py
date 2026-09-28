@@ -31,6 +31,7 @@ refusing a file over that distinction would be useless pedantry.
 """
 import re
 import sqlite3
+import traceback
 import unicodedata
 import urllib.parse
 from pathlib import Path
@@ -381,6 +382,38 @@ def places_path():
         return None
     path = Path(graph).with_name(PLACES_FILENAME)
     return str(path) if path.is_file() else None
+
+
+def places_status(path=None):
+    """(count, one line for the screen) - whether the offline list is usable.
+
+    Shown on Where-to before any search, so "not installed" can never pass for
+    "no results". The count is COUNTED (count(*) on the rows), not taken from
+    the file's own claim, and the two must agree: a line saying "found" can be
+    true while a truncated list holds four rows. count is None when the list
+    cannot be used, and the words say what that means for her, not which file
+    is missing.
+    """
+    path = path or places_path()
+    if path is None:
+        return None, ("Places search is not on this phone - without signal only "
+                      "street names can be found. A newer build of the app includes it.")
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = int(con.execute("SELECT count(*) FROM place").fetchone()[0])
+            claimed = int(con.execute("SELECT value FROM meta WHERE key = 'count'").fetchone()[0])
+        finally:
+            con.close()
+    except Exception:                                  # noqa: BLE001 - said on screen AND in the log
+        traceback.print_exc()
+        return None, ("The places list on this phone could not be read - "
+                      "reinstalling the app replaces it.")
+    if rows == 0 or rows != claimed:
+        print(f"[navi] places list damaged: {rows} rows, file says {claimed}", flush=True)
+        return None, ("The places list on this phone is damaged - "
+                      "reinstalling the app replaces it.")
+    return rows, f"{rows:,} places on this phone, searchable without signal"
 
 
 def search_places(text, near=None, limit=12, path=None):
