@@ -20,7 +20,7 @@ import traceback
 
 import flet as ft
 
-from .. import guidance, live, places, prefs, ui
+from .. import character, guidance, live, places, prefs, ui
 from ..theme import BRD, PAL, RAD
 
 #: Offered radii, as (miles shown, metres asked for).
@@ -95,6 +95,9 @@ def build(page, go=None):
     def _choose(row):
         def handler(_e=None):
             live.set_destination(row["lat"], row["lon"], row.get("name", ""))
+            # His line for the pick, if the taps switch is on (character.tap
+            # checks it, and stays quiet over a prompt).
+            character.tap()
             note.value = _S["note"] = f"routing to {row.get('name')}…"
             _update(page)
             page.run_task(_route)

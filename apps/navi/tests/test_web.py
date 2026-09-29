@@ -9,6 +9,7 @@ Ride page's Geolocator - and the Ride page never finished.
 """
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -114,16 +115,109 @@ class TheGpsKeepsComingWithTheScreenOff(unittest.TestCase):
         # The stream is built once per process and kept; start from none.
         ride._M.pop("geo", None)                                 # noqa: SLF001
         self.addCleanup(ride._M.pop, "geo", None)                # noqa: SLF001
+        live.set_destination(37.81, -122.25, "Lake Merritt")    # a route is up
+        self.addCleanup(live.reset)
         page = page_on(ft.PagePlatform.ANDROID)
         ride.build(page)
         geo = next(s for s in page.services if isinstance(s, fgeo.Geolocator))
         sent = self.encoded(geo.configuration)
         self.assertEqual(sent.get("foreground_notification_enable_wake_lock"), True)
 
+    def test_off_means_no_service_keys_at_all(self):
+        from agedashii_navi import location
+        sent = self.encoded(location.android_config(hz=1, foreground=False))
+        self.assertFalse([k for k in sent if k.startswith("foreground_notification")])
+
+    def test_the_service_is_wanted_while_recording_or_routed_only(self):
+        from agedashii_navi import location
+        live.reset()
+        self.addCleanup(live.reset)
+        self.assertFalse(location.wants_service())      # a map at a stop
+        live.set_destination(37.81, -122.25, "Lake Merritt")
+        self.assertTrue(location.wants_service())
+        live.clear_destination()
+        self.assertFalse(location.wants_service())
+        with mock.patch.object(live, "recording", return_value=True):
+            self.assertTrue(location.wants_service())
+
+    def test_the_ride_page_turns_it_on_when_a_route_comes_up(self):
+        import flet_geolocator as fgeo
+        from agedashii_navi.pages import ride
+        prefs.reset()
+        live.reset()
+        ride.forget_map()
+        self.addCleanup(ride.forget_map)
+        self.addCleanup(live.reset)
+        ride._M.pop("geo", None)                                 # noqa: SLF001
+        self.addCleanup(ride._M.pop, "geo", None)                # noqa: SLF001
+        page = page_on(ft.PagePlatform.ANDROID)
+        ride.build(page)
+        geo = next(s for s in page.services if isinstance(s, fgeo.Geolocator))
+        self.assertNotIn("foreground_notification_title", self.encoded(geo.configuration))
+        live.set_destination(37.81, -122.25, "Lake Merritt")
+        ride.build(page)                                         # back to Ride
+        self.assertIs(ride._M["geo"], geo)                       # noqa: SLF001 - same stream
+        self.assertEqual(self.encoded(geo.configuration)
+                         .get("foreground_notification_enable_wake_lock"), True)
+
     def test_the_rate_follows_her_setting(self):
         from agedashii_navi import location
         sent = self.encoded(location.android_config(hz=5))
         self.assertEqual(sent["interval_duration"].milliseconds, 200)
+
+
+class SheCanSeeTheGpsIsOn(unittest.TestCase):
+    """Android 13+ hides a foreground service's notification until the app is
+    granted POST_NOTIFICATIONS at runtime: GPS on, nothing on screen saying so.
+    Asked when she starts a route or a ride - a request with a reason - once."""
+
+    def setUp(self):
+        import asyncio
+        import flet_permission_handler as fph
+        from agedashii_navi import location
+        self.asyncio, self.fph, self.location = asyncio, fph, location
+        location._ASKED.clear()                                   # noqa: SLF001
+        self.addCleanup(location._ASKED.clear)                    # noqa: SLF001
+        self.asked = []
+        test = self
+
+        class FakeHandler:
+            def __init__(self):
+                test.handler = self
+
+            async def get_status(self, permission):
+                return fph.PermissionStatus.DENIED
+
+            async def request(self, permission):
+                test.asked.append(permission)
+                return fph.PermissionStatus.GRANTED
+
+        patcher = mock.patch.object(fph, "PermissionHandler", FakeHandler)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_asked_once_on_android(self):
+        page = page_on(ft.PagePlatform.ANDROID)
+        self.asyncio.run(self.location.ask_notifications(page))
+        self.asyncio.run(self.location.ask_notifications(page))
+        self.assertEqual(self.asked, [self.fph.Permission.NOTIFICATION])
+
+    def test_never_in_a_browser(self):
+        self.asyncio.run(self.location.ask_notifications(
+            page_on(ft.PagePlatform.LINUX, web=True)))
+        self.assertEqual(self.asked, [])
+
+    def test_the_ride_page_asks_when_a_route_is_up(self):
+        from agedashii_navi.pages import ride
+        prefs.reset()
+        live.reset()
+        ride.forget_map()
+        self.addCleanup(ride.forget_map)
+        self.addCleanup(live.reset)
+        live.set_destination(37.81, -122.25, "Lake Merritt")
+        page = page_on(ft.PagePlatform.ANDROID)
+        ride.build(page)
+        self.assertIn(self.location.ask_notifications, [fn for fn, _a in page.tasks])
 
 
 if __name__ == "__main__":

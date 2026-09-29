@@ -211,6 +211,8 @@ def zero():
         return None
     STATE["zero_roll"] = STATE["roll_deg"]
     STATE["zero_pitch"] = STATE["pitch_deg"]
+    from . import prefs
+    prefs.set_level(STATE["zero_roll"], STATE["zero_pitch"] or 0.0)  # saved by Settings
     return {"roll": round(STATE["zero_roll"], 1),
             "pitch": round(STATE["zero_pitch"], 1)}
 
@@ -219,10 +221,27 @@ def unzero():
     """Forget the calibration and report raw phone angles again."""
     STATE["zero_roll"] = 0.0
     STATE["zero_pitch"] = 0.0
+    from . import prefs
+    prefs.clear_level()
+
+
+def _restore_level():
+    """Bring back the stored level after a restart, once it is readable.
+
+    Lazily, because the stored prefs load after this module does: until they
+    have, there is nothing to restore and the next call tries again.
+    """
+    if "zero_roll" in STATE:
+        return
+    from . import prefs
+    saved = prefs.level()
+    if saved:
+        STATE["zero_roll"], STATE["zero_pitch"] = saved
 
 
 def zeroed():
     """Whether an upright has been set, and at what angles."""
+    _restore_level()
     roll = STATE.get("zero_roll") or 0.0
     pitch = STATE.get("zero_pitch") or 0.0
     return {"set": bool(roll or pitch),
@@ -463,6 +482,7 @@ def latest():
     Only keys with a real reading behind them are returned, so a device with no
     barometer contributes no altitude column rather than a zero.
     """
+    _restore_level()
     out = {}
     if STATE.get("g_total") is not None:
         out["g_vert"] = round(STATE["g_total"], 3)

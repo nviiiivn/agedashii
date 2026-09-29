@@ -285,6 +285,7 @@ def build(page, go=None, on_change=None):
 
     def _zero_sensors(_e=None):
         got = sensors.zero()
+        page.run_task(_save)                   # the level is a stored pref now
         STATE["note"] = ("no accelerometer has reported yet"
                          if got is None else
                          f"level set: roll {got['roll']}deg, "
@@ -293,6 +294,7 @@ def build(page, go=None, on_change=None):
 
     def _unzero_sensors(_e=None):
         sensors.unzero()
+        page.run_task(_save)
         STATE["note"] = "back to the phone's own angles"
         _rerender(page)
 

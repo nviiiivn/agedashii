@@ -501,7 +501,8 @@ class Flourishes(_Case):
 
     def test_the_moods_are_the_agreed_six(self):
         self.assertEqual(vi.FLOURISH_MOODS,
-                         ("start", "arrival", "angry", "urgent", "scold", "sorry"))
+                         ("start", "arrival", "angry", "urgent", "scold", "sorry",
+                          "ui"))
 
     def test_sorry_is_a_mood(self):
         result = vi.import_files([_write(self.src, "flourish-sorry-my-bad.mp3")])
@@ -774,7 +775,7 @@ class TheTheatreCard(_Case):
     def test_every_mood_and_the_cough_in_ride_order(self):
         order = [mood for mood, *_rest in vi.theatre()]
         self.assertEqual(order, ["start", "urgent", "angry", "scold", "sorry",
-                                 "arrival", "cough"])
+                                 "arrival", "ui", "cough"])
         self.assertEqual(sorted(order[:-1]), sorted(vi.FLOURISH_MOODS))
 
     def test_how_often_is_the_rides_own_rate(self):
@@ -845,3 +846,108 @@ class TheTheatreCard(_Case):
         vi.import_files([_write(self.src, "flourish-angry-hasta-la-vista.mp3")])
         refresh()
         self.assertIn("hasta la vista", _texts(card))
+
+
+class WildTakesAndCounts(_Case):
+    """minion 5's pool: wild-<slot>-<slug> beside a line, flourish-ui-*, and
+    number-/hours-/seconds-<n>. All extras: never missing, never unknown."""
+
+    def test_wild_takes_by_slot_hers_winning(self):
+        self.bundle("wild-arrive-choppa.mp3", "wild-arrive-game-over.mp3",
+                    "wild-offroute-big-mistake.mp3")
+        vi.import_files([_write(self.src, "wild-arrive-choppa.mp3", b"hers")])
+        got = vi.wilds("arrive")
+        self.assertEqual(sorted(got), ["wild-arrive-choppa", "wild-arrive-game-over"])
+        self.assertTrue(got["wild-arrive-choppa"].startswith(vi.voice_dir()))
+        self.assertEqual(list(vi.wilds("offroute")), ["wild-offroute-big-mistake"])
+        self.assertEqual(vi.wilds("speeding"), {})
+
+    def test_a_slot_with_a_dash_is_read_whole(self):
+        self.bundle("wild-slight-left-lean.mp3")
+        self.assertEqual(list(vi.wilds("slight-left")), ["wild-slight-left-lean"])
+
+    def test_bad_wild_names_are_left_out(self):
+        bad = ["wild-dist-100ft-x.mp3", "wild-arrive-.mp3", "wild-nowhere-x.mp3",
+               "wild-arrive.mp3"]
+        result = vi.import_files([_write(self.src, n) for n in bad])
+        self.assertEqual(result["imported"], [])
+
+    def test_ui_is_a_mood(self):
+        self.bundle("flourish-ui-ok.mp3", "flourish-ui-what-do-you-want.mp3")
+        self.assertEqual(list(vi.flourishes("ui")),
+                         ["flourish-ui-ok", "flourish-ui-what-do-you-want"])
+
+    def test_counts_by_number(self):
+        self.bundle("number-1.mp3", "number-10.mp3", "number-2.mp3",
+                    "hours-1.mp3", "seconds-1.mp3")
+        self.assertEqual(list(vi.counts("number")), [1, 2, 10])
+        self.assertEqual(list(vi.counts("hours")), [1])
+        self.assertEqual(list(vi.counts("seconds")), [1])
+
+    def test_bad_counts_are_left_out(self):
+        bad = ["number-0.mp3", "number-01.mp3", "number-x.mp3", "minutes-2.mp3"]
+        result = vi.import_files([_write(self.src, n) for n in bad])
+        self.assertEqual(result["imported"], [])
+
+    def test_none_of_them_is_missing_or_unknown(self):
+        vi.import_files([_write(self.src, n) for n in (
+            "wild-start-come-with-me.mp3", "number-3.mp3",
+            "flourish-ui-correct.mp3")])
+        st = vi.status()
+        self.assertEqual(st["unknown"], [])
+        self.assertEqual(st["wilds"], ["wild-start-come-with-me"])
+        self.assertEqual(st["counts"], ["number-3"])
+        self.assertNotIn("wild-start-come-with-me", st["present"])
+        self.assertFalse([n for n in st["missing"] if n not in vi.NAMES])
+
+
+class TheCardShowsHisOwnLines(_Case):
+    """Wild takes, grouped PER SLOT: they replace the slot's line rather than
+    follow it as the moods do."""
+
+    def setUp(self):
+        super().setUp()
+        from agedashii_navi import prefs
+        prefs.reset()
+
+    def test_grouped_per_slot_with_the_rule_on_the_card(self):
+        self.bundle("wild-arrive-choppa.mp3", "wild-arrive-game-over.mp3",
+                    "wild-offroute-big-mistake.mp3")
+        card, _refresh = vi.theatre_card(StubPage(), play=lambda items: None)
+        text = _texts(card)
+        self.assertIn("His own lines", text)
+        self.assertIn("INSTEAD of the plain line", text)
+        self.assertIn("Arriving", text)
+        self.assertIn("only as you arrive", text)
+        self.assertIn("Off route", text)
+        for words in ("choppa", "game over", "big mistake"):
+            self.assertIn(words, text)
+        self.assertNotIn("wild arrive", text)
+
+    def test_only_slots_that_have_takes(self):
+        self.bundle("wild-start-come-with-me.mp3")
+        self.assertEqual([g[0] for g in vi.wild_groups()], ["start"])
+
+    def test_her_own_line_for_the_slot_wins_and_the_card_says_so(self):
+        self.bundle("wild-speeding-cop.mp3")
+        vi.import_files([_write(self.src, "speeding.mp3", b"hers")])
+        (_slot, _title, note, _takes), = vi.wild_groups()
+        self.assertIn("your own speeding line wins", note)
+
+    def test_a_built_in_turn_take_is_said_not_to_play(self):
+        self.bundle("wild-turn-left-hard.mp3")
+        (_slot, _title, note, _takes), = vi.wild_groups()
+        self.assertIn("only the ones you imported play", note)
+
+    def test_a_turn_take_she_imported_plays_with_no_warning(self):
+        vi.import_files([_write(self.src,
+                                "wild-turn-left-go-left-if-you-want-to-live.mp3")])
+        (_slot, _title, note, _takes), = vi.wild_groups()
+        self.assertEqual(note, "")
+
+    def test_a_wild_tile_plays_its_clip(self):
+        (path,) = self.bundle("wild-rerouting-hold-on.mp3")
+        played = []
+        card, _refresh = vi.theatre_card(StubPage(), play=played.append)
+        _tap(_button(card, "hold on"))
+        self.assertEqual(played, [[("flourish", path, None)]])

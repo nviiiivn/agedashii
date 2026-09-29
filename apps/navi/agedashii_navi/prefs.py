@@ -139,6 +139,10 @@ _FLAGS = {
     # a switch so she can turn the theatre off for a long ride and keep the
     # voice.
     "flourishes": True,
+    # His lines on TAPS in the app (character.tap) - her "WANT 2" on the
+    # search button. Its own switch, so the route theatre and the button
+    # theatre can be turned off separately.
+    "flourish_taps": True,
     # Whether the surfaces that are NOT the map follow the dashboard's own
     # alola.lol palette. On by default, because they are read at a stop with the
     # phone in a hand, where looking like the rest of the family is worth more
@@ -213,6 +217,7 @@ def defaults():
     out.update(_FLAGS)
     out.update({k: v[0] for k, v in _INTS.items()})
     out["last_dest"] = ""
+    out["level"] = ""
     return out
 
 
@@ -388,6 +393,11 @@ def flourishes():
     return bool(S.get("flourishes", True))
 
 
+def flourish_taps():
+    """Whether taps in the app (search, picking a place) get a line of his."""
+    return bool(S.get("flourish_taps", True))
+
+
 def alola_chrome():
     return bool(S.get("alola_chrome", True))
 
@@ -416,6 +426,35 @@ def last_dest():
 def set_last_dest(lat, lon, name=""):
     S["last_dest"] = f"{float(lat):.6f},{float(lon):.6f},{name or ''}"
     return S["last_dest"]
+
+
+def level():
+    """(roll, pitch) her "Set level here" captured, or None.
+
+    Stored, not just held: it lived in memory, so every restart lost the
+    mount calibration and the horizon was wrong until she noticed (minion 1's
+    find). She sets it once for the bike's mount; it must be there next week.
+    """
+    return _parse_level(S.get("level", ""))
+
+
+def set_level(roll, pitch):
+    S["level"] = f"{float(roll):.2f},{float(pitch):.2f}"
+    return S["level"]
+
+
+def clear_level():
+    S["level"] = ""
+
+
+def _parse_level(raw):
+    if not isinstance(raw, str) or raw.count(",") != 1:
+        return None
+    try:
+        roll, pitch = (float(x) for x in raw.split(","))
+    except ValueError:
+        return None
+    return roll, pitch
 
 
 def _parse_dest(raw):
@@ -480,6 +519,9 @@ def set_value(name, value):
     if name == "last_dest":
         S["last_dest"] = value if isinstance(value, str) else ""
         return S["last_dest"]
+    if name == "level":
+        S["level"] = value if _parse_level(value) else ""
+        return S["level"]
     return None
 
 
@@ -495,6 +537,7 @@ def save_payload():
     for name in _INTS:
         out[KEY + name] = str(S.get(name, _INTS[name][0]))
     out[KEY + "last_dest"] = str(S.get("last_dest") or "")
+    out[KEY + "level"] = str(S.get("level") or "")
     return out
 
 

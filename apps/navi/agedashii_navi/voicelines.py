@@ -299,37 +299,52 @@ FLOURISH_RATE = {"urgent": 0.25, "arrival": 1.0, "start": 1.0,
                  "angry": 0.5, "scold": 0.5,
                  # After the app has SAID what failed (a refused re-route) -
                  # never instead of the words, and not at all with no voice.
-                 "sorry": 1.0}
+                 "sorry": 1.0,
+                 # A tap in the app - opening search, picking a destination.
+                 # Rarer: theatre on a button pressed ten times a day wears
+                 # thin fast. Minion 2's Kotlin number, kept identical.
+                 "ui": 0.15}
 #: Her cough, "now and then": dropped into the join between a prompt's
 #: distance and its turn ("in a quarter mile *cough* turn left"). Rarer than
 #: any flourish, far/near only, never twice running.
 COUGH_RATE = 0.08
 
 
-def flourish_mood(names, parts):
+#: At most one angry line a minute. A long wrong-turn burst rolled angry on
+#: every off-route spell - three in 25 s on the emulator (minion 2). While it is
+#: barred, the next mood in line may still fire (AGEDASHII's ruling).
+ANGRY_EVERY_S = 60.0
+
+
+def flourish_mood(names, parts, angry_ok=True):
     """Which pool this moment draws from, or None for no flourish.
 
-    THE INSTRUCTION IS NEVER DELAYED: on the "now" band - six seconds from the
-    corner - nothing is added, except to arriving, where nothing follows.
-    Arrival is ONLY that "now" prompt; the far and near ones get none.
-    Otherwise by priority: angry (off route, re-routing) > scold (speeding) >
-    start > urgent (an ordinary turn prompt).
+    Always LAST, after the whole instruction, so it never delays one. By band,
+    per AGEDASHII's rulings (minion 2's Kotlin is identical):
+    - "now": urgent for a turn ("DO IT NOW" - she asked for it by name), or
+      arrival for the arrive maneuver, where nothing follows. Nothing else.
+    - "near": angry (off route, re-routing) > scold (speeding) > start >
+      urgent.
+    - "far": the same, but NEVER urgent - "In half a mile... NOW!" could send
+      her in early.
+    The arrive maneuver's far and near prompts get no urgent or arrival line.
+    `angry_ok` False (inside ANGRY_EVERY_S) passes over angry to the next.
     """
     parts = parts or {}
     arriving = parts.get("kind") == "arrive" or (
         "kind" not in parts and maneuver_name(parts.get("instruction")) == "arrive")
     band = parts.get("band")
-    if arriving and band == "now":
-        return "arrival"
     if band == "now":
-        return None
-    if "offroute" in names or "rerouting" in names:
+        if arriving:
+            return "arrival"
+        return "urgent" if parts else None
+    if ("offroute" in names or "rerouting" in names) and angry_ok:
         return "angry"
     if "speeding" in names:
         return "scold"
     if "start" in names:
         return "start"
-    if parts and not arriving:
+    if parts and not arriving and band == "near":
         return "urgent"
     return None
 
@@ -346,8 +361,13 @@ class Flourish:
         self.last = None
         self.maneuver = None
         self.coughed = False
+        self.angry_at = None
 
-    def pick(self, mood, pool, maneuver=None):
+    def angry_ok(self, now):
+        """Whether an angry line may play: none within ANGRY_EVERY_S."""
+        return self.angry_at is None or now - self.angry_at >= ANGRY_EVERY_S
+
+    def pick(self, mood, pool, maneuver=None, now=None):
         """(name, path) from `pool` ({name: path}) for `mood`, or None."""
         if not pool or mood not in FLOURISH_RATE:
             return None
@@ -362,6 +382,8 @@ class Flourish:
         self.last = name
         if maneuver is not None:
             self.maneuver = maneuver
+        if mood == "angry" and now is not None:
+            self.angry_at = now
         return name, pool[name]
 
     def cough(self, items, pool, band=None):
@@ -381,6 +403,60 @@ class Flourish:
         path = pool[self.rng.choice(sorted(pool))]
         self.coughed = True
         return [items[0], ("flourish", path, None)] + list(items[1:])
+
+
+#: Slots whose clip carries a DIRECTION. Their wild lines come ONLY from files
+#: SHE imported and named for the slot - never the built-in pool, because that
+#: would be us guessing left from right (AGEDASHII's ruling; minion 2's Kotlin
+#: is identical, and minion 5 ships no wild direction takes).
+DIRECTION_SLOTS = frozenset({"turn-left", "turn-right", "slight-left", "slight-right",
+                             "sharp-left", "sharp-right", "uturn"})
+
+
+class Wild:
+    """Which recording says a slot - hers, his wild line, or the Waze one.
+
+    Hers: "id rather him scream things that make kind of sense than the normal
+    waze arnold talking. only use that shit as fall back". So per slot: HER
+    imported clip; else one of the wild-<slot>-* lines at random, never the
+    same one twice running; else the built-in (Waze) clip; else None, the
+    phone's voice. With one wild line for a slot it alternates with the Waze
+    one rather than repeating. "Character lines" off skips the wild step.
+
+    ONLY A FILE NAMED FOR THIS SLOT is ever used for it (wild-<slot>-...),
+    and for a DIRECTION slot only one SHE imported (AGEDASHII's ruling): we
+    never pick a direction line from the built-in pool - that would be us
+    guessing whether a clip is unmistakable about left or right - but a file
+    she names wild-turn-left-go-left-if-you-want-to-live is her deliberate
+    act, and "GO LEFT IF YOU WANT TO LIVE" were her first words on this
+    feature.
+    """
+
+    def __init__(self, rng=None):
+        self.rng = rng or random.Random()
+        self.last = {}
+
+    def resolve(self, name, *, source, clip_path, wilds, character=True, band=None):
+        """The file to play for `name`, or None. `source`, `clip_path` and
+        `wilds` are voice_import's clip_source, clip_path and wilds.
+
+        The arrive slot's wild lines wait for ARRIVING - its "now" prompt; its
+        far and near prompts say the plain arrive line (AGEDASHII's ruling).
+        """
+        if (source(name) == "yours" or not character
+                or (name == "arrive" and band != "now")):
+            return clip_path(name)
+        mine = f"wild-{name}-"
+        pool = {n: path for n, path in (wilds(name) or {}).items()
+                if path and n.startswith(mine)
+                and (name not in DIRECTION_SLOTS or source(n) == "yours")}
+        fresh = sorted(n for n in pool if n != self.last.get(name))
+        if not fresh:
+            self.last[name] = None                # the Waze line this time
+            return clip_path(name)
+        pick = self.rng.choice(fresh)
+        self.last[name] = pick
+        return pool[pick]
 
 
 def refusal(reason):

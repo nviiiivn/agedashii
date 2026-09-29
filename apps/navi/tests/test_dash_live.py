@@ -92,5 +92,43 @@ class AnEmptyGaugeSaysWhy(unittest.TestCase):
         self.assertIn("g · while riding", self.words(gauges.g_ball()))
 
 
+class TheLevelSurvivesARestart(unittest.TestCase):
+    """minion 1's find: "Set level here" lived in memory only, so every restart
+    lost her mount calibration and the horizon was wrong until she noticed."""
+
+    def setUp(self):
+        prefs.reset()
+        sensors.reset()
+        self.addCleanup(prefs.reset)
+        self.addCleanup(sensors.reset)
+
+    def restart(self):
+        stored = prefs.save_payload()                 # what goes to storage
+        sensors.reset()
+        prefs.reset()
+        for key, raw in stored.items():
+            prefs.apply_stored(key[len(prefs.KEY):], raw)
+
+    def test_set_level_is_stored_and_comes_back(self):
+        sensors.STATE.update(roll_deg=6.5, pitch_deg=-3.0)
+        sensors.zero()
+        self.restart()
+        self.assertEqual(sensors.zeroed(), {"set": True, "roll": 6.5, "pitch": -3.0})
+        # A real accelerometer reading carries g_total with the angles.
+        sensors.STATE.update(roll_deg=6.5, pitch_deg=-3.0, g_total=1.0)
+        self.assertEqual(sensors.latest().get("tilt_deg"), 0.0)
+
+    def test_clear_is_stored_too(self):
+        sensors.STATE.update(roll_deg=6.5, pitch_deg=-3.0)
+        sensors.zero()
+        sensors.unzero()
+        self.restart()
+        self.assertFalse(sensors.zeroed()["set"])
+
+    def test_a_bad_stored_value_is_no_level_not_a_crash(self):
+        prefs.apply_stored("level", "garbage")
+        self.assertFalse(sensors.zeroed()["set"])
+
+
 if __name__ == "__main__":
     unittest.main()

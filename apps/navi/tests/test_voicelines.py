@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -383,8 +384,14 @@ class CharacterLines(unittest.TestCase):
 
     def test_the_mood_follows_the_moment(self):
         mood = voicelines.flourish_mood
-        self.assertEqual(mood([], fired("turn left")), "urgent")
-        self.assertIsNone(mood([], fired("turn left", band="now")))  # six seconds out
+        self.assertEqual(mood([], fired("turn left")), "urgent")             # near
+        # AGEDASHII's ruling (minion 2's Kotlin matches): urgent on NEAR and
+        # NOW, never FAR - "In half a mile... NOW!" could send her in early.
+        self.assertIsNone(mood([], fired("turn left", band="far")))
+        self.assertEqual(mood([], fired("turn left", band="now")), "urgent")
+        # "now" takes urgent or arrival and nothing else.
+        self.assertEqual(mood(["speeding"], fired("turn left", band="now")), "urgent")
+        self.assertEqual(mood(["speeding"], fired("turn left", band="far")), "scold")
         self.assertEqual(mood([], dict(fired("arrive at your destination", band="now"),
                                       kind="arrive")), "arrival")
         self.assertEqual(mood(["offroute", "rerouting"], None), "angry")
@@ -398,6 +405,90 @@ class CharacterLines(unittest.TestCase):
         self.assertEqual(mood(["offroute"], dict(fired("arrive", band="now"),
                                                  kind="arrive")), "arrival")
         self.assertIsNone(mood([], None))
+
+    def test_one_angry_line_a_minute_the_next_mood_may_fire(self):
+        mood = voicelines.flourish_mood
+        self.assertEqual(mood(["offroute", "speeding"], None), "angry")
+        self.assertEqual(mood(["offroute", "speeding"], None, angry_ok=False), "scold")
+        self.assertIsNone(mood(["offroute"], None, angry_ok=False))
+        f = voicelines.Flourish(Always())
+        self.assertTrue(f.angry_ok(now=0))
+        f.pick("angry", {"flourish-angry-big-mistake": "/v/m.mp3",
+                         "flourish-angry-bastard": "/v/b.mp3"}, now=0)
+        self.assertFalse(f.angry_ok(now=30))
+        self.assertTrue(f.angry_ok(now=61))
+
+
+class HisWildLinesLead(unittest.TestCase):
+    """Hers: "id rather him scream things that make kind of sense than the
+    normal waze arnold talking. only use that shit as fall back". Per slot: her
+    import, else a wild line, else the Waze built-in, else the phone."""
+
+    WILD = {"wild-arrive-choppa": "/v/choppa.mp3", "wild-arrive-game-over": "/v/over.mp3"}
+
+    def resolve(self, wild, name, *, source=None, wilds=None, character=True, band="now"):
+        return wild.resolve(
+            name, source=source or (lambda n: "built in"),
+            clip_path=lambda n: f"/v/{n}.mp3",
+            wilds=wilds if wilds is not None else (lambda n: self.WILD if n == "arrive" else {}),
+            character=character, band=band)
+
+    def test_a_wild_line_leads_the_waze_one_falls_back(self):
+        w = voicelines.Wild(Always())
+        self.assertEqual(self.resolve(w, "arrive"), "/v/choppa.mp3")
+        self.assertEqual(self.resolve(w, "offroute"), "/v/offroute.mp3")   # no wild: Waze
+
+    def test_never_the_same_one_twice_running(self):
+        w = voicelines.Wild(Always())
+        said = [self.resolve(w, "arrive") for _ in range(3)]
+        self.assertNotEqual(said[0], said[1])
+        self.assertNotEqual(said[1], said[2])
+        lone = voicelines.Wild(Always())
+        one = lambda n: {"wild-start-come-with-me": "/v/come.mp3"} if n == "start" else {}
+        said = [self.resolve(lone, "start", wilds=one) for _ in range(3)]
+        self.assertEqual(said, ["/v/come.mp3", "/v/start.mp3", "/v/come.mp3"])
+
+    def test_her_own_recording_always_wins(self):
+        w = voicelines.Wild(Always())
+        self.assertEqual(self.resolve(w, "arrive", source=lambda n: "yours"), "/v/arrive.mp3")
+
+    def test_character_off_is_the_plain_voice(self):
+        w = voicelines.Wild(Always())
+        self.assertEqual(self.resolve(w, "arrive", character=False), "/v/arrive.mp3")
+
+    def test_the_arrive_wild_lines_wait_for_arriving(self):
+        # AGEDASHII: on arrive's far and near prompts, the plain arrive line;
+        # the wild one ("GET TO THE CHOPPA") is for the moment she arrives.
+        w = voicelines.Wild(Always())
+        self.assertEqual(self.resolve(w, "arrive", band="near"), "/v/arrive.mp3")
+        self.assertEqual(self.resolve(w, "arrive", band="now"), "/v/choppa.mp3")
+
+    def test_a_direction_wild_line_plays_only_when_its_name_says_so(self):
+        # AGEDASHII's ruling: WE never pick a direction line from a pool - that
+        # would be guessing whether a clip is unmistakable about left or right.
+        # A file SHE names wild-turn-left-... is her deliberate act ("GO LEFT
+        # IF YOU WANT TO LIVE" were her first words on this feature).
+        w = voicelines.Wild(Always())
+        live_ = "wild-turn-left-go-left-if-you-want-to-live"
+        hers = {live_: "/v/live.mp3"}
+        mine = lambda n: "yours" if n == live_ else "built in"
+        self.assertEqual(self.resolve(w, "turn-left", band="near", source=mine,
+                                      wilds=lambda n: hers if n == "turn-left" else {}),
+                         "/v/live.mp3")
+        # The same file shipped BUILT IN is not used: never ours to pick.
+        self.assertEqual(self.resolve(voicelines.Wild(Always()), "turn-left", band="near",
+                                      wilds=lambda n: hers if n == "turn-left" else {}),
+                         "/v/turn-left.mp3")
+        # A file not named for THIS slot is never used for it, whatever hands it
+        # over - checked on a slot with no direction gate, where only the name
+        # can stop it.
+        self.assertEqual(self.resolve(voicelines.Wild(Always()), "offroute",
+                                      wilds=lambda n: {"wild-arrive-choppa": "/v/c.mp3"}),
+                         "/v/offroute.mp3")
+        stray = {"wild-turn-right-x": "/v/right.mp3", "wild-arrive-choppa": "/v/c.mp3"}
+        for turn in ("turn-left", "slight-left", "sharp-left", "uturn"):
+            self.assertEqual(self.resolve(w, turn, band="near", wilds=lambda n: stray),
+                             f"/v/{turn}.mp3", turn)
 
 
 class _Clean(unittest.TestCase):
@@ -615,8 +706,10 @@ class TheRidePage(_Clean):
             setattr(voice_import, attr, fake)
             self.addCleanup(lambda a=attr, r=real: setattr(voice_import, a, r)
                             if r else delattr(voice_import, a))
-        self.ride._M["flourish"] = voicelines.Flourish(Always())   # noqa: SLF001
-        self.addCleanup(self.ride._M.pop, "flourish", None)        # noqa: SLF001
+        from agedashii_navi import character
+        patcher = mock.patch.object(character, "FLOURISH", voicelines.Flourish(Always()))
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_a_character_line_goes_after_the_whole_instruction(self):
         turn, far = self.add("turn-left"), self.add("dist-400ft")
@@ -638,12 +731,12 @@ class TheRidePage(_Clean):
                                         ("flourish", "/v/cough.mp3", None),
                                         ("clip", turn, "turn left")]])
 
-    def test_no_character_line_six_seconds_from_the_corner(self):
+    def test_no_urgent_line_on_the_far_prompt(self):
         self.add("turn-left")
         self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3"}})
         prefs.set_value("voice", True)
-        self.announce({"ok": True, "off_route": False}, "turn left onto Grand Ave",
-                      fired("turn left", band="now"))
+        self.announce({"ok": True, "off_route": False}, "In 0.5 mi, turn left",
+                      fired("turn left", band="far", metres=800.0))
         self.assertNotIn("/v/now.mp3", repr(self.played))
 
     def test_the_switch_turns_the_theatre_off_and_keeps_the_voice(self):
@@ -665,6 +758,34 @@ class TheRidePage(_Clean):
         self.assertEqual(self.played, [[("tts", "Off route.", None),
                                         ("tts", "Re-routing.", None),
                                         ("flourish", "/v/mistake.mp3", None)]])
+
+    def test_arriving_plays_one_of_his_wild_lines(self):
+        from agedashii_navi import character
+        self.built_in("arrive")
+        choppa = self.built_in("wild-arrive-choppa")
+        wild = mock.patch.object(character, "WILD", voicelines.Wild(Always()))
+        wild.start()
+        self.addCleanup(wild.stop)
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False}, "arrive at your destination",
+                      dict(fired("arrive at your destination", band="now"), kind="arrive"))
+        self.assertEqual(self.played[0][0], ("clip", choppa, "arrive at your destination"))
+
+    def test_a_tap_gets_a_line_of_his_unless_a_prompt_is_playing(self):
+        from agedashii_navi import character
+        # Two lines, so "never the same twice running" cannot be what stops
+        # the second and third taps below - only the guard under test can.
+        self.flourishes({"ui": {"flourish-ui-what-do-you-want": "/v/want.mp3",
+                                "flourish-ui-ok": "/v/ok.mp3"}})
+        patcher = mock.patch.object(character, "FLOURISH", voicelines.Flourish(Always()))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        prefs.set_value("voice", True)
+        self.assertEqual(character.tap(), [("flourish", "/v/ok.mp3", None)])
+        with mock.patch.object(speech, "voice_active", return_value=True):
+            self.assertEqual(character.tap(), [])           # never over a prompt
+        prefs.set_value("flourish_taps", False)
+        self.assertEqual(character.tap(), [])
 
     def test_off_route_and_rerouting_go_as_one_playlist(self):
         prefs.set_value("voice", True)

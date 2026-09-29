@@ -18,7 +18,7 @@ is a page that has finished its purpose.
 """
 import flet as ft
 
-from .. import guidance, live, places, prefs, ui
+from .. import character, guidance, live, places, prefs, ui
 from ..theme import PAL
 
 #: What the box is showing, kept across a repaint so a theme change or a
@@ -91,6 +91,9 @@ def build(page, go=None):
         """Aim at a row and route to it, off the UI thread."""
         def handler(_e=None):
             live.set_destination(row["lat"], row["lon"], row.get("name", ""))
+            # His line for the pick, if the taps switch is on (character.tap
+            # checks it, and stays quiet over a prompt).
+            character.tap()
             note.value = _S["note"] = (
                 f"routing to {row.get('name') or 'there'}…")
             _update(page)

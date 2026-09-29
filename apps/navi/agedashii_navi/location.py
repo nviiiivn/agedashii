@@ -20,9 +20,12 @@ fixes while asleep; these flat keys got 58-59 of 60, isForeground=true.
 So `android_config` sends the flat keys itself. When Flet fixes the nesting
 this subclass still works - the Dart side reads the flat keys either way.
 
-The service runs while the stream does (AGEDASHII's (a)): its ongoing
-notification is how she sees that her position is being taken, and stops it.
-Keying it to "recording or a route active", as the Kotlin app does, is next.
+The service runs while a ride RECORDS or a route is ACTIVE (`wants_service`),
+the state the Kotlin app keys its RideService on - not "the Ride page is
+open", because she opens that page to look at the map at a stop. Its ongoing
+notification is how she sees that her position is being taken. flet_geolocator
+restarts the stream on every update with the configuration it then has, so
+switching the service on or off is a configuration change (ride._sync_location).
 """
 from typing import Optional
 
@@ -48,7 +51,52 @@ class _FlatForeground(fgeo.GeolocatorAndroidConfiguration):
     foreground_notification_set_ongoing: bool = False
 
 
-def android_config(hz=1):
+#: Whether this launch has asked for the notification permission. Once is
+#: enough: a refusal is hers, and asking on every route would be nagging.
+_ASKED = {}
+
+
+async def ask_notifications(page):
+    """Ask for POST_NOTIFICATIONS, once per launch, on Android only.
+
+    Android 13+ runs the location service without it but HIDES the ongoing
+    notification - GPS on with nothing on screen saying so, the one failure
+    this has to avoid. Called when she starts a route or a ride, so the request
+    arrives with its reason, never at launch. Returns the status, or None when
+    it was not asked. Never raises: a permission it cannot ask for is printed
+    and the ride goes on.
+    """
+    if _ASKED.get("done"):
+        return None
+    if getattr(page, "web", False) or getattr(page, "platform", None) != ft.PagePlatform.ANDROID:
+        return None
+    _ASKED["done"] = True
+    try:
+        import flet_permission_handler as fph
+        handler = _ASKED.get("handler")
+        if handler is None:
+            # A Flet service lives exactly as long as something holds it.
+            handler = _ASKED["handler"] = fph.PermissionHandler()
+            if isinstance(getattr(page, "services", None), list):
+                page.services.append(handler)
+        status = await handler.get_status(fph.Permission.NOTIFICATION)
+        if status == fph.PermissionStatus.GRANTED:
+            return status
+        return await handler.request(fph.Permission.NOTIFICATION)
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[navi] location: could not ask for notifications: "
+              f"{type(exc).__name__}: {exc}", flush=True)
+        return None
+
+
+def wants_service():
+    """Whether the screen-off location service should run: a ride recording,
+    or a route up. Not while she only looks at the map."""
+    from . import live
+    return bool(live.recording() or live.LIVE.get("dest") is not None)
+
+
+def android_config(hz=1, foreground=True):
     """The stream's settings: HIGH accuracy, her sample rate, the service on.
 
     HIGH is the same satellite fix without the framework nagging for network
@@ -57,10 +105,13 @@ def android_config(hz=1):
     is parked (a stationary GPS wanders, and every wander was a message, a log
     line and a repaint); the interval follows her rate, not the 5 s default.
     """
+    common = dict(accuracy=fgeo.GeolocatorPositionAccuracy.HIGH,
+                  distance_filter=3,
+                  interval_duration=ft.Duration(milliseconds=int(1000 / max(1, hz))))
+    if not foreground:
+        return _FlatForeground(**common)        # no keys: no service, no notification
     return _FlatForeground(
-        accuracy=fgeo.GeolocatorPositionAccuracy.HIGH,
-        distance_filter=3,
-        interval_duration=ft.Duration(milliseconds=int(1000 / max(1, hz))),
+        **common,
         foreground_notification_title=TITLE,
         foreground_notification_text=TEXT,
         foreground_notification_channel_name=CHANNEL,

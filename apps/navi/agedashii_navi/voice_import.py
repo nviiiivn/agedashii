@@ -92,11 +92,25 @@ _NAMED_FEET = {"dist-quarter": 1320.0, "dist-half": 2640.0}
 #: them: flourish-<mood>-<slug>. The moods are agreed with minion 5 and the
 #: Kotlin app, which reads the same files; an unknown mood is left out and
 #: named, never guessed. Flourishes are extras - never "missing".
-FLOURISH_MOODS = ("start", "arrival", "angry", "urgent", "scold", "sorry")
+#: "ui" is the seventh: lines for taps in the app (opening search, picking a
+#: destination) rather than moments on the road.
+FLOURISH_MOODS = ("start", "arrival", "angry", "urgent", "scold", "sorry", "ui")
 _FLOURISH = re.compile(r"^flourish-(" + "|".join(FLOURISH_MOODS) + r")-([a-z0-9-]+)$")
 #: Sounds that drop INTO a prompt rather than beside it - a cough between the
 #: distance and the turn: interject-<slug>. Also extras, never "missing".
 _INTERJECT = re.compile(r"^interject-[a-z0-9-]+$")
+#: His own take on one of the lines: wild-<slot>-<slug>, where the slot is a
+#: line name that is not a distance - wild-arrive-hasta-la-vista beside
+#: arrive. Longest slot first, so "wild-slight-left-x" is never read as a
+#: slot "slight". Extras, never "missing".
+WILD_SLOTS = tuple(n for n in NAMES if not n.startswith("dist-"))
+_WILD = re.compile(r"^wild-(" + "|".join(sorted(WILD_SLOTS, key=len, reverse=True))
+                   + r")-([a-z0-9-]+)$")
+#: Counted things said in his voice: number-<n>, hours-<n>, seconds-<n>, n a
+#: whole number from 1 with no leading zero. For the roundabout exit and the
+#: like. Extras, never "missing".
+COUNT_KINDS = ("number", "hours", "seconds")
+_COUNT = re.compile(r"^(" + "|".join(COUNT_KINDS) + r")-([1-9][0-9]*)$")
 
 
 def _is_flourish(name):
@@ -105,6 +119,20 @@ def _is_flourish(name):
 
 def _is_interjection(name):
     return bool(_INTERJECT.match(name or ""))
+
+
+def _is_wild(name):
+    return bool(_WILD.match(name or ""))
+
+
+def _is_count(name):
+    return bool(_COUNT.match(name or ""))
+
+
+def _is_extra(name):
+    """A clip that plays beside or inside the lines - never "missing"."""
+    return (_is_flourish(name) or _is_interjection(name) or _is_wild(name)
+            or _is_count(name))
 
 
 def distance_feet(name):
@@ -120,7 +148,7 @@ def distance_feet(name):
 
 def _canonical(name):
     """The stored spelling of a prompt name, or None if it names nothing."""
-    if name in _NAMES or _is_flourish(name) or _is_interjection(name):
+    if name in _NAMES or _is_extra(name):
         return name
     m = _DISTANCE.match(name)
     if m and float(m.group(1)) > 0:
@@ -444,6 +472,31 @@ def flourishes(mood, directory=None, builtin=None):
     return {n: clip_path(n, directory, builtin) for n in names}
 
 
+def wilds(slot, directory=None, builtin=None):
+    """{name: path} of every wild-<slot>-* take - hers and the bundled ones,
+    hers winning per name, through the same lookup as clip_path."""
+    hers, _unknown = _found(directory or voice_dir())
+    bundled, _ = _found(builtin or builtin_dir())
+    prefix = f"wild-{slot}-"
+    names = sorted(n for n in set(hers) | set(bundled)
+                   if n.startswith(prefix) and _is_wild(n)
+                   and _WILD.match(n).group(1) == slot)
+    return {n: clip_path(n, directory, builtin) for n in names}
+
+
+def counts(kind="number", directory=None, builtin=None):
+    """{n: path} of every <kind>-<n> clip (kind: number, hours, seconds) -
+    hers and the bundled ones, hers winning per n, by the number."""
+    hers, _unknown = _found(directory or voice_dir())
+    bundled, _ = _found(builtin or builtin_dir())
+    got = {}
+    for name in set(hers) | set(bundled):
+        m = _COUNT.match(name)
+        if m and m.group(1) == kind:
+            got[int(m.group(2))] = clip_path(name, directory, builtin)
+    return dict(sorted(got.items()))
+
+
 def interjections(prefix="interject-cough", directory=None, builtin=None):
     """{name: path} of every interjection whose name starts with `prefix` -
     hers and the bundled ones, hers winning per name (clip_path's lookup)."""
@@ -470,13 +523,17 @@ def status(directory=None, builtin=None):
     have = set(found) | set(bundled)
     extras = sorted(n for n in have if _is_flourish(n))
     sounds = sorted(n for n in have if _is_interjection(n))
-    have -= set(extras) | set(sounds)
+    wild = sorted(n for n in have if _is_wild(n))
+    counted = sorted(n for n in have if _is_count(n))
+    have -= set(extras) | set(sounds) | set(wild) | set(counted)
     any_distance = any(distance_feet(n) for n in have)
     present = _in_order(have)
     return {
         "present": present,
         "flourishes": extras,
         "interjections": sounds,
+        "wilds": wild,
+        "counts": counted,
         "builtin": [n for n in present if n not in found],
         "missing": [n for n in NAMES if n not in have and n not in OPTIONAL
                     and not (any_distance and n in FIXED_DISTANCES)],
@@ -496,7 +553,7 @@ def _few(items, most=4):
 def status_text(directory=None, builtin=None):
     """One line: how much of her voice is in, and what is not."""
     st = status(directory, builtin)
-    extras = len(st["flourishes"])
+    extras = len(st["flourishes"]) + len(st["wilds"])
     if not st["present"] and not extras:
         line = "No recorded voice yet."
     else:
@@ -676,6 +733,7 @@ THEATRE = (
     ("scold", "Speeding", "going over the limit"),
     ("sorry", "Sorry", "after saying a re-route could not be made"),
     ("arrival", "Arriving", "the last prompt, at the destination"),
+    ("ui", "In the app", "tapping into search, or picking a destination"),
 )
 COUGH = ("Cough", "between the distance and the turn - \"in a quarter mile "
                   "*cough* turn left\"")
@@ -693,9 +751,10 @@ def how_often(rate):
 def words_of(name):
     """What a theatre clip says, from its file name.
 
-    flourish-angry-you-idiot -> "you idiot"; interject-cough-2 -> "cough 2".
+    flourish-angry-you-idiot -> "you idiot"; interject-cough-2 -> "cough 2";
+    wild-arrive-hasta-la-vista -> "hasta la vista".
     """
-    match = _FLOURISH.match(name)
+    match = _FLOURISH.match(name) or _WILD.match(name)
     rest = match.group(2) if match else name.removeprefix("interject-")
     return rest.replace("-", " ")
 
@@ -705,12 +764,49 @@ def theatre(directory=None, builtin=None):
     ride order, then the cough, empty groups included (the empty ones say
     what to name a clip so it lands there)."""
     from . import voicelines
-    groups = [(mood, title, when, how_often(voicelines.FLOURISH_RATE[mood]),
+    # A mood with no rate yet is one the app does not play yet: said, not
+    # guessed at.
+    groups = [(mood, title, when,
+               how_often(voicelines.FLOURISH_RATE[mood])
+               if mood in voicelines.FLOURISH_RATE else "not played yet",
                flourishes(mood, directory, builtin))
               for mood, title, when in THEATRE]
     groups.append(("cough", COUGH[0], COUGH[1],
                    how_often(voicelines.COUGH_RATE),
                    interjections("interject-cough", directory, builtin)))
+    return groups
+
+
+#: What each line slot is called on the card; any other is its name, spaced.
+SLOT_TITLES = {"arrive": "Arriving", "offroute": "Off route",
+               "rerouting": "Re-routing", "speeding": "Speeding",
+               "start": "Setting off", "continue": "Continue"}
+
+
+def wild_groups(directory=None, builtin=None):
+    """[(slot, title, note, {name: path})] - his own takes on a line, per
+    slot, only the slots that have any. `note` is the exception to "said
+    instead of the plain line", from voicelines.Wild's own rules: her own
+    recording of the slot wins; arrive's wait for arriving; a direction slot
+    plays only takes SHE imported, never a built-in one."""
+    from . import voicelines
+    groups = []
+    for slot in WILD_SLOTS:
+        takes = wilds(slot, directory, builtin)
+        if not takes:
+            continue
+        if clip_source(slot, directory, builtin) == "yours":
+            note = f"not played - your own {slot} line wins"
+        elif slot in voicelines.DIRECTION_SLOTS and any(
+                clip_source(n, directory, builtin) != "yours" for n in takes):
+            note = ("only the ones you imported play - a built-in one could "
+                    "get left and right wrong")
+        elif slot == "arrive":
+            note = "only as you arrive, not on the way"
+        else:
+            note = ""
+        groups.append((slot, SLOT_TITLES.get(slot, slot.replace("-", " ").capitalize()),
+                       note, takes))
     return groups
 
 
@@ -798,12 +894,32 @@ def theatre_card(page, directory=None, builtin=None, play=None):
             ft.Text(f"{when} · {often}", size=ui.SMALL, color=p["text2"]),
             body])
 
+    def wild_group(_slot, title, note, takes):
+        return ft.Column(spacing=6, tight=True, controls=[
+            ft.Row(spacing=8, controls=[
+                ft.Text(title, size=ui.MID, weight=ft.FontWeight.W_800,
+                        color=p["text"]),
+                ft.Text(f"{len(takes)}", size=ui.SMALL,
+                        weight=ft.FontWeight.W_700, color=p["text2"])]),
+            *([ft.Text(note, size=ui.SMALL, color=p["warn"])] if note else []),
+            ft.Row(wrap=True, spacing=8, run_spacing=8,
+                   controls=[tile(n, path) for n, path in takes.items()])])
+
     def refresh():
         lit["icon"] = None
         off.value = ("" if prefs.flourishes() else
                      "Character lines is off, so none of these play on a "
                      "ride - tap to hear them anyway.")
-        groups.controls = [group(*g) for g in theatre(directory, builtin)]
+        wild = wild_groups(directory, builtin)
+        groups.controls = [group(*g) for g in theatre(directory, builtin)] + [
+            ft.Divider(height=1, color=p["border"]),
+            ft.Text("His own lines", size=ui.MID, weight=ft.FontWeight.W_800,
+                    color=p["text"]),
+            ft.Text("Said INSTEAD of the plain line, one at random, never "
+                    "the same one twice running. Name a clip "
+                    "wild-<line>-<words>.mp3, like wild-arrive-choppa.mp3, "
+                    "to add one.", size=ui.SMALL, color=p["text2"]),
+            *[wild_group(*g) for g in wild]]
 
     refresh()
     card = ui.card(ft.Column(spacing=8, tight=True, controls=[

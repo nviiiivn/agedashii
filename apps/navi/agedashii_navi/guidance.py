@@ -68,6 +68,12 @@ CRAWL_BANDS_M = {"far": 250.0, "near": 90.0, "now": 25.0}
 #: 1/3, and crawl 90/250.
 REPEAT_FRACTION = 0.6
 
+#: A wider band is not spoken when the "now" point is less than this many
+#: seconds away at her speed: "now" is about to say it. Right after a turn the
+#: next one can come up just outside "now", and at 15 m/s "In 350 ft, turn
+#: left" then "Turn left" came 1 s apart (minion 1's rides, #4).
+NOW_SOON_S = 3.0
+
 #: Typical posted limits in California by OSM road class, in mph. NOT from the
 #: graph - the graph has no maxspeed - and labelled as typical everywhere it
 #: is shown. See the module docstring.
@@ -336,7 +342,11 @@ def spoken(instruction, street, metres, imperial=True, band="near"):
     # onto Broadway" - nonsense on screen, worse said aloud (fixed when the
     # prompts started being spoken, 2026-09-28).
     arriving = "arrive" in what.lower() or "destination" in what.lower()
-    where = f" onto {street}" if street and street not in what and not arriving else ""
+    # A whole sentence (Valhalla's words) takes nothing after its full stop:
+    # "Continue toward CA 24/Berkeley. onto Grove Shafter Freeway" (#9).
+    sentence = what.rstrip().endswith((".", "!", "?"))
+    where = (f" onto {street}" if street and street not in what
+             and not arriving and not sentence else "")
     if band == "now":
         return f"{what}{where}".strip()
     return f"In {distance_text(metres, imperial)}, {what}{where}".strip()
@@ -536,12 +546,22 @@ class Follower:
                 self._said.add((index, other))
                 if other == band:
                     break
+            # Short of "now", nothing when "now" is seconds away: it is about
+            # to say this, and two prompts a second apart are one too many.
+            now_at = points.get("now", 0.0)
+            if (band != "now" and speed_ms is not None and speed_ms > 0
+                    and (metres - now_at) / speed_ms < NOW_SOON_S):
+                return None
             # Short of "now", not again while it is still about as far as
             # when she last heard it: only her speed moved the bands.
             before = self._said_at.get(index)
             if band != "now" and before is not None and metres > before * REPEAT_FRACTION:
                 return None
             self._said_at[index] = metres
+            # A continue is said once, whichever band first comes due.
+            if getattr(man, "kind", None) == "continue":
+                for _s3, b in PROMPT_BANDS:
+                    self._said.add((index, b))
             # The parts as well as the sentence: her recorded lines replace the
             # MANEUVER and the DISTANCE, not our wording, so the voice layer
             # needs to know which turn this is rather than re-parse the text.

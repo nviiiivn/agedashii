@@ -662,9 +662,36 @@ class Prompts(unittest.TestCase):
         self.assertNotIn("In ", now)
 
     def test_a_prompt_well_nearer_than_the_last_still_speaks(self):
+        # 222 m at a light, then 111 m at 10 m/s: under 0.6 of the last, and
+        # "now" (60 m) is 5 s off, so "near" is a real new prompt.
         self.follower.update(self.points[16], speed_ms=0.0)
-        near = self.follower.update(self.points[18], speed_ms=15.0)["say"]
+        near = self.follower.update(self.points[18], speed_ms=10.0)["say"]
         self.assertIsNotNone(near, "a real closer prompt was swallowed")
+
+    def test_nothing_wider_when_now_is_seconds_away(self):
+        # minion 1's ride (#4): "In 350 ft, turn left" then "Turn left" 1 s
+        # apart. 111 m at 15 m/s is 1.4 s short of "now" (90 m).
+        self.assertIsNone(
+            self.follower.update(self.points[18], speed_ms=15.0)["say"])
+        now = self.follower.update(self.points[19], speed_ms=15.0)["say"]
+        self.assertIsNotNone(now)
+        self.assertNotIn("In ", now)
+
+    def test_a_continue_is_said_once(self):
+        self.route.maneuvers[1] = self.route.maneuvers[1]._replace(
+            instruction="continue onto Grand Ave", kind="continue")
+        follower = guidance.Follower(self.route, offroute_m=45)
+        said = [follower.update(p, speed_ms=15.0)["say"]
+                for p in self.points[:20]]
+        self.assertEqual(len([s for s in said if s]), 1, said)
+
+    def test_a_whole_sentence_takes_nothing_after_its_full_stop(self):
+        # Valhalla's words (#9): "Continue toward CA 24/Berkeley. onto Grove
+        # Shafter Freeway".
+        said = guidance.spoken("Continue toward CA 24/Berkeley.",
+                               "Grove Shafter Freeway", 300.0, True, "near")
+        self.assertNotIn("onto", said)
+        self.assertTrue(said.endswith("Berkeley."))
 
     def test_the_head_instruction_is_never_a_prompt(self):
         # routing.next_maneuver starts at maneuvers[1]; "head north" describes

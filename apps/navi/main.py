@@ -37,7 +37,8 @@ import flet as ft
 from agedashii_washi import config
 from agedashii_washi import prefs as wprefs
 
-from agedashii_navi import awake, boot, live, prefs, sensors, theme, ui
+from agedashii_navi import (awake, boot, character, live, prefs, sensors,
+                            theme, ui)
 from agedashii_navi.pages import diagnostics as diagnostics_page
 from agedashii_navi.pages import help as help_page
 from agedashii_navi.pages import log as log_page
@@ -52,6 +53,10 @@ BAR_PAGES = ["ride", "routes", "search", "log", "settings"]
 #: The drawer's rows. The diagnostics page is not one: it is the last door in
 #: Settings, and a drawer row for it would be one more thing to scan past.
 DRAWER_PAGES = ["ride", "routes", "search", "log", "settings", "help"]
+#: The surfaces that are a search, where opening one gets his line - her
+#: "WANT 2" on the search button. Only on arriving from elsewhere, never on a
+#: repaint of the one she is on.
+TAP_PAGES = ("routes", "search")
 #: Where Back goes from a surface that lives under another one. Anything not
 #: here, Back leaves the app, exactly as before.
 PARENT = {"diagnostics": "settings"}
@@ -259,6 +264,8 @@ async def main(page):
         if (key != "ride" and prefs.sensors_on_demand()
                 and not live.recording()):
             sensors.detach()
+        if key in TAP_PAGES and key != _HERE["key"]:
+            character.tap()
         render(key)
 
     def bottom_pick(e):

@@ -59,7 +59,7 @@ import flet as ft
 
 from agedashii_washi.routing import haversine_m
 
-from .. import (audio, bikes, daylight, gauges, gears, guidance, live, location,
+from .. import (audio, bikes, character, daylight, gauges, gears, guidance, live, location,
                 prefs, sensors, speech, telemetry, theme, tiles, ui, uploads,
                 voice_import, voicelines)
 from ..theme import BRD, PAD, PAL, RAD
@@ -114,18 +114,19 @@ def _announce(out, limit):
                         time.time())
     if not prefs.voice():
         return []
+    # Every clip through character.clip: her recording, else his wild line,
+    # else the Waze one, else the phone (voicelines.Wild).
+    band = (out.get("say_parts") or {}).get("band")
     situations = [item for name in names
-                  for item in voicelines.situation(name, voice_import.clip_path)]
+                  for item in voicelines.situation(name, character.clip)]
     prompt = []
     if out.get("say"):
         prompt = voicelines.playlist(out["say"], out.get("say_parts"),
-                                     voice_import.clip_path,
+                                     lambda name: character.clip(name, band),
                                      prefs.clip_streets(), prefs.imperial(),
                                      distances=voice_import.distance_clips())
-        if prefs.flourishes() and (out.get("say_parts") or {}).get("metres"):
-            prompt = _M.setdefault("flourish", voicelines.Flourish()).cough(
-                prompt, voice_import.interjections("interject-cough"),
-                band=(out.get("say_parts") or {}).get("band"))
+        if (out.get("say_parts") or {}).get("metres"):
+            prompt = character.cough(prompt, band=(out.get("say_parts") or {}).get("band"))
     # On the "now" band the TURN goes first and cuts in: six seconds from the
     # junction, a 1.5 s speeding line in front of it ate a quarter of the
     # warning (minion 4's audit, #10).
@@ -134,23 +135,11 @@ def _announce(out, limit):
     # A character line, if this moment gets one - always LAST, so it can
     # never come before the turn or between the distance and the turn.
     if items:
-        items += _flourish(voicelines.flourish_mood(names, out.get("say_parts")
-                                                    if out.get("say") else None),
-                           out.get("say_parts"))
+        items += character.flourish(character.mood(
+            names, out.get("say_parts") if out.get("say") else None),
+            out.get("say_parts"))
         speech.play(items, urgent=now)
     return items
-
-
-def _flourish(mood, parts=None):
-    """[("flourish", path, None)] or [] - see voicelines.Flourish."""
-    if mood is None or not prefs.flourishes():
-        return []
-    parts = parts or {}
-    maneuver = parts.get("index", (parts.get("kind"), parts.get("instruction"),
-                                   parts.get("street")) if parts else None)
-    pick = _M.setdefault("flourish", voicelines.Flourish()).pick(
-        mood, voice_import.flourishes(mood), maneuver=maneuver)
-    return [("flourish", pick[1], None)] if pick else []
 
 
 def _refused(route):
@@ -170,7 +159,7 @@ def _refused(route):
     # "sorry" only AFTER the words - and with no working voice the words are
     # dropped (speech.py), so an apology alone would be an apology for nothing.
     if speech.STATE.get("ready"):
-        items += _flourish("sorry")
+        items += character.flourish("sorry")
     speech.play(items)
     return items
 
@@ -309,6 +298,29 @@ def _feed_fix():
     sensors.reset_peaks()
     audio.reset_peaks()
     return ride
+
+
+def _sync_location(geo):
+    """Point the one live stream at what this moment needs: the screen-off
+    service while recording or routed (location.wants_service), none while she
+    only looks at the map; and her sample rate, which otherwise took effect only
+    on a restart. flet_geolocator restarts the stream with its configuration on
+    every update, so this is a configuration change - no second service."""
+    if geo is None:
+        return False
+    wanted = (location.wants_service(), prefs.hz())
+    if _M.get("geo_mode") == wanted:
+        return False
+    geo.configuration = location.android_config(wanted[1], foreground=wanted[0])
+    _M["geo_mode"] = wanted
+    try:
+        geo.update()
+    except Exception as exc:                            # noqa: BLE001
+        # Not on a live page (a test, a render being torn down): the next
+        # page update carries the new configuration anyway.
+        print(f"[navi] location: stream not updated yet: {type(exc).__name__}: {exc}",
+              flush=True)
+    return True
 
 
 def _hud_state():
@@ -741,6 +753,8 @@ def build(page, go=None):
             _M["track_len"] = len(track)
         if prefs.autorecord() and out["rolling"] and not live.recording():
             live.start_recording()
+            _sync_location(_M.get("geo"))
+            page.run_task(location.ask_notifications, page)
         if out["reroute"]:
             page.run_task(_reroute)
         # Checked on every fix and acts only when the phase changes, which is
@@ -794,6 +808,7 @@ def build(page, go=None):
             except ValueError:
                 pass
         _M["geo"] = geo = None
+        _M.pop("geo_mode", None)
     elif geo is None:
         # HIGH, not BEST, and an explicit Android configuration.
         #
@@ -813,8 +828,10 @@ def build(page, go=None):
         # screen off - without it the app went silent and the ride log became
         # a straight line the moment her screen locked. See location.py for
         # the Flet 0.86.5 bug this works around, and the emulator A/B.
+        _M["geo_mode"] = (location.wants_service(), prefs.hz())
         geo = fgeo.Geolocator(
-            configuration=location.android_config(prefs.hz()),
+            configuration=location.android_config(_M["geo_mode"][1],
+                                                  foreground=_M["geo_mode"][0]),
             on_position_change=on_position, on_error=on_geo_error)
         _M["geo"] = geo
         if isinstance(getattr(page, "services", None), list):
@@ -826,6 +843,11 @@ def build(page, go=None):
         # GPS that had stopped.
         geo.on_position_change = on_position
         geo.on_error = on_geo_error
+        _sync_location(geo)
+    # A route is up: from here the location service matters, so this is where
+    # the notification permission is asked - with its reason, not at launch.
+    if geo is not None and live.LIVE.get("dest") is not None:
+        page.run_task(location.ask_notifications, page)
 
     async def _locate(_e=None):
         if geo is None:
@@ -893,6 +915,7 @@ def build(page, go=None):
                 page.run_task(_upload, summary)
         else:
             live.start_recording()
+            page.run_task(location.ask_notifications, page)
         page.run_task(_read_battery)
         _rerender(page)
 
@@ -1063,27 +1086,104 @@ def build(page, go=None):
                                    else (pal["accent"] if lit
                                          else pal["text"]))))
 
-    def _open_actions(_e=None):
-        """Everything that used to be a permanent row, in a sheet.
+    #: Where the gauges sit, in words. Only this orientation's pair is offered:
+    #: she is holding the phone the way she rides with it.
+    _WHERE = {"left": "down the left", "right": "down the right",
+              "top": "along the top", "bottom": "along the bottom"}
 
-        A dialog rather than a bar: these are all things done at a stop - change
-        the bike, switch the tiles, turn the microphone on - and none of them is
-        worth permanent screen on a moving motorcycle.
+    def _toggle_flag(name):
+        """A plain on/off preference from the sheet: flip, save, repaint."""
+        def handler(_e=None):
+            prefs.set_value(name, not getattr(prefs, name)())
+            page.run_task(_save_prefs)
+            _rerender(page)
+        return handler
+
+    def _pick_theme(key):
+        """A theme by hand. Turns Follow the sun off, as Settings does -
+        otherwise the next phase change would quietly undo her choice."""
+        def handler(_e=None):
+            prefs.set_value("theme", key)
+            if prefs.auto_theme():
+                prefs.set_value("auto_theme", False)
+            theme.apply(page)
+            page.run_task(_save_prefs)
+            _rerender(page)
+        return handler
+
+    def _toggle_sun(_e=None):
+        """Follow the sun on or off. Off puts back the theme she last picked
+        by hand; on works the phase out again now, not at the next one."""
+        on = not prefs.auto_theme()
+        prefs.set_value("auto_theme", on)
+        if on:
+            _M["phase"] = None
+            page.run_task(_apply_daylight)
+        else:
+            prefs.set_value("theme", prefs.theme_key())
+        theme.apply(page)
+        page.run_task(_save_prefs)
+        _rerender(page)
+
+    def _pick_layout(key):
+        """A gauge layout. Picking one while they are hidden shows them: a
+        layout chosen is gauges wanted."""
+        def handler(_e=None):
+            prefs.set_value("hud", key)
+            if not prefs.dash():
+                prefs.toggle_dash()
+            page.run_task(_save_prefs)
+            _rerender(page)
+        return handler
+
+    def _pick_anchor(name, value):
+        def handler(_e=None):
+            prefs.set_value(name, value)
+            page.run_task(_save_prefs)
+            _rerender(page)
+        return handler
+
+    def _open_actions(_e=None):
+        """What she changes on the bike, or just before a ride, in one sheet.
+
+        A dialog rather than a bar: all of it is done at a stop, and none of it
+        is worth permanent screen on a moving motorcycle. Settings keeps what
+        is set once; this keeps what she changes on the way - the theme at
+        dusk, the gauges, the voice, the mic - because "a control belongs
+        where she is when she wants it".
+
+        Sideways it is a grid, three across: a list showed three and a half
+        rows before it scrolled, which is not a sheet to use at a light. Every
+        target is 56 dp, Close and Back included - Material's text buttons are
+        40, which a glove misses.
+
+        A plain row acts and closes, so she sees the change on the map at
+        once. A row that opens a choice (the look, the gauge layout) swaps the
+        sheet's contents in place, with Back to return.
         """
         pal = PAL()
+        wide = is_wide(page)
+        cols = 3 if wide else 1
+        row_w = 200 if wide else 320
+        width = cols * row_w + (cols - 1) * 8
 
-        def item(icon, label, detail, on_click, lit=False):
+        def item(icon, label, detail, on_click, lit=False, close=True):
             def handler(e):
-                _dismiss()
+                if close:
+                    _dismiss()
                 on_click(e)
-            return ui.row_tap(ft.Row(spacing=12, controls=[
+            row = ui.row_tap(ft.Row(spacing=12, controls=[
                 ft.Icon(icon, size=20,
                         color=pal["accent"] if lit else pal["text2"]),
                 ft.Column(spacing=0, expand=True, tight=True, controls=[
                     ft.Text(label, size=ui.MID, weight=ft.FontWeight.W_700,
-                            color=pal["text"]),
+                            color=pal["text"], max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS),
                     ft.Text(detail, size=ui.SMALL, color=pal["text2"],
-                            max_lines=1)])]), handler, height=ui.TOUCH)
+                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)])]),
+                handler, height=ui.TOUCH)
+            row.width = row_w
+            return row
 
         def info(icon, label, detail):
             """A row that says something and is not a button.
@@ -1092,14 +1192,37 @@ def build(page, go=None):
             then doing nothing is exactly the lie she caught - "tiles streets
             clicking it does nothing".
             """
-            return ft.Container(height=ui.TOUCH, content=ft.Row(
+            return ft.Container(width=row_w, height=ui.TOUCH, content=ft.Row(
                 spacing=12, controls=[
                     ft.Icon(icon, size=20, color=pal["text3"]),
                     ft.Column(spacing=0, expand=True, tight=True, controls=[
                         ft.Text(label, size=ui.MID, weight=ft.FontWeight.W_700,
-                                color=pal["text"]),
+                                color=pal["text"], max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS),
                         ft.Text(detail, size=ui.SMALL, color=pal["text2"],
-                                max_lines=2)])]))
+                                max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS)])]))
+
+        def pick(label, chosen, on_click, w):
+            """One choice among several: a tile, lit when it is the one."""
+            def handler(e):
+                _dismiss()
+                on_click(e)
+            return ft.Container(
+                width=w, height=ui.TOUCH, on_click=handler, ink=True,
+                border_radius=RAD(12), alignment=ft.Alignment.CENTER,
+                bgcolor=pal["accent"] if chosen else pal["surface"],
+                border=None if chosen else BRD(pal["border"], 1),
+                content=ft.Text(label, size=ui.SMALL,
+                                weight=ft.FontWeight.W_700,
+                                color=pal["bg"] if chosen else pal["text"],
+                                text_align=ft.TextAlign.CENTER))
+
+        def grid(controls):
+            # Fixed widths, never expand: a child that expands inside a
+            # wrapping Row paints grey in a release build.
+            return ft.Row(wrap=True, spacing=8, run_spacing=8, width=width,
+                          controls=controls)
 
         def _dismiss(_e=None):
             try:
@@ -1108,61 +1231,145 @@ def build(page, go=None):
                 print(f"[navi] pop_dialog failed: {type(exc).__name__}: "
                       f"{exc}", flush=True)
 
-        choice, style_rows = tiles.choices(prefs.tiles())
-        can_draw = [row for row in style_rows if row["usable"]]
-        drawn_name = tiles.label(choice["style"]) if choice["style"] else "Unknown"
-        if len(can_draw) > 1:
-            nxt = tiles.label(tiles.cycle(prefs.tiles(),
-                                          only=[r["key"] for r in can_draw]))
-            tile_row = item(ft.Icons.LAYERS, f"Map: {drawn_name}",
-                            f"{choice['note']} · tap for {nxt}", _cycle_style)
-        else:
-            others = ", ".join(r["label"] for r in style_rows
-                               if not r["usable"])
-            tile_row = info(ft.Icons.LAYERS,
-                            f"Map: {drawn_name} - offline",
-                            "the one style with no signal. "
-                            + (f"{others} are online only - see Settings."
-                               if others else ""))
+        def main_rows():
+            choice, style_rows = tiles.choices(prefs.tiles())
+            can_draw = [row for row in style_rows if row["usable"]]
+            drawn_name = (tiles.label(choice["style"]) if choice["style"]
+                          else "Unknown")
+            if len(can_draw) > 1:
+                nxt = tiles.label(tiles.cycle(prefs.tiles(),
+                                              only=[r["key"] for r in can_draw]))
+                tile_row = item(ft.Icons.LAYERS, f"Map: {drawn_name}",
+                                f"{choice['note']} · tap for {nxt}",
+                                _cycle_style)
+            else:
+                others = ", ".join(r["label"] for r in style_rows
+                                   if not r["usable"])
+                tile_row = info(ft.Icons.LAYERS,
+                                f"Map: {drawn_name} - offline",
+                                "the one style with no signal. "
+                                + (f"{others} are online only - see Settings."
+                                   if others else ""))
+            # The same switch as Settings > Gauges, and it says so. It used to
+            # read "Gauges" over the layout's description, so a tap that hid
+            # them looked like a tap on the layout.
+            layout_name = prefs.layout_name()
+            where = _WHERE.get(prefs.hud_side() if wide else prefs.hud_edge(),
+                               "")
+            look = theme.THEME_NAMES.get(
+                theme.S.get("theme") if prefs.auto_theme()
+                else prefs.theme_key(), "")
+            return [
+                item(ft.Icons.SPEED,
+                     "Gauges: on" if prefs.dash() else "Gauges: off",
+                     (f"{layout_name} - tap to hide. Same switch as Settings > "
+                      "Gauges" if prefs.dash() else
+                      f"tap to show the {layout_name}. Same switch as "
+                      "Settings > Gauges"),
+                     _toggle_dash, lit=prefs.dash()),
+                item(ft.Icons.DASHBOARD_CUSTOMIZE, f"Layout: {layout_name}",
+                     where, lambda e: show("gauges"), close=False),
+                item(ft.Icons.PALETTE, f"Look: {look}",
+                     "following the sun" if prefs.auto_theme()
+                     else "picked by hand",
+                     lambda e: show("look"), close=False,
+                     lit=prefs.auto_theme()),
+                item(ft.Icons.RECORD_VOICE_OVER if prefs.voice()
+                     else ft.Icons.VOICE_OVER_OFF,
+                     "Turn voice: on" if prefs.voice() else "Turn voice: off",
+                     "turns spoken aloud" if prefs.voice()
+                     else "turns shown, not spoken",
+                     _toggle_flag("voice"), lit=prefs.voice()),
+                item(ft.Icons.THEATER_COMEDY,
+                     "Character lines: on" if prefs.flourishes()
+                     else "Character lines: off",
+                     "his extra lines" if prefs.flourishes()
+                     else "the voice, no theatre",
+                     _toggle_flag("flourishes"), lit=prefs.flourishes()),
+                item(ft.Icons.MIC if audio.listening() else ft.Icons.MIC_OFF,
+                     "Engine sound",
+                     "on - loudness and RPM" if audio.listening() else "off",
+                     lambda e: page.run_task(_toggle_mic),
+                     lit=audio.listening()),
+                item(ft.Icons.GPS_FIXED if prefs.gps() else ft.Icons.GPS_OFF,
+                     "Follow the bike",
+                     "on - the map follows you" if prefs.gps()
+                     else "off - no fixes, no repaints",
+                     _toggle_gps, lit=prefs.gps()),
+                item(ft.Icons.MY_LOCATION, "Centre on the bike",
+                     fix_text.value or "", _recentre),
+                item(ft.Icons.TWO_WHEELER, prefs.machine_name(),
+                     f"{bikes.profile(prefs.machine())['cylinders']} cyl · "
+                     f"RPM = Hz x {60 / bikes.firing_ratio(prefs.machine()):.0f}",
+                     _next_bike),
+                tile_row,
+            ]
 
-        # The same switch as Settings > Gauges, and it says so. It used to
-        # read "Gauges" over the layout's description, so a tap that hid them
-        # looked like a tap on the layout.
-        layout_name = prefs.layout_name()
-        gauges_row = item(
-            ft.Icons.SPEED, "Gauges: on" if prefs.dash() else "Gauges: off",
-            (f"{layout_name} - tap to hide. Same switch as Settings > Gauges"
-             if prefs.dash() else
-             f"tap to show the {layout_name}. Same switch as Settings > "
-             "Gauges"),
-            _toggle_dash, lit=prefs.dash())
+        def look_rows():
+            per = 4 if wide else 2
+            w = (width - (per - 1) * 8) // per
+            current = theme.S.get("theme") if prefs.auto_theme() \
+                else prefs.theme_key()
+            sun = item(ft.Icons.WB_TWILIGHT,
+                       "Follow the sun: on" if prefs.auto_theme()
+                       else "Follow the sun: off",
+                       "picks the theme and dims to match" if prefs.auto_theme()
+                       else "tap to let the time of day pick",
+                       _toggle_sun, lit=prefs.auto_theme())
+            sun.width = width
+            return [sun] + [
+                pick(theme.THEME_NAMES[key],
+                     key == current and not prefs.auto_theme(),
+                     _pick_theme(key), w)
+                for key in theme.THEMES]
 
-        sheet = ft.AlertDialog(
-            bgcolor=pal["bg"],
-            title=ft.Text("Ride", size=16, color=pal["text"]),
-            content=ft.Container(width=320, content=ft.Column(
-                spacing=8, tight=True, scroll=ft.ScrollMode.AUTO, controls=[
-                    item(ft.Icons.TWO_WHEELER, prefs.machine_name(),
-                         f"{bikes.profile(prefs.machine())['cylinders']} cyl · "
-                         f"RPM = Hz x "
-                         f"{60 / bikes.firing_ratio(prefs.machine()):.0f}",
-                         _next_bike),
-                    tile_row,
-                    gauges_row,
-                    item(ft.Icons.MIC if audio.listening() else ft.Icons.MIC_OFF,
-                         "Engine sound",
-                         "on - loudness and RPM" if audio.listening()
-                         else "off", lambda e: page.run_task(_toggle_mic),
-                         lit=audio.listening()),
-                    item(ft.Icons.MY_LOCATION, "Centre on the bike",
-                         fix_text.value or "", _recentre),
-                    item(ft.Icons.GPS_FIXED if prefs.gps()
-                         else ft.Icons.GPS_OFF, "Follow the bike",
-                         "on - the map follows your position" if prefs.gps()
-                         else "off - no fixes, no repaints, no radio",
-                         _toggle_gps, lit=prefs.gps()),
-                ])),
-            actions=[ft.TextButton(content="Close", on_click=_dismiss)])
+        def gauge_rows():
+            per = 3 if wide else 2
+            w = (width - (per - 1) * 8) // per
+            name, now = (("hud_side", prefs.hud_side()) if wide
+                         else ("hud_edge", prefs.hud_edge()))
+            sides = [(key, _WHERE[key].capitalize())
+                     for key in (("left", "right") if wide
+                                 else ("top", "bottom"))]
+            half = (width - 8) // 2
+            return [
+                pick(label, key == prefs.hud() and prefs.dash(),
+                     _pick_layout(key), w)
+                for key, label, _detail in gauges.LAYOUTS
+            ] + [pick(label, key == now, _pick_anchor(name, key), half)
+                 for key, label in sides]
+
+        def button(text, on_click, primary=False):
+            return ui.button(text, on_click, primary=primary)
+
+        titles = {"main": "Ride", "look": "Look", "gauges": "Gauge layout"}
+
+        def show(view, paint=True):
+            rows = {"main": main_rows, "look": look_rows,
+                    "gauges": gauge_rows}[view]()
+            closers = ([button("Back", lambda e: show("main"))]
+                       if view != "main" else []) + [button("Close", _dismiss)]
+            if wide:
+                # Sideways the height is the whole problem, and the last line
+                # of the grid has room: Back and Close go there instead of a
+                # row of their own under it.
+                for closer in closers:
+                    closer.width = row_w
+                rows = rows + closers
+            sheet.content = ft.Container(width=width, content=ft.Column(
+                spacing=8, tight=True, scroll=ft.ScrollMode.AUTO,
+                controls=[grid(rows)]))
+            # Sideways there is no height to spare for a title on the main
+            # sheet; the rows say what they are.
+            sheet.title = (None if wide and view == "main" else
+                           ft.Text(titles[view], size=16, color=pal["text"]))
+            sheet.actions = [] if wide else closers
+            _M["sheet_view"] = view
+            if paint:
+                page.update()
+
+        sheet = ft.AlertDialog(bgcolor=pal["bg"])
+        show("main", paint=False)
         try:
             page.show_dialog(sheet)
         except Exception as exc:                     # noqa: BLE001 - no dialog
