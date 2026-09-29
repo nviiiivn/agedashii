@@ -87,6 +87,27 @@ class ThePromptIsSaid(_Clean):
         self.assertEqual(self.engine.said[-1], "turn left onto Grand")
         self.assertTrue(wait_for(lambda: not speech.STATE["speaking"], 3.0))
 
+    def test_a_newer_prompt_waits_for_the_line_being_said(self):
+        # #11: rerouting.mp3 was cut off mid-line by the new route's first
+        # prompt. Newest still wins - but at the end of what is being said.
+        self.engine.seconds = 0.6
+        speech.play([("tts", "Re-routing.", None)])
+        self.assertTrue(wait_for(lambda: self.engine.said))
+        t0 = time.time()
+        speech.play([("tts", "In 1 mile, turn left", None)])
+        self.assertTrue(wait_for(lambda: len(self.engine.said) == 2))
+        self.assertGreater(time.time() - t0, 0.4, "cut the line off")
+
+    def test_an_urgent_prompt_still_cuts_in(self):
+        # The "now" band: six seconds from the turn, nothing waits.
+        self.engine.seconds = 2.0
+        speech.play([("tts", "Re-routing.", None)])
+        self.assertTrue(wait_for(lambda: self.engine.said))
+        t0 = time.time()
+        speech.play([("tts", "turn left", None)], urgent=True)
+        self.assertTrue(wait_for(lambda: len(self.engine.said) == 2))
+        self.assertLess(time.time() - t0, 0.5)
+
     def test_it_ducks_the_music_and_gives_it_back(self):
         speech.say("turn right")
         self.assertTrue(wait_for(lambda: "abandon" in self.engine.focus))

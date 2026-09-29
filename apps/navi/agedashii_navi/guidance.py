@@ -25,13 +25,13 @@ are the same instruction. Each prompt for each maneuver fires once, tracked
 by `(index, band)`, because an instruction repeated every second is worse
 than no instruction.
 
-**A speed limit that is honest about where it came from.** The graph carries
-a road class per edge, not a signposted limit - Washi's `SPEED_KMH` table is
-effective door-to-door speed fitted to routing times, which is a different
-quantity and lower than any sign. So `limit_mph` returns a *typical* posted
-limit for the class, in California terms, and `LIMIT_SOURCE` says exactly
-that. Showing a fitted travel speed as a speed limit would be a number that
-looks authoritative and is wrong by 15 mph on a residential street.
+**A speed limit that is honest about where it came from.** A graph "class"
+is a speed bucket: the builder's default speed nearest each road's posted
+maxspeed. So `limit_mph` reads the bucket as the posted limit, rounded to
+5 mph, and falls back to a *typical* California limit for the road's real
+class (RGRAPH03) where the bucket is only that class's default. Washi's
+`SPEED_KMH` is a different quantity - door-to-door speed fitted to routing
+times - and is never shown as a limit. `LIMIT_SOURCE` says all of this.
 
 Nothing here reaches the network, and the caller passes
 `allow_server=False` to `routing.route` when she has asked for offline-only,
@@ -68,7 +68,8 @@ TYPICAL_MPH = {
     "tertiary": 35, "tertiary_link": 25, "unclassified": 30,
     "residential": 25, "living_street": 15, "service": 15, "road": 25,
 }
-LIMIT_SOURCE = "typical for this road class, not a reading of the sign"
+LIMIT_SOURCE = ("the map's posted limit, to the nearest 5 mph, where it has one; "
+                "typical for the road where it has none - not a reading of the sign")
 
 #: How far over the typical limit before the readout warns. Wide enough not to
 #: nag, since the limit itself is an estimate.
@@ -131,13 +132,38 @@ def eta_text(seconds, now=None, estimate=False):
     return f"~{clock}" if estimate else clock
 
 
+#: The road-graph builder's default speed per highway class, km/h, in
+#: routing.CLASSES order (tools/navi-routing/build_graph.py, SPEED_KMH). A
+#: graph "class" is the INDEX of whichever of these is nearest a road's posted
+#: maxspeed - or its own highway default when it has none - so the class is
+#: the posted limit, quantized. It was being read as a highway type instead,
+#: which called a 35 mph street a "trunk link" limited to 40.
+BUCKET_KMH = (105, 60, 90, 55, 65, 45, 55, 40, 45, 35, 40, 30, 12, 20, 30)
+
+
+def _bucket_of(kmh):
+    """The bucket the builder files `kmh` under: nearest, first index on a tie."""
+    return min(range(len(BUCKET_KMH)), key=lambda i: abs(BUCKET_KMH[i] - kmh))
+
+
+def _round5(mph_value):
+    return int(round(mph_value / 5.0) * 5)
+
+
 def limit_mph(graph, lat, lon, heading=None):
-    """(mph, class name) typical for the road at this point, or (None, "").
+    """(mph, road class) for the road at this point, or (None, "").
+
+    The speed bucket is the posted limit, quantized, wherever the map has one.
+    Where the bucket is just the road's own class default - most residential
+    streets carry no maxspeed, and the builder's residential default is 19 mph
+    - the typical California limit for what the road REALLY is (RGRAPH03's
+    highway class) is used instead. On an older graph there is no real class,
+    so the bucket alone. A posted limit that happens to share its class
+    default's bucket reads as the typical one: at most 5 mph off.
 
     Snapped to an edge rather than a junction so that standing at a corner
-    does not report the side street. Returns None with no graph installed -
-    which is a normal state, not an error, and the UI says so rather than
-    inventing a limit.
+    does not report the side street. None with no graph installed - a normal
+    state, and the UI says so rather than inventing a limit.
     """
     if graph is None:
         return None, ""
@@ -147,14 +173,20 @@ def limit_mph(graph, lat, lon, heading=None):
         return None, ""
     if snap is None:
         return None, ""
-    cls_index = _edge_class(graph, snap)
-    if cls_index is None:
-        return None, ""
+    k = snap.fwd if getattr(snap, "fwd", -1) >= 0 else getattr(snap, "bwd", -1)
     try:
-        name = routing.CLASSES[cls_index]
+        bucket = graph.cls[k] if k >= 0 else _edge_class(graph, snap)
+        posted = _round5(BUCKET_KMH[bucket] / 1.609344)
     except (IndexError, TypeError):
         return None, ""
-    return TYPICAL_MPH.get(name), name
+    highway = getattr(graph, "highway", None)
+    hw = highway(snap.seg) if callable(highway) and getattr(snap, "seg", -1) >= 0 else None
+    if hw is None:
+        return posted, "road"
+    name = routing.CLASSES[hw]
+    if bucket == _bucket_of(BUCKET_KMH[hw]):
+        return TYPICAL_MPH.get(name), name
+    return posted, name
 
 
 def _edge_class(graph, snap):
@@ -268,6 +300,28 @@ def spoken(instruction, street, metres, imperial=True, band="near"):
     return f"In {distance_text(metres, imperial)}, {what}{where}".strip()
 
 
+def _next_spoken(route, man, metres):
+    """(maneuver, metres to it) for the next maneuver that is SAID.
+
+    `man` is the next maneuver on the route; if the router marked it
+    spoken=False (a name change on a straight road), look past it to the next
+    one, measuring from the same place - so the turn after a name change gets
+    its far warning while the name change is still ahead. (None, None) if
+    nothing ahead is spoken, which the arrival maneuver makes impossible.
+    """
+    if metres is None or getattr(man, "spoken", True):
+        return man, metres
+    mans = list(getattr(route, "maneuvers", ()) or ())
+    at = next((i for i, m in enumerate(mans) if m is man), None)
+    if at is None:
+        return man, metres
+    along = man.cum_m - metres
+    for m in mans[at + 1:]:
+        if getattr(m, "spoken", True):
+            return m, m.cum_m - along
+    return None, None
+
+
 class Follower:
     """Live state for following one route. Feed it fixes, ask it questions.
 
@@ -334,13 +388,21 @@ class Follower:
         # Arrival is distance to the end of the line, not to the last
         # maneuver: the last maneuver IS "arrive", and its own distance counts
         # down to the same point.
+        was_arrived = self.arrived
         if left_m is not None and left_m < 25.0:
             self.arrived = True
 
         say = None
         self.fired = None
-        if not self.off_route and man is not None and not self.arrived:
-            say = self._maybe_say(man, metres, speed_ms)
+        # `was_arrived`, not `arrived`: the fix that ARRIVES may still say so.
+        # Below a crawl the "now" band is 25 m - the arrival distance - and
+        # checking the new state swallowed the only prompt saying she is there.
+        if not self.off_route and man is not None and not was_arrived:
+            # The banner shows the next maneuver; the voice warns about the
+            # next one she has to DO. A name change is shown, not said.
+            talk, talk_m = _next_spoken(route, man, metres)
+            if talk is not None:
+                say = self._maybe_say(talk, talk_m, speed_ms)
 
         self._last = {
             "ok": True,

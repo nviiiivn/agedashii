@@ -100,7 +100,7 @@ def reset():
     # `gen` retires any worker from before this reset: it checks the token on
     # every turn and leaves once it is stale. Without it a test's old worker,
     # holding an old engine, could take the next test's prompt.
-    _M.update({"backend": None, "worker": None, "pending": None,
+    _M.update({"backend": None, "worker": None, "pending": None, "urgent": False,
                "wake": threading.Event(), "lock": threading.Lock(),
                "factory": _android_backend, "gen": object()})
 
@@ -308,11 +308,16 @@ def for_the_ear(text):
     return re.sub(r"(\d)\s*mi\b", r"\1 miles", text)
 
 
-def play(items):
+def play(items, urgent=False):
     """Play a playlist, replacing anything not yet said. Never blocks.
 
     `items` are voicelines' (kind, value, fallback): ("tts", words, None) or
     ("clip", path, words to say if the file will not play).
+
+    The newest playlist wins, but at the END of the line being said: cutting
+    a clip mid-word is what made rerouting.mp3 sound broken when the new
+    route's first prompt arrived. `urgent` (the "now" band, seconds from the
+    turn) cuts in at once, because then nothing may wait.
     """
     clean = []
     for kind, value, fallback in items or ():
@@ -325,6 +330,7 @@ def play(items):
     start()
     with _M["lock"]:
         _M["pending"] = clean
+        _M["urgent"] = bool(urgent)
     _M["wake"].set()
     return True
 
@@ -355,6 +361,7 @@ def status_text():
 def _take():
     with _M["lock"]:
         items, _M["pending"] = _M["pending"], None
+        _M["urgent"] = False
         _M["wake"].clear()
     return items
 
@@ -401,17 +408,18 @@ def _run(gen):
             items = [(k, v, None) for k, v, _f in items if k == "clip"]
             if not items:
                 continue
-        _speak_one(backend, items)
+        _speak_one(backend, items, gen)
 
 
 def _wait(busy, started):
-    """Poll `busy()` to start and then to finish; stop early for a newer prompt."""
+    """Poll `busy()` to start and then to finish; stop early for an URGENT
+    newer prompt (a merely newer one waits for this line to end - play())."""
     while not busy() and time.time() - started < START_TIMEOUT_S:
-        if _M["pending"]:
+        if _M["pending"] and _M.get("urgent"):
             return
         time.sleep(POLL_S)
     while busy() and time.time() - started < MAX_UTTERANCE_S:
-        if _M["pending"]:
+        if _M["pending"] and _M.get("urgent"):
             return
         time.sleep(POLL_S)
 
@@ -438,8 +446,12 @@ def _play_clip(backend, path):
     return True
 
 
-def _speak_one(backend, items):
-    """Play one prompt's items; hand over to a newer prompt the moment it arrives."""
+def _speak_one(backend, items, gen=None):
+    """Play one prompt's items; hand over to a newer prompt when it arrives.
+
+    `gen` is the worker's token: a worker retired by reset() finishes the
+    line it is on and stops, rather than taking the next worker's prompt.
+    """
     focused = False
     try:
         focused = backend.request_focus() == 1          # AUDIOFOCUS_REQUEST_GRANTED
@@ -457,6 +469,8 @@ def _speak_one(backend, items):
                 if _M["pending"]:
                     break
             STATE["spoken"] += 1
+            if gen is not None and _M.get("gen") is not gen:
+                break                                    # retired: not ours to take
             items = _take()                              # a newer prompt, if one came
     except Exception as exc:                                  # noqa: BLE001
         print(f"[navi] speech: failed: {type(exc).__name__}: {exc}", flush=True)

@@ -18,6 +18,7 @@ Pure: no audio here. `playlist` returns [(kind, value, fallback)] - kind "clip"
 with a file path, or "tts" with words - and speech.py plays it.
 """
 import math
+import re
 
 from . import guidance
 from .voice_import import FIXED_DISTANCES, distance_feet
@@ -36,13 +37,14 @@ MANEUVERS = (("roundabout", "roundabout"),
              ("arrive", "arrive"), ("destination", "arrive"),
              ("continue", "continue"), ("straight", "continue"))
 
-#: How far off one of her distance clips may be and still be said: a factor of
-#: 1.5 either way. Her Arnold set (200, 400, 800, 1500 ft) then covers 133 to
-#: 2250 ft without a gap. Beyond it the phone says the distance: "two hundred"
-#: for a turn a mile away is a wrong instruction, and at 60 mph a wrong
-#: distance is far worse than a robot saying the right one. Agreed with minion 2
-#: for the Kotlin app, which reads the same files and uses the same table.
-DIST_FACTOR = 1.5
+#: How far off one of her distance clips may be and still be said: a quarter
+#: either way (AGEDASHII, from minion 4's audit - "fifteen hundred feet" for a
+#: turn 2,200 ft away is a wrong instruction). Her Arnold set (200, 400, 800,
+#: 1500 ft) covers 160-250, 320-500, 640-1000 and 1200-1875 ft; between and
+#: beyond, the phone says the distance. At 60 mph a wrong distance is far worse
+#: than a robot saying the right one. Minion 2's Kotlin app reads the same files
+#: and must use the same table.
+DIST_FACTOR = 1.25
 FT_PER_M = 3.280839895
 
 #: What the phone says for a situation she has no clip for. `speeding` has
@@ -119,13 +121,18 @@ def playlist(text, parts, clip_path, streets=False, imperial=True, distances=Non
     # machine to switch on (decided with the words offline, from Valhalla's
     # maneuver TYPE on server routes). Matching the sentence broke the first
     # time anything was reworded. The words only when there is no kind.
+    #
+    # A kind of None IS an answer: leaving a roundabout, a ferry - no clip says
+    # it honestly, so the words are spoken. Matching the words there found
+    # "roundabout" and played her ENTERING line on the way out. Only a caller
+    # that fired no kind at all (none does in the app) falls back to words.
     kind = parts.get("kind")
-    if kind in CLIP_KINDS:
-        man = kind
-    elif kind:
-        man = None                          # "start": the depart has no clip
-    else:
+    if "kind" not in parts:
         man = maneuver_name(parts.get("instruction"))
+    elif kind in CLIP_KINDS:
+        man = kind
+    else:
+        man = None                          # None, or "start" (the depart)
     man_clip = clip_path(man) if man else None
     if distances is None:
         distances = {n: clip_path(n) for n in FIXED_DISTANCES}
@@ -139,10 +146,32 @@ def playlist(text, parts, clip_path, streets=False, imperial=True, distances=Non
         items.append(("clip", dist_clip, spoken) if dist_clip else ("tts", spoken, None))
     bare = _bare(parts.get("instruction"))
     items.append(("clip", man_clip, bare) if man_clip else ("tts", bare, None))
+    # Her line replaces the verb, so what only the words carry follows it in
+    # the phone's voice: which exit off a roundabout, which side a ramp is on.
+    if man_clip:
+        tail = _after_her_line(man, parts.get("instruction"))
+        if tail:
+            items.append(("tts", tail, None))
     street = parts.get("street")
     if streets and street and man != "arrive":
         items.append(("tts", f"onto {street}", None))
     return items
+
+
+_EXIT_NUMBER = re.compile(r"\btake the (\w+) exit\b")
+_SIDE = re.compile(r"\bon the (left|right)\b")
+
+
+def _after_her_line(man, instruction):
+    """What must still be said after her clip for `man`, or ""."""
+    text = (instruction or "").lower()
+    if man == "roundabout":
+        m = _EXIT_NUMBER.search(text)
+        return f"take the {m.group(1)} exit" if m else ""
+    if man == "exit":
+        m = _SIDE.search(text)
+        return f"on the {m.group(1)}" if m else ""
+    return ""
 
 
 def situation(name, clip_path):
@@ -155,9 +184,10 @@ def situation(name, clip_path):
 
 
 #: What the phone says in place of each maneuver clip, for the Settings
-#: preview. The offline router's own words (agedashii_washi.routing.TURNS and
-#: "arrive at your destination"); it never says sharp, merge or exit, so those
-#: four clips only play on a route from the server.
+#: preview: the offline router's own words for each kind (routing.TURNS,
+#: "arrive at your destination"). Since minion 4's maneuver work the offline
+#: router says sharp, merge, exit and roundabout too, so every clip can play
+#: with no signal.
 STAND_IN = {"turn-left": "turn left", "turn-right": "turn right",
             "slight-left": "bear left", "slight-right": "bear right",
             "sharp-left": "sharp left", "sharp-right": "sharp right",
@@ -214,6 +244,7 @@ class Cues:
         self.rerouted = False
         self.fast = False
         self.fast_at = None
+        self.refusal_said = False
 
     def update(self, status, dest, reroute, over, now):
         names = []
@@ -227,6 +258,7 @@ class Cues:
             names.append("offroute")
         if not off:
             self.rerouted = False
+            self.refusal_said = False
         elif reroute and not self.rerouted:
             self.rerouted = True
             names.append("rerouting")
@@ -237,3 +269,30 @@ class Cues:
             names.append("speeding")
         self.fast = bool(over)
         return names
+
+    def refused(self):
+        """True the first time a re-route is refused in this off-route spell.
+
+        After "off route" and "re-routing", a refusal was SILENCE while the
+        banner said re-routing and the search retried every 12 s - and with an
+        offline-only re-route and a Bay-only map, she meets it at the edge.
+        Once per spell, like "re-routing": the retries need no voice.
+        """
+        if self.refusal_said:
+            return False
+        self.refusal_said = True
+        return True
+
+
+def refusal(reason):
+    """A refused route, made for the ear: routing's screen sentence is too
+    long to hear at speed, so the ones she can act on get their own words."""
+    from agedashii_washi import routing
+    if reason == routing.START_OUTSIDE:
+        words = ("No route. You are outside the offline map. "
+                 "Ride back into it, or find signal.")
+    elif reason == routing.DEST_OUTSIDE:
+        words = "No route. That place is outside the offline map."
+    else:
+        words = "No new route yet. It will keep trying."
+    return [("tts", words, None)]

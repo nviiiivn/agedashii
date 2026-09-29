@@ -126,19 +126,26 @@ class WhichDistance(unittest.TestCase):
     """The nearest distance clip SHE HAS - within a factor of 1.5, or none.
     The same table is minion 2's, for the Kotlin app reading the same files."""
 
-    def test_her_set_covers_133_to_2250_feet(self):
-        self.assertEqual(dist(148), "dist-200ft")
-        self.assertEqual(dist(200), "dist-200ft")
-        self.assertEqual(dist(279), "dist-200ft")
-        self.assertEqual(dist(289), "dist-400ft")
+    def test_her_set_within_a_quarter_either_way(self):
+        # x1.25 (AGEDASHII, from minion 4's audit): "fifteen hundred" for a
+        # turn 2,200 ft away is a wrong instruction. Her set now covers
+        # 160-250, 320-500, 640-1000 and 1200-1875 ft; between, the phone.
+        self.assertEqual(dist(160), "dist-200ft")
+        self.assertEqual(dist(250), "dist-200ft")
+        self.assertEqual(dist(320), "dist-400ft")
+        self.assertEqual(dist(500), "dist-400ft")
         self.assertEqual(dist(820), "dist-800ft")
+        self.assertEqual(dist(1000), "dist-800ft")
         self.assertEqual(dist(1640), "dist-1500ft")
-        self.assertEqual(dist(2247), "dist-1500ft")
+        self.assertEqual(dist(1875), "dist-1500ft")
 
     def test_outside_the_bound_it_is_the_phone_voice_not_a_wrong_number(self):
         # "Two hundred" for a turn a mile away is a wrong instruction.
-        self.assertIsNone(dist(98))
-        self.assertIsNone(dist(2251))
+        self.assertIsNone(dist(148))
+        self.assertIsNone(dist(279))
+        self.assertIsNone(dist(1100))
+        self.assertIsNone(dist(1880))
+        self.assertIsNone(dist(2247))
         self.assertIsNone(dist(5280))
         self.assertIsNone(voicelines.distance_clip(0, ARNOLD))
         self.assertIsNone(voicelines.distance_clip(None, ARNOLD))
@@ -146,13 +153,15 @@ class WhichDistance(unittest.TestCase):
 
     def test_a_tie_goes_to_the_shorter_distance(self):
         # Never announce a turn as further away than it is.
-        self.assertEqual(dist((200 * 400) ** 0.5), "dist-200ft")
+        near = {"dist-200ft": "/200.mp3", "dist-240ft": "/240.mp3"}
+        self.assertEqual(dist((200 * 240) ** 0.5, near), "dist-200ft")
 
     def test_named_and_mile_distances_count(self):
         clips = {"dist-quarter": "/q.mp3", "dist-0.5mile": "/h.mp3", "dist-2miles": "/2.mp3"}
         self.assertEqual(dist(1300, clips), "dist-quarter")
         self.assertEqual(dist(2700, clips), "dist-0.5mile")
         self.assertEqual(dist(10000, clips), "dist-2miles")
+        self.assertIsNone(dist(5280, clips))
 
 
 class TheRule(unittest.TestCase):
@@ -189,6 +198,33 @@ class TheRule(unittest.TestCase):
                                     distances=ARNOLD)
         self.assertEqual(items, [("tts", "In 0.5 mi,", None),
                                  ("clip", "/voice/turn-left.m4a", "turn left")])
+
+    def test_leaving_a_roundabout_is_words_never_her_entering_line(self):
+        # #1: leaving has kind None. None means WORDS - never a word-match that
+        # finds "roundabout" and plays "ROUNDABOUT" on the way out.
+        say = "exit the roundabout onto Main St"
+        items = voicelines.playlist(say, dict(fired("exit the roundabout", band="now"),
+                                              kind=None), clips("roundabout", "exit"))
+        self.assertEqual(items, [("tts", say, None)])
+
+    def test_the_exit_number_follows_her_roundabout_line(self):
+        # #2: her line replaces the verb, so the phone says which exit.
+        items = voicelines.playlist(
+            "enter the roundabout and take the 2nd exit",
+            dict(fired("enter the roundabout and take the 2nd exit", band="now"),
+                 kind="roundabout"), clips("roundabout"))
+        self.assertEqual(items, [("clip", "/voice/roundabout.m4a",
+                                  "enter the roundabout and take the 2nd exit"),
+                                 ("tts", "take the 2nd exit", None)])
+
+    def test_the_side_follows_her_exit_line(self):
+        # #14: "on the right" exists only in the words.
+        items = voicelines.playlist(
+            "take the exit on the right",
+            dict(fired("take the exit on the right", band="now"), kind="exit"),
+            clips("exit"))
+        self.assertEqual(items, [("clip", "/voice/exit.m4a", "take the exit on the right"),
+                                 ("tts", "on the right", None)])
 
     def test_street_names_only_when_asked(self):
         both = clips("turn-left", "dist-500ft")
@@ -257,6 +293,23 @@ class Edges(unittest.TestCase):
         self.assertEqual(cues.update(self.OFF, None, False, False, 50), ["offroute"])
         self.assertEqual(cues.update(self.OFF, None, True, False, 62), ["rerouting"])
 
+    def test_a_refused_reroute_is_said_once_per_spell(self):
+        cues = voicelines.Cues()
+        cues.update(self.OFF, None, True, False, 0)
+        self.assertTrue(cues.refused())
+        self.assertFalse(cues.refused())               # the 12 s retries
+        cues.update(self.OK, None, False, False, 30)
+        cues.update(self.OFF, None, True, False, 40)
+        self.assertTrue(cues.refused())
+
+    def test_the_refusal_is_said_in_words_she_can_act_on(self):
+        from agedashii_washi import routing as R
+        outside = voicelines.refusal(R.START_OUTSIDE)
+        self.assertEqual(outside[0][0], "tts")
+        self.assertIn("outside", outside[0][1])
+        self.assertLess(len(outside[0][1]), len(R.START_OUTSIDE))   # made for the ear
+        self.assertEqual(voicelines.refusal("no route: something else")[0][0], "tts")
+
     def test_speeding_on_the_edge_and_not_again_within_a_minute(self):
         cues = voicelines.Cues()
         self.assertEqual(cues.update(None, None, False, True, 0), ["speeding"])
@@ -304,7 +357,12 @@ class _Clean(unittest.TestCase):
     def capture_play(self):
         """Swap speech.play for a recorder until the test ends."""
         played, real = [], speech.play
-        speech.play = lambda items: played.append(list(items))
+        self.urgent = []
+
+        def record(items, urgent=False):
+            played.append(list(items))
+            self.urgent.append(urgent)
+        speech.play = record
         self.addCleanup(setattr, speech, "play", real)
         return played
 
@@ -410,6 +468,29 @@ class TheRidePage(_Clean):
                       "In 400 ft, turn left onto Grand Ave", fired("turn left"))
         self.assertEqual(self.played, [[("tts", "In 400 ft,", None),
                                         ("clip", path, "turn left")]])
+
+    def test_on_the_now_band_the_turn_plays_before_a_situation(self):
+        # #10: a 1.5 s speeding line must not eat the 6 s "now" warning.
+        turn, fast = self.add("turn-left"), self.add("speeding")
+        prefs.set_value("voice", True)
+        live.LIVE["speed_ms"] = 40.0
+        self.ride._announce({"moved": True, "status": {"ok": True, "off_route": False},  # noqa: SLF001
+                             "say": "turn left onto Grand Ave",
+                             "say_parts": fired("turn left", band="now"),
+                             "reroute": False}, 25)
+        self.assertEqual(self.played, [[("clip", turn, "turn left"), ("clip", fast, None)]])
+        self.assertEqual(self.urgent, [True])
+
+    def test_a_refused_reroute_is_spoken(self):
+        from agedashii_washi import routing as R
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.played.clear()
+        failed = R.Route(ok=False, source="offline", reason=R.START_OUTSIDE)
+        self.ride._refused(failed)                           # noqa: SLF001
+        self.ride._refused(failed)                           # noqa: SLF001 - a retry
+        self.assertEqual(len(self.played), 1)
+        self.assertIn("outside", self.played[0][0][1])
 
     def test_off_route_and_rerouting_go_as_one_playlist(self):
         prefs.set_value("voice", True)

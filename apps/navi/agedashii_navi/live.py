@@ -73,6 +73,12 @@ def reset():
         # barometer. A Moto G Stylus has no barometer; a Pixel 8 Pro does.
         "climb_gps_mps": None,
         "_alt_history": [],
+        # (mph, road class) for the road under the bike - guidance.limit_mph,
+        # kept on every taken fix so the speeding cue and every page read one
+        # current answer (it used to be worked out only while Ride painted).
+        "limit": (None, ""),
+        "_limit_at": 0.0,
+        "_limit_at_pos": None,
     })
 
 
@@ -289,6 +295,7 @@ def set_position(lat, lon, *, speed_ms=None, heading=None, alt_m=None,
     out["moved"] = True
     out["rolling"] = bool(speed_ms is not None and speed_ms >= ROLLING_MS)
     _track_gps_climb(alt_m, t)
+    _refresh_limit(t)
 
     ride = LIVE.get("ride")
     if ride is not None and ride.recording:
@@ -312,6 +319,40 @@ def set_position(lat, lon, *, speed_ms=None, heading=None, alt_m=None,
                 and t - LIVE.get("last_route_at", 0.0) >= REROUTE_EVERY):
             out["reroute"] = True
     return out
+
+
+#: The speed limit is a spatial search of the road graph, so it is redone at
+#: most this often and only once the bike has moved this far - roads do not
+#: move, and in between the last answer is still true.
+LIMIT_EVERY_S = 4.0
+LIMIT_MOVE_M = 25.0
+
+
+def _loaded_graph():
+    """The routing graph only if it is already loaded: never blocks, never
+    starts the load (routing.graph starts it on its way past - see
+    pages.ride._graph)."""
+    try:
+        return routing.graph(timeout=0.0) if routing.ready() else None
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def _refresh_limit(t):
+    """Keep LIVE["limit"] for where the bike is, from any page."""
+    pos, at = LIVE["pos"], LIVE.get("_limit_at_pos")
+    if at is not None and (telemetry.haversine_m(at, pos) <= LIMIT_MOVE_M
+                           or t - LIVE.get("_limit_at", 0.0) < LIMIT_EVERY_S):
+        return
+    g = _loaded_graph()
+    if g is None:
+        return
+    try:
+        LIVE["limit"] = guidance.limit_mph(g, pos[0], pos[1], heading=LIVE.get("heading"))
+    except Exception as exc:                              # noqa: BLE001
+        print(f"[navi] speed limit failed: {type(exc).__name__}: {exc}", flush=True)
+        return
+    LIVE["_limit_at"], LIVE["_limit_at_pos"] = t, pos
 
 
 def _track_gps_climb(alt_m, t):

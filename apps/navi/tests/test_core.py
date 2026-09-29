@@ -22,6 +22,7 @@ import random
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 from agedashii_washi import routing, tileserver
 
@@ -640,6 +641,162 @@ class Prompts(unittest.TestCase):
         # what she is already doing.
         status = self.follower.update(self.points[0], speed_ms=15.0)
         self.assertNotIn("head", (status["say"] or "").lower())
+
+
+class ANameChangeIsShownNotSaid(unittest.TestCase):
+    """The router marks a straight-on name change `spoken=False`. The banner
+    still shows it; the voice skips it and warns about the next thing she has
+    to DO - so a turn just past a name change keeps its far warning."""
+
+    def setUp(self):
+        self.points = [(37.80 + i * 0.0005, -122.27) for i in range(41)]
+        self.route = _route(self.points)
+        cum = self.route.cum_m
+        self.route.maneuvers = [
+            _man("head north", "A St", 0.0, 0),
+            routing.Maneuver("continue straight onto B St", "B St", 0.0, (0.0, 0.0),
+                             10, cum[10], "continue", False),
+            _man("turn left", "Grand Ave", cum[20], 20),
+            _man("arrive at your destination", "", cum[-1], 40)]
+        self.follower = guidance.Follower(self.route, offroute_m=45)
+
+    def test_the_name_change_is_never_said(self):
+        said = [self.follower.update(p, speed_ms=15.0)["say"] for p in self.points[:20]]
+        self.assertFalse([s for s in said if s and "continue" in s], said)
+
+    def test_the_turn_after_it_is_warned_about_before_the_name_change(self):
+        said = []
+        for p in self.points[:10]:                  # still short of the name change
+            s = self.follower.update(p, speed_ms=15.0)["say"]
+            if s:
+                said.append(s)
+        self.assertTrue(any("turn left" in s for s in said), said)
+
+    def test_the_banner_still_shows_it(self):
+        status = self.follower.update(self.points[2], speed_ms=15.0)
+        self.assertEqual(status["instruction"], "continue straight onto B St")
+
+
+class ArrivingAtWalkingPace(unittest.TestCase):
+    """Arrival is 25 m from the end; so is the "now" band below a crawl. The
+    fix that arrived used to swallow the only prompt that says she is there."""
+
+    def test_the_arriving_fix_says_so(self):
+        points = [(37.80 + i * 0.0001, -122.27) for i in range(41)]   # ~11 m apart
+        route = _route(points)
+        route.maneuvers = [_man("head north", "A St", 0.0, 0),
+                           _man("arrive at your destination", "", route.cum_m[-1], 40)]
+        follower = guidance.Follower(route, offroute_m=45)
+        for p in points[:37]:                          # ~44 m out, and closer
+            follower.update(p, speed_ms=1.0)
+        status = follower.update(points[39], speed_ms=1.0)   # ~11 m: arrived
+        self.assertTrue(status["arrived"])
+        self.assertEqual(status["say"], "arrive at your destination")
+
+
+class _Snap:
+    def __init__(self, seg, k):
+        self.seg, self.fwd, self.bwd, self.u, self.v = seg, k, -1, 0, 1
+
+
+class _LimitGraph:
+    """The three things limit_mph reads: a snap, the bucket, the real class."""
+
+    def __init__(self, bucket, highway):
+        self.cls = [bucket]
+        self._hw = highway
+
+    def snap_edge(self, lat, lon, heading=None):
+        return _Snap(0, 0)
+
+    def highway(self, sid):
+        return None if self._hw is None else routing.CLASSES.index(self._hw)
+
+
+class SpeedLimitsFromTheMap(unittest.TestCase):
+    """A graph "class" is a SPEED BUCKET - the builder files each road under
+    the default speed nearest its posted maxspeed - so the bucket IS the posted
+    limit, quantized. Reading a typical limit off the bucket's NAME called a
+    35 mph street a "trunk link" limited to 40."""
+
+    def limit(self, bucket, highway):
+        return guidance.limit_mph(_LimitGraph(bucket, highway), 37.8, -122.27)
+
+    def test_a_posted_35_mph_street_is_35_and_is_not_a_trunk_link(self):
+        # bucket 3 is 55 km/h; a tertiary's own default is bucket 5, so 55 km/h
+        # is a posted limit: 34.2 mph, said as 35.
+        self.assertEqual(self.limit(3, "tertiary"), (35, "tertiary"))
+
+    def test_a_posted_30_is_30(self):
+        self.assertEqual(self.limit(5, "secondary"), (30, "secondary"))
+
+    def test_a_55_mph_freeway_is_55(self):
+        self.assertEqual(self.limit(2, "motorway"), (55, "motorway"))
+
+    def test_an_unposted_road_gets_the_typical_limit_for_what_it_really_is(self):
+        # The builder's residential default is 30 km/h (19 mph); California's
+        # is 25 - so a road sitting on its class's default bucket gets typical.
+        self.assertEqual(self.limit(11, "residential"), (25, "residential"))
+        self.assertEqual(self.limit(0, "motorway"), (65, "motorway"))
+
+    def test_an_older_graph_with_no_real_class_uses_the_bucket(self):
+        self.assertEqual(self.limit(3, None)[0], 35)
+
+    def test_the_buckets_are_the_builders_own(self):
+        import importlib.util
+        from pathlib import Path
+        path = Path(__file__).resolve().parents[3] / "tools" / "navi-routing" / "build_graph.py"
+        spec = importlib.util.spec_from_file_location("build_graph", path)
+        builder = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(builder)
+        self.assertEqual(tuple(builder.SPEED_KMH), guidance.BUCKET_KMH)
+
+
+class TheLimitFollowsTheBike(unittest.TestCase):
+    """The limit was worked out only while the Ride page painted, so on any
+    other page it was whatever road she had last been on - and the speeding
+    cue compared her speed against it. Now every taken fix keeps it."""
+
+    def setUp(self):
+        from agedashii_navi import live
+        self.live = live
+        live.reset()
+        self.addCleanup(live.reset)
+        self.calls = []
+
+        def fake_limit(graph, lat, lon, heading=None):
+            self.calls.append((lat, lon))
+            return (35, "tertiary") if lat < 37.81 else (65, "motorway")
+
+        for target, value in ((guidance, fake_limit),):
+            patcher = unittest.mock.patch.object(target, "limit_mph", value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        ready = unittest.mock.patch.object(routing, "ready", return_value=True)
+        graph = unittest.mock.patch.object(routing, "graph", return_value=object())
+        ready.start(), graph.start()
+        self.addCleanup(ready.stop)
+        self.addCleanup(graph.stop)
+
+    def test_a_fix_sets_the_limit_with_no_page_involved(self):
+        self.live.set_position(37.800, -122.27, speed_ms=10.0, t=100.0)
+        self.assertEqual(self.live.LIVE["limit"], (35, "tertiary"))
+
+    def test_it_is_not_searched_again_until_the_bike_has_moved(self):
+        self.live.set_position(37.800, -122.27, t=100.0)
+        self.live.set_position(37.8001, -122.27, t=200.0)       # 11 m
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_new_road_gets_its_own_limit(self):
+        self.live.set_position(37.800, -122.27, t=100.0)
+        self.live.set_position(37.820, -122.27, t=200.0)        # 2.2 km on
+        self.assertEqual(self.live.LIVE["limit"], (65, "motorway"))
+
+    def test_with_the_graph_not_loaded_nothing_is_claimed_and_nothing_loads(self):
+        with unittest.mock.patch.object(routing, "ready", return_value=False):
+            self.live.set_position(37.800, -122.27, t=100.0)
+        self.assertEqual(self.live.LIVE["limit"], (None, ""))
+        self.assertEqual(self.calls, [])
 
 
 class Wording(unittest.TestCase):

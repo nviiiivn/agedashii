@@ -1088,8 +1088,9 @@ def total_time_s(g, edges):
 
 # --------------------------------------------------------------- maneuvers
 
-Maneuver = namedtuple("Maneuver", "instruction street distance_m at index cum_m kind",
-                      defaults=(None,))
+Maneuver = namedtuple("Maneuver",
+                      "instruction street distance_m at index cum_m kind spoken",
+                      defaults=(None, True))
 Maneuver.__doc__ = """One turn-by-turn instruction.
 
 instruction  what to do, e.g. "turn left onto Harrison Street"
@@ -1100,6 +1101,11 @@ index        that point's index into Route.points
 cum_m        distance from the start of the route to that point
 kind         one of KINDS, or None where no clip says it honestly (leaving a
              roundabout, a ferry) - the words are then spoken instead
+spoken       False for a maneuver that is SHOWN but not SAID: offline, a road
+             that only changes its name on a straight line. Over 300 trips
+             those were 559 of the offline router's 701 "continue"s, where
+             Valhalla says nothing; spoken three times each, they made a
+             straight road talk constantly (AGEDASHII's call, 2026-09-28).
 """
 
 #: What a maneuver IS, as opposed to how it is worded: the key her recorded
@@ -1386,6 +1392,7 @@ def _maneuvers_from_legs(g, legs, pts, bounds, cum):
                 cur_name, 0.0, pts[0], 0, 0.0, "start"])
     run = legs[0][1]
     ring = [_on_roundabout(g, leg) for leg in legs]
+    turns_at = {}                     # out index -> (delta, road it left)
     for i in range(1, len(legs)):
         nm = legs[i][3]
         s0, e0 = bounds[i - 1]
@@ -1409,19 +1416,63 @@ def _maneuvers_from_legs(g, legs, pts, bounds, cum):
         significant = bool((abs(delta) > 25 and degree > 2) or (nm != cur_name and nm))
         move = (_freeway_move(g, legs[i - 1], legs[i], delta, b0, significant)
                 if node >= 0 and e0 > s0 and e1 > s1 else None)
+        turned = None
+        spoken = True
         if move is None and significant:
             words, kind = _turn(delta)
             move = (words + (f" onto {nm}" if nm else ""), kind)
+            turned = (delta, cur_name)
+            # Straight on, so the only reason it is here is the name change:
+            # shown on the banner, not said. (A ramp taken straight ahead is
+            # a freeway move above, and stays spoken.)
+            spoken = kind != "continue"
         if move is not None:
             out[-1][2] = run
-            out.append([move[0], nm, 0.0, pts[s1], s1, cum[s1], move[1]])
+            out.append([move[0], nm, 0.0, pts[s1], s1, cum[s1], move[1], spoken])
+            turns_at[len(out) - 1] = turned
             cur_name = nm
             run = 0.0
         run += legs[i][1]
     out[-1][2] = run
     out.append(["arrive at your destination", cur_name, 0.0,
                 pts[-1], len(pts) - 1, cum[-1], "arrive"])
-    return [Maneuver(*m) for m in out]
+    return [Maneuver(*m) for m in _median_u_turns(out, turns_at)]
+
+
+#: Two turns this close, the same way, adding to this much, back onto the
+#: road they left, are one U-turn through a median gap (see _median_u_turns).
+UTURN_GAP_M = 30.0
+UTURN_TOTAL_DEG = 150.0
+
+
+def _median_u_turns(out, turns_at):
+    """Fold "turn left" + "turn left onto X" through a median into one U-turn.
+
+    A divided road's U-turn gap is two junctions in the graph, 10-20 m apart.
+    Valhalla says "Make a left U-turn to stay on Tully Road"; so does this,
+    now. Measured over 300 trips: two same-side turns within UTURN_GAP_M,
+    adding to UTURN_TOTAL_DEG or more, back onto the same named road, were a
+    Valhalla U-turn 24 times out of 24 and something else never.
+    """
+    i = 1
+    while i + 1 < len(out):
+        a, b = turns_at.get(i), turns_at.get(i + 1)
+        if a and b:
+            (d1, before), (d2, _) = a, b
+            same_side = (d1 > 0) == (d2 > 0)
+            back_on = before and out[i + 1][1] == before
+            if (same_side and back_on and out[i + 1][5] - out[i][5] <= UTURN_GAP_M
+                    and abs(d1 + d2) >= UTURN_TOTAL_DEG):
+                side = "right" if d1 > 0 else "left"
+                out[i] = [f"make a {side} U-turn to stay on {before}", before,
+                          out[i][2] + out[i + 1][2], out[i][3], out[i][4], out[i][5],
+                          "uturn"]
+                del out[i + 1]
+                turns_at = {k - 1 if k > i + 1 else k: v
+                            for k, v in turns_at.items() if k != i + 1}
+                turns_at[i] = None
+        i += 1
+    return out
 
 
 def _edge_leg(g, k):

@@ -80,9 +80,6 @@ LEAN_FULL_DEG = 45.0
 #: Seconds between battery readings. The level moves a percent every few minutes;
 #: reading it on every fix would be a platform call a second for nothing.
 BATTERY_EVERY_S = 120.0
-#: Seconds between speed-limit lookups. Each one is a spatial search of the road
-#: graph, which is far too expensive to run per repaint.
-LIMIT_EVERY_S = 4.0
 #: Seconds between dash rebuilds. Once a second: every rebuild is forty-odd
 #: controls serialised and sent to Flutter, and on a phone that was a large part
 #: of why the map would not pan.
@@ -117,15 +114,39 @@ def _announce(out, limit):
                         time.time())
     if not prefs.voice():
         return []
-    items = [item for name in names
-             for item in voicelines.situation(name, voice_import.clip_path)]
+    situations = [item for name in names
+                  for item in voicelines.situation(name, voice_import.clip_path)]
+    prompt = []
     if out.get("say"):
-        items += voicelines.playlist(out["say"], out.get("say_parts"),
+        prompt = voicelines.playlist(out["say"], out.get("say_parts"),
                                      voice_import.clip_path,
                                      prefs.clip_streets(), prefs.imperial(),
                                      distances=voice_import.distance_clips())
+    # On the "now" band the TURN goes first and cuts in: six seconds from the
+    # junction, a 1.5 s speeding line in front of it ate a quarter of the
+    # warning (minion 4's audit, #10).
+    now = (out.get("say_parts") or {}).get("band") == "now"
+    items = prompt + situations if now else situations + prompt
     if items:
-        speech.play(items)
+        speech.play(items, urgent=now)
+    return items
+
+
+def _refused(route):
+    """Say a refused re-route - once per off-route spell (Cues.refused).
+
+    It was silence: "off route", "re-routing", then nothing, while the banner
+    said re-routing and the search retried every 12 s. The re-route is
+    offline-only and the map ends at the Bay, so this is where she meets it.
+    Returns the items handed to speech, for tests.
+    """
+    if route is not None and getattr(route, "ok", False):
+        return []
+    cues = _M.setdefault("cues", voicelines.Cues())
+    if not cues.refused() or not prefs.voice():
+        return []
+    items = voicelines.refusal(getattr(route, "reason", "") or "")
+    speech.play(items)
     return items
 
 
@@ -225,7 +246,7 @@ def _hud_state():
         "imperial": prefs.imperial(),
         "machine": machine,
         "speed_ms": speed,
-        "limit": _M.get("limit", (None, ""))[0],
+        "limit": (live.LIVE.get("limit") or (None, ""))[0],
         "lean_deg": row.get("lean_deg"),
         "roll_deg": sensors.STATE.get("roll_deg"),
         "pitch_deg": sensors.STATE.get("pitch_deg"),
@@ -389,21 +410,11 @@ def build(page, go=None):
         """Put the current live state into the controls that already exist."""
         pal = PAL()
         speed = live.LIVE.get("speed_ms")
-        here = live.LIVE.get("pos") or live.HOME
-        # The speed limit is a SPATIAL SEARCH of the road graph, and it was being
-        # run on every repaint - on the thread that draws the map, several times
-        # a second. Now it runs at most every LIMIT_EVERY_S and only when the
-        # bike has actually moved far enough for the answer to change; in between
-        # the last answer stands, which is true, because roads do not move.
-        limit, road = _M.get("limit", (None, ""))
-        moved = (_M.get("limit_at_pos") is None
-                 or telemetry.haversine_m(_M["limit_at_pos"], here) > 25.0)
-        if moved and time.time() - _M.get("limit_at", 0.0) > LIMIT_EVERY_S:
-            limit, road = guidance.limit_mph(_graph(), here[0], here[1],
-                                             heading=live.LIVE.get("heading"))
-            _M["limit"] = (limit, road)
-            _M["limit_at"] = time.time()
-            _M["limit_at_pos"] = here
+        # The speed limit is kept by live.set_position on every taken fix,
+        # rate-limited there (a spatial search of the road graph), so this page,
+        # the speeding cue and every other surface read one current answer. It
+        # used to be worked out here, so off this page it went stale.
+        limit, road = live.LIVE.get("limit") or (None, "")
         speed_value.value = guidance.speed_text(speed, prefs.imperial())
         speed_value.color = (pal["bad"] if guidance.over_limit(speed, limit)
                              else pal["text"])
@@ -612,7 +623,7 @@ def build(page, go=None):
             return
         # A new prompt fires once per band; say it as it fires. Handed to the
         # speech worker, so this fix handler never waits on the engine.
-        _announce(out, _M.get("limit", (None, ""))[0])
+        _announce(out, (live.LIVE.get("limit") or (None, ""))[0])
         # The sensors and the microphone run far faster than this 1 Hz fix, and
         # they are merged INTO the sample the fix just created rather than
         # logged on their own clock. That is what keeps one row per fix while
@@ -768,6 +779,7 @@ def build(page, go=None):
         follower = live.LIVE.get("follower")
         if route is not None and route.ok and follower is not None:
             follower.note_reroute()
+        _refused(route)
         draw_route()
         paint()
         _update(page)

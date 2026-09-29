@@ -1020,6 +1020,110 @@ class TestTurnRestrictions(LatticeTestCase):
         self.assertNotEqual(first.points, second.points)
 
 
+class TestWhatIsSpoken(RoutingTestCase):
+    """A street that only changes its name is SHOWN, not SPOKEN.
+
+    Over 300 trips the offline router said "continue" 701 times, 559 of them
+    where Valhalla says nothing - a road changing its name on a straight line.
+    Each could fire three prompts, so a straight road talked at her constantly
+    and a voice that talks constantly is not heard at the junction that
+    matters (AGEDASHII's call). The banner still shows it. Merges stay spoken.
+    """
+
+    def route(self, nodes, segs, a, b):
+        path = Path(self._tmproot.name) / "spoken.rg"
+        _pack_graph(path, nodes, segs)
+        os.environ[R.ENV_OVERRIDE] = str(path)
+        R.reset()
+        with self.no_server():
+            out = R.route(a, b, allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        return out.maneuvers
+
+    def test_a_name_change_on_a_straight_road_is_not_spoken(self):
+        nodes = [(37.800, -122.2700), (37.810, -122.2700), (37.820, -122.2700),
+                 (37.810, -122.2600)]
+        segs = [(0, 1, "A Street", False, RES), (1, 2, "B Street", False, RES),
+                (1, 3, "Cross Street", False, RES)]
+        mans = self.route(nodes, segs, _mid(nodes[0], nodes[1]), _mid(nodes[1], nodes[2]))
+        change = [m for m in mans if m.street == "B Street"][0]
+        self.assertEqual((change.instruction, change.kind),
+                         ("continue straight onto B Street", "continue"))
+        self.assertFalse(change.spoken)
+        self.assertTrue(mans[-1].spoken, "arrival must be spoken")
+
+    def test_a_turn_is_spoken(self):
+        nodes = [(37.800, -122.2700), (37.810, -122.2700), (37.810, -122.2600),
+                 (37.820, -122.2700)]
+        segs = [(0, 1, "A Street", False, RES), (1, 2, "B Street", False, RES),
+                (1, 3, "A Street", False, RES)]
+        mans = self.route(nodes, segs, _mid(nodes[0], nodes[1]), _mid(nodes[1], nodes[2]))
+        turn = [m for m in mans if m.kind == "turn-right"][0]
+        self.assertTrue(turn.spoken)
+
+    def test_a_ramp_taken_straight_ahead_is_still_spoken(self):
+        # kind "continue", but it is a ramp - a real thing she does.
+        nodes = [(37.8100, -122.2715), (37.8155, -122.2715), (37.8255, -122.2715),
+                 (37.8255, -122.2703)]
+        segs = [(0, 1, "Oak Street", False, STREET), (1, 2, "Oak Street", False, STREET),
+                (1, 3, "", True, RAMP)]
+        mans = self.route(nodes, segs, _mid(nodes[0], nodes[1]), _mid(nodes[1], nodes[3]))
+        ramp = [m for m in mans if "ramp" in m.instruction][0]
+        self.assertEqual(ramp.kind, "continue")
+        self.assertTrue(ramp.spoken)
+
+    def test_every_server_maneuver_is_spoken(self):
+        self.assertTrue(all(m.spoken for m in R.parse_valhalla(VALHALLA_OK).maneuvers))
+
+    def test_a_maneuver_built_without_saying_is_spoken(self):
+        self.assertTrue(R.Maneuver("turn left", "", 0.0, (0.0, 0.0), 0, 0.0).spoken)
+
+
+class TestMedianUTurns(RoutingTestCase):
+    """Turning back through the gap in a divided road's median is two
+    junctions in the graph - two left turns 10-20 m apart - and one U-turn to
+    the rider. Valhalla says "Make a left U-turn to stay on Tully Road"; the
+    offline router said "turn left" twice. Measured over 300 trips: two
+    same-side turns within 30 m, adding to 150+ degrees, back onto the same
+    named road, were a Valhalla U-turn 24 times out of 24."""
+
+    #  N                    Cross Street (north)
+    #  W0 <------- W1 <------- W2     westbound carriageway
+    #              |  median crossover
+    #  E0 -------> E1 -------> E2     eastbound carriageway
+    #              S            Cross Street (south)
+    NODES = [(37.8000, -122.2750), (37.8000, -122.2700), (37.8000, -122.2650),
+             (37.80014, -122.2650), (37.80014, -122.2700), (37.80014, -122.2750),
+             (37.7990, -122.2700), (37.8011, -122.2700)]
+    E0, E1, E2, W2, W1, W0, S, N = range(8)
+
+    def route(self, west_name):
+        segs = [(self.E0, self.E1, "Tully Road", True, RES), (self.E1, self.E2, "Tully Road", True, RES),
+                (self.W2, self.W1, west_name, True, RES), (self.W1, self.W0, west_name, True, RES),
+                (self.E1, self.W1, "", False, RES),
+                (self.E1, self.S, "Cross Street", False, RES), (self.W1, self.N, "Cross Street", False, RES)]
+        path = Path(self._tmproot.name) / "median.rg"
+        _pack_graph(path, self.NODES, segs)
+        os.environ[R.ENV_OVERRIDE] = str(path)
+        R.reset()
+        with self.no_server():
+            out = R.route(_mid(self.NODES[self.E0], self.NODES[self.E1]),
+                          _mid(self.NODES[self.W1], self.NODES[self.W0]), allow_server=False)
+        self.assertTrue(out.ok, out.reason)
+        return [(m.instruction, m.kind) for m in out.maneuvers]
+
+    def test_two_lefts_through_the_median_are_one_u_turn(self):
+        self.assertEqual(self.route("Tully Road"), [
+            ("head east on Tully Road", "start"),
+            ("make a left U-turn to stay on Tully Road", "uturn"),
+            ("arrive at your destination", "arrive")])
+
+    def test_two_lefts_onto_another_road_stay_two_turns(self):
+        kinds = [k for _, k in self.route("Other Road")]
+        self.assertNotIn("uturn", kinds)
+        self.assertEqual(kinds.count("turn-left"), 2)
+
+
 class TestOutsideTheMap(LatticeTestCase):
     """Hers: "i'll never have signal when i'm out n about". The day she points
     at somewhere the phone's map does not cover, the app must say so and say
