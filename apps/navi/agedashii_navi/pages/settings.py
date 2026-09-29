@@ -133,7 +133,8 @@ def _line_groups():
     have = list(voice_import.distance_clips())
     return (
         ("Turns", [n for n in voice_import.NAMES
-                   if n in voicelines.STAND_IN or n in voicelines.SIDED]),
+                   if n in voicelines.STAND_IN or n in voicelines.SIDED
+                   or n in voicelines.JOINS]),
         ("Distances - said before the turn",
          have or list(voice_import.FIXED_DISTANCES)),
         ("Situations", [n for n in voice_import.NAMES if n in voicelines.SITUATIONS]),

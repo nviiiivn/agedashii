@@ -130,6 +130,11 @@ def _announce(out, limit):
                                 distances=voice_import.distance_clips(),
                                 halves=character.halves)
         prompt = character.arrange(piece, band, text=out["say"])
+        # "and then" the next turn, when it comes too soon for its own
+        # warning. Our own sentence already says it (guidance.spoken).
+        if piece is not None and parts.get("then"):
+            prompt += voicelines.and_then(
+                parts["then"], lambda name: character.clip(name, "now"))
     # On the "now" band the TURN goes first and cuts in: six seconds from the
     # junction, a 1.5 s speeding line in front of it ate a quarter of the
     # warning (minion 4's audit, #10).

@@ -61,6 +61,8 @@ def flourishes(names, parts):
     maneuver); the second only after a first, from voicelines.second_moods
     (voicelines.Flourish.second). Never two on the "now" band.
     """
+    if (parts or {}).get("then"):
+        return []                   # "and then" is the whole of that prompt
     first = flourish(mood(names, parts), parts)
     if not first:
         return []

@@ -207,6 +207,19 @@ def playlist(text, parts, clip_path, streets=False, imperial=True, distances=Non
     return got.classic() if got else [("tts", text, None)]
 
 
+def and_then(then, clip_path):
+    """The items after a "now" prompt for the maneuver straight after it -
+    guidance's parts["then"]: "and then" (her clip, else the phone's words),
+    then that maneuver's line and its tail, at the "now" band: no distance,
+    no street. An exit keeps its side, a roundabout its exit number."""
+    joint = clip_path("and-then")
+    items = [("clip", joint, JOINS["and-then"]) if joint
+             else ("tts", JOINS["and-then"], None)]
+    nxt = core(dict(then, band="now"), clip_path)
+    return items + (nxt.classic() if nxt else
+                    [("tts", _bare(then.get("instruction")), None)])
+
+
 def halves(slot, path, source, clip_path):
     """[a, b] - the two halves of `slot`'s line, part-<slot>-a and -b - or None.
 
@@ -267,6 +280,8 @@ STAND_IN = {"turn-left": "turn left", "turn-right": "turn right",
 #: there is one (core), else "exit" and the phone adds the side.
 SIDED = {"exit-left": "take the exit on the left",
          "exit-right": "take the exit on the right"}
+#: What joins one maneuver to the next (guidance's "then"): her AndThen.
+JOINS = {"and-then": "and then"}
 
 
 def stand_in(name, imperial=True):
@@ -275,6 +290,8 @@ def stand_in(name, imperial=True):
         return STAND_IN[name]
     if name in SIDED:
         return SIDED[name]
+    if name in JOINS:
+        return JOINS[name]
     feet = distance_feet(name)
     if feet:
         return f"In {guidance.distance_text(feet / FT_PER_M, imperial)},"

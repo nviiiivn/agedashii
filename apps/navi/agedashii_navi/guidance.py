@@ -76,8 +76,8 @@ NOW_SOON_S = 3.0
 
 #: "and then": the maneuver after this one is said on this one's "now" prompt
 #: when it is too close to get a warning of its own - within THEN_S at her
-#: speed (its own "now" plus NOW_SOON_S), and never closer than THEN_MIN_M
-#: counts as too close, stopped or crawling. Not for an arrival, a continue or
+#: speed (its own "now" plus NOW_SOON_S), and at least THEN_MIN_M, which is
+#: what a crawl or a missing speed gets. Not for an arrival, a continue or
 #: a merge, which need no warning ahead. Agreed by minion 1, minion 2 and
 #: AGEDASHII; the Kotlin app uses the same numbers.
 THEN_S = PROMPT_BANDS[-1][0] + NOW_SOON_S
@@ -397,9 +397,7 @@ def _then(route, man, speed_ms):
     if nxt is None or getattr(nxt, "kind", None) in THEN_NOT:
         return None
     gap = nxt.cum_m - man.cum_m
-    reach = THEN_MIN_M
-    if speed_ms is not None and speed_ms >= CRAWL_MS:
-        reach = max(THEN_S * speed_ms, THEN_MIN_M)
+    reach = max(THEN_S * (speed_ms or 0.0), THEN_MIN_M)
     return nxt if 0.0 <= gap <= reach else None
 
 

@@ -67,7 +67,7 @@ NAMES = (
     "sharp-right", "uturn", "continue", "merge", "exit", "arrive",
     "dist-100ft", "dist-200ft", "dist-300ft", "dist-500ft", "dist-quarter",
     "dist-half", "dist-1mile", "dist-2miles", "offroute", "rerouting", "start",
-    "speeding", "roundabout", "open", "exit-left", "exit-right",
+    "speeding", "roundabout", "open", "exit-left", "exit-right", "and-then",
 )
 _NAMES = frozenset(NAMES)
 #: Names she may record and is never told are missing. A roundabout clip was
@@ -75,7 +75,9 @@ _NAMES = frozenset(NAMES)
 #: "open" is her "That's amazing, where are we?", once per cold launch.
 #: exit-left / exit-right say their own side (her "exit left human"); without
 #: one, "exit" plays and the phone adds the side.
-OPTIONAL = frozenset({"roundabout", "open", "exit-left", "exit-right"})
+#: "and-then" joins a turn to the next one when it comes too soon for its own
+#: warning (her AndThen.mp3); without one the phone says "and then".
+OPTIONAL = frozenset({"roundabout", "open", "exit-left", "exit-right", "and-then"})
 #: The fixed distance names. Once she has any distance clip, these stop being
 #: "missing": the player rounds to what she has.
 FIXED_DISTANCES = tuple(n for n in NAMES if n.startswith("dist-"))

@@ -69,12 +69,12 @@ class WhereTheVoiceLives(_Case):
     def test_it_is_the_apps_own_storage_under_voice(self):
         self.assertEqual(vi.voice_dir(), os.path.join(_TMP.name, "voice"))
 
-    def test_the_names_are_the_twenty_three_fixed_ones_and_the_optional_four(self):
-        self.assertEqual(len(vi.NAMES), 27)
-        self.assertEqual(vi.NAMES[-3:], ("open", "exit-left", "exit-right"),
+    def test_the_names_are_the_twenty_three_fixed_ones_and_the_optional_five(self):
+        self.assertEqual(len(vi.NAMES), 28)
+        self.assertEqual(vi.NAMES[-4:], ("open", "exit-left", "exit-right", "and-then"),
                          "appended, so no index moves")
-        self.assertEqual(vi.OPTIONAL, frozenset({"roundabout", "open",
-                                                 "exit-left", "exit-right"}))
+        self.assertEqual(vi.OPTIONAL, frozenset({"roundabout", "open", "exit-left",
+                                                 "exit-right", "and-then"}))
         for name in ("turn-left", "dist-quarter", "dist-2miles", "offroute",
                      "rerouting", "start", "speeding", "uturn"):
             self.assertIn(name, vi.NAMES)

@@ -84,6 +84,7 @@ class WhichClip(unittest.TestCase):
     def test_every_clip_name_is_one_of_hers_and_every_one_of_hers_is_used(self):
         names = set(voice_import.NAMES)
         used = ({n for _w, n in voicelines.MANEUVERS} | set(voicelines.SIDED)
+                | set(voicelines.JOINS)
                 | set(voice_import.FIXED_DISTANCES) | set(voicelines.SITUATIONS))
         self.assertEqual(used, names)
         self.assertEqual(set(voicelines.STAND_IN), {n for _w, n in voicelines.MANEUVERS})
@@ -631,6 +632,98 @@ class ASecondLine(unittest.TestCase):
         self.assertFalse(f.angry_ok(now=90))                    # it counts, too
 
 
+def two_turns(gap, step=0.0005, n=41, at=20, second="turn-right", words="turn right"):
+    """A straight route north with a turn at point `at` and another `gap`
+    points after it, then the arrival."""
+    points = [(37.80 + i * step, -122.27) for i in range(n)]
+    cum = routing.cumulative_m(points)
+    mans = [routing.Maneuver(instruction="head north", street="First St", distance_m=0.0,
+                             at=(0.0, 0.0), index=0, cum_m=0.0, kind="start"),
+            routing.Maneuver(instruction="turn left", street="Grand Ave", distance_m=0.0,
+                             at=(0.0, 0.0), index=at, cum_m=cum[at], kind="turn-left"),
+            routing.Maneuver(instruction=f"{words} onto Main St", street="Main St",
+                             distance_m=0.0, at=(0.0, 0.0), index=at + gap,
+                             cum_m=cum[at + gap], kind=second),
+            routing.Maneuver(instruction="arrive at your destination", street="Main St",
+                             distance_m=0.0, at=(0.0, 0.0), index=n - 1,
+                             cum_m=cum[-1], kind="arrive")]
+    route = routing.Route(ok=True, source="offline", points=points, cum_m=cum,
+                          maneuvers=mans, distance_m=cum[-1], duration_s=600.0)
+    return route, points
+
+
+def ride_to(route, points, upto, speed):
+    """Every prompt fired riding points[:upto], as (say, parts)."""
+    follower = guidance.Follower(route, offroute_m=45)
+    fired = []
+    for point in points[:upto]:
+        status = follower.update(point, speed_ms=speed)
+        if status.get("say"):
+            fired.append((status["say"], status["say_parts"]))
+    return fired
+
+
+class AndThen(unittest.TestCase):
+    """Her AndThen.mp3 (minion 1's proposal, AGEDASHII approved; the rules
+    agreed with minion 2): a turn too close to get its own warning is said on
+    the "now" of the one before it."""
+
+    def now_of_the_first(self, route, points, speed, upto):
+        return next(p for _s, p in ride_to(route, points, upto, speed)
+                    if p["band"] == "now" and p["kind"] == "turn-left")
+
+    def test_a_turn_too_close_for_its_own_warning_rides_on_the_one_before(self):
+        route, points = two_turns(gap=1)                       # 55 m
+        fired = ride_to(route, points, 20, 15.0)
+        say, parts = fired[-1]
+        self.assertEqual(parts["band"], "now")
+        self.assertEqual(parts["then"]["kind"], "turn-right")
+        self.assertTrue(say.endswith(", and then turn right"), say)
+        # Only on "now": a far or near prompt is early enough for the next
+        # turn to get its own.
+        self.assertTrue(all("then" not in p for _s, p in fired[:-1]), fired)
+        self.assertGreater(len(fired), 1)
+
+    def test_a_turn_far_enough_away_gets_its_own(self):
+        route, points = two_turns(gap=3)                       # 165 m > 9 s at 15 m/s
+        self.assertNotIn("then", self.now_of_the_first(route, points, 15.0, 20))
+        route, points = two_turns(gap=2)                       # 110 m < 135 m
+        self.assertIn("then", self.now_of_the_first(route, points, 15.0, 20))
+
+    def test_its_own_now_still_fires(self):
+        route, points = two_turns(gap=5, step=0.0001, n=140, at=100)    # 55 m
+        nows = [(p["kind"], "then" in p) for _s, p in ride_to(route, points, 106, 15.0)
+                if p["band"] == "now"]
+        self.assertEqual(nows, [("turn-left", True), ("turn-right", False)])
+
+    def test_not_for_an_arrival_a_continue_or_a_merge(self):
+        for kind, words in (("continue", "continue straight"), ("merge", "merge")):
+            route, points = two_turns(gap=1, second=kind, words=words)
+            self.assertNotIn("then", self.now_of_the_first(route, points, 15.0, 20), kind)
+
+    def test_crawling_it_is_sixty_metres(self):
+        # 1 m/s is a crawl: the reach is THEN_MIN_M, not 9 s of speed.
+        route, points = two_turns(gap=5, step=0.0001, n=140, at=100)    # 55 m
+        self.assertIn("then", self.now_of_the_first(route, points, 1.0, 100))
+        route, points = two_turns(gap=7, step=0.0001, n=140, at=100)    # 78 m
+        self.assertNotIn("then", self.now_of_the_first(route, points, 1.0, 100))
+
+    def test_it_says_and_then_and_the_next_line_whole(self):
+        then = {"instruction": "take the exit on the right", "kind": "exit",
+                "street": "I 80", "band": "now"}
+        self.assertEqual(voicelines.and_then(then, clips("and-then", "exit-right")),
+                         [("clip", "/voice/and-then.m4a", "and then"),
+                          ("clip", "/voice/exit-right.m4a", "take the exit on the right")])
+        self.assertEqual(voicelines.and_then(then, clips("exit")),
+                         [("tts", "and then", None),
+                          ("clip", "/voice/exit.m4a", "take the exit on the right"),
+                          ("tts", "on the right", None)])
+        leave = {"instruction": "exit the roundabout", "kind": None, "band": "now"}
+        self.assertEqual(voicelines.and_then(leave, clips("and-then")),
+                         [("clip", "/voice/and-then.m4a", "and then"),
+                          ("tts", "exit the roundabout", None)])
+
+
 class HisWildLinesLead(unittest.TestCase):
     """Hers: "id rather him scream things that make kind of sense than the
     normal waze arnold talking. only use that shit as fall back". Per slot: her
@@ -990,6 +1083,20 @@ class TheRidePage(_Clean):
                                         ("clip", a, "continue straight"),
                                         ("flourish", "/v/cough.mp3", None),
                                         ("clip", b, "continue straight")]])
+
+    def test_and_then_rides_on_the_corner_with_no_line_of_his(self):
+        left, right, joint = self.add("turn-left"), self.add("turn-right"), self.add("and-then")
+        self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3"}})
+        prefs.set_value("voice", True)
+        parts = dict(fired("turn left", band="now"), kind="turn-left",
+                     then={"instruction": "turn right onto Main St", "kind": "turn-right",
+                           "band": "now"})
+        self.announce({"ok": True, "off_route": False},
+                      "turn left onto Grand Ave, and then turn right", parts)
+        self.assertEqual(self.played, [[("clip", left, "turn left"),
+                                        ("clip", joint, "and then"),
+                                        ("clip", right, "turn right")]])
+        self.assertEqual(self.urgent, [True])
 
     def test_no_urgent_line_on_the_far_prompt(self):
         self.add("turn-left")
