@@ -184,6 +184,41 @@ class _Clean(unittest.TestCase):
 
 # ------------------------------------------------------------- 1. the tiles
 
+class TheRouterChipTellsTheTruth(_Clean):
+    """Her v1.17.0 panel read "offline maps · no graph / not started" - which
+    she took as offline routing dead and the sensors not started. It was the
+    graph's LAZY state: it loads on the first route (emulator-5556: 358,142
+    nodes from bayarea.rg in 122 ms, then an offline route to Chabot)."""
+
+    def words(self, status):
+        with mock.patch.object(live, "graph_status", return_value=status):
+            return " | ".join(texts(settings_page.build(self.page)))
+
+    def test_not_loaded_yet_is_not_no_graph(self):
+        said = self.words({"ready": False, "phase": "idle", "installed": True,
+                           "detail": "not started"})
+        self.assertNotIn("no graph", said)
+        self.assertNotIn("not started", said)
+        self.assertIn("loads on the first route", said)
+
+    def test_a_missing_graph_still_says_so(self):
+        said = self.words({"ready": False, "phase": "absent", "installed": False,
+                           "detail": "no offline road graph installed"})
+        self.assertIn("no graph", said)
+        self.assertIn("Road graph: no offline road graph installed", said)
+
+    def test_the_graph_line_says_whose_line_it_is(self):
+        said = self.words({"ready": True, "phase": "ready", "installed": True,
+                           "detail": "358,142 nodes, 801,552 edges from bayarea.rg in 122 ms"})
+        self.assertIn("Road graph: 358,142 nodes", said)
+        self.assertIn("offline router", said)
+
+    def test_graph_status_reports_the_phase(self):
+        status = live.graph_status()
+        self.assertIn("phase", status)
+        self.assertIn("installed", status)
+
+
 class TheTilePickerTellsTheTruth(_Clean):
     def setUp(self):
         super().setUp()

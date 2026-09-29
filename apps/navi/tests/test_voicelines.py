@@ -17,6 +17,8 @@ APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
+import flet as ft  # noqa: E402
+
 from agedashii_washi import routing  # noqa: E402
 
 from agedashii_navi import (guidance, live, prefs, speech, voice_import,  # noqa: E402
@@ -320,6 +322,84 @@ class Edges(unittest.TestCase):
         self.assertEqual(cues.update(None, None, False, True, 80), ["speeding"])
 
 
+class Always:
+    """An rng that always says yes and picks the first choice."""
+
+    def random(self):
+        return 0.0
+
+    def choice(self, seq):
+        return seq[0]
+
+
+class Never(Always):
+    def random(self):
+        return 0.999
+
+
+POOL = {"flourish-urgent-do-it-now": "/v/a.mp3", "flourish-urgent-move": "/v/b.mp3"}
+
+
+class CharacterLines(unittest.TestCase):
+    """Hers: "DO IT NOW and yeaaararrghhhhh and get to the choppaa ... peppered
+    in randomly and accordingly". AFTER the instruction, never instead of it."""
+
+    def test_the_rate_is_a_named_constant_per_mood(self):
+        self.assertEqual(voicelines.FLOURISH_RATE["urgent"], 0.25)
+        self.assertEqual(set(voicelines.FLOURISH_RATE), set(voicelines.FLOURISH_MOODS))
+        self.assertIsNone(voicelines.Flourish(Never()).pick("urgent", POOL))
+        self.assertIsNotNone(voicelines.Flourish(Always()).pick("urgent", POOL))
+
+    def test_never_the_same_one_twice_running(self):
+        f = voicelines.Flourish(Always())
+        first = f.pick("urgent", POOL)[0]
+        second = f.pick("urgent", POOL)[0]
+        self.assertNotEqual(first, second)
+        self.assertIsNone(voicelines.Flourish(Always()).pick("urgent", {}))
+        lone = voicelines.Flourish(Always())
+        lone.pick("urgent", {"flourish-urgent-move": "/v/b.mp3"})
+        self.assertIsNone(lone.pick("urgent", {"flourish-urgent-move": "/v/b.mp3"}))
+
+    def test_at_most_one_per_maneuver(self):
+        f = voicelines.Flourish(Always())
+        self.assertIsNotNone(f.pick("urgent", POOL, maneuver=7))     # far
+        self.assertIsNone(f.pick("urgent", POOL, maneuver=7))        # near
+        self.assertIsNotNone(f.pick("urgent", POOL, maneuver=8))     # the next turn
+
+    def test_a_cough_drops_into_the_join_now_and_then(self):
+        # Between the distance and the turn of one prompt - never inside a
+        # clip, never on the "now" band, never twice running.
+        coughs = {"interject-cough": "/v/cough.mp3"}
+        items = [("clip", "/v/dist.mp3", "In 400 ft,"), ("clip", "/v/turn.mp3", "turn left")]
+        f = voicelines.Flourish(Always())
+        got = f.cough(items, coughs, band="near")
+        self.assertEqual(got, [items[0], ("flourish", "/v/cough.mp3", None), items[1]])
+        self.assertEqual(f.cough(items, coughs, band="near"), items)          # not twice running
+        self.assertEqual(voicelines.Flourish(Always()).cough(items, coughs, band="now"), items)
+        self.assertEqual(voicelines.Flourish(Always()).cough(items[1:], coughs, band="near"),
+                         items[1:])                                        # one piece: no join
+        self.assertEqual(voicelines.Flourish(Never()).cough(items, coughs, band="near"), items)
+        self.assertLess(voicelines.COUGH_RATE, voicelines.FLOURISH_RATE["urgent"])
+
+    def test_the_mood_follows_the_moment(self):
+        mood = voicelines.flourish_mood
+        self.assertEqual(mood([], fired("turn left")), "urgent")
+        self.assertIsNone(mood([], fired("turn left", band="now")))  # six seconds out
+        self.assertEqual(mood([], dict(fired("arrive at your destination", band="now"),
+                                      kind="arrive")), "arrival")
+        self.assertEqual(mood(["offroute", "rerouting"], None), "angry")
+        self.assertEqual(mood(["speeding"], fired("turn left")), "scold")
+        self.assertEqual(mood(["start"], fired("turn left")), "start")
+        # Arrival only on the arrive maneuver's OWN "now" prompt (minion 2):
+        # nothing follows it. Its far and near prompts get none.
+        self.assertIsNone(mood([], dict(fired("arrive at your destination"), kind="arrive")))
+        self.assertEqual(mood(["offroute"], dict(fired("arrive at your destination"),
+                                                 kind="arrive")), "angry")
+        self.assertEqual(mood(["offroute"], dict(fired("arrive", band="now"),
+                                                 kind="arrive")), "arrival")
+        self.assertIsNone(mood([], None))
+
+
 class _Clean(unittest.TestCase):
     def setUp(self):
         speech.reset()
@@ -391,6 +471,23 @@ class ThePlayer(_Clean):
         self.assertTrue(wait_for(lambda: speech.STATE["spoken"] == 1))
         self.assertEqual(self.engine.heard, [("clip", "turn-left.m4a")])
         self.assertEqual(speech.STATE["problem"], speech.NO_WORKING_VOICE)
+
+    def test_a_character_line_is_the_first_thing_cut(self):
+        # minion 2: any newer prompt stops a flourish at once - it can never
+        # be the thing still playing when a turn needs saying.
+        self.engine.seconds = 2.0
+        speech.play([("flourish", "/voice/flourish-urgent-do-it-now.mp3", None)])
+        self.assertTrue(wait_for(lambda: self.engine.heard))
+        t0 = time.time()
+        speech.play([("tts", "In 1 mile, turn left", None)])      # not urgent
+        self.assertTrue(wait_for(lambda: len(self.engine.heard) == 2))
+        self.assertLess(time.time() - t0, 0.5)
+        self.assertEqual(self.engine.heard[0], ("clip", "flourish-urgent-do-it-now.mp3"))
+
+    def test_a_broken_character_line_is_skipped_silently(self):
+        speech.play([("tts", "turn left", None), ("flourish", "/voice/broken.m4a", None)])
+        self.assertTrue(wait_for(lambda: speech.STATE["spoken"] == 1))
+        self.assertEqual(self.engine.heard, [("tts", "turn left")])
 
     def test_a_file_that_will_not_prepare_releases_its_player(self):
         # Seen on emulator-5556: a corrupt turn-right.mp3 left a MediaPlayer
@@ -481,6 +578,25 @@ class TheRidePage(_Clean):
         self.assertEqual(self.played, [[("clip", turn, "turn left"), ("clip", fast, None)]])
         self.assertEqual(self.urgent, [True])
 
+    def test_sorry_follows_the_spoken_refusal_and_needs_a_voice(self):
+        from agedashii_washi import routing as R
+        self.flourishes({"sorry": {"flourish-sorry-my-bad": "/v/sorry.mp3"}})
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.played.clear()
+        speech.STATE["ready"] = True
+        self.ride._refused(R.Route(ok=False, source="offline", reason=R.START_OUTSIDE))  # noqa: SLF001
+        self.assertEqual(self.played[0][0][0], "tts")                    # the words first
+        self.assertEqual(self.played[0][-1], ("flourish", "/v/sorry.mp3", None))
+        # No voice: the words cannot be said, so neither is the apology.
+        self.ride._M.pop("cues", None)                                   # noqa: SLF001
+        self.announce({"ok": True, "off_route": False})
+        self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.played.clear()
+        speech.STATE["ready"] = False
+        self.ride._refused(R.Route(ok=False, source="offline", reason=R.START_OUTSIDE))  # noqa: SLF001
+        self.assertNotIn("/v/sorry.mp3", repr(self.played))
+
     def test_a_refused_reroute_is_spoken(self):
         from agedashii_washi import routing as R
         prefs.set_value("voice", True)
@@ -491,6 +607,64 @@ class TheRidePage(_Clean):
         self.ride._refused(failed)                           # noqa: SLF001 - a retry
         self.assertEqual(len(self.played), 1)
         self.assertIn("outside", self.played[0][0][1])
+
+    def flourishes(self, pools, coughs=None):
+        for attr, fake in (("flourishes", lambda mood, *a, **k: dict(pools.get(mood, {}))),
+                           ("interjections", lambda *a, **k: dict(coughs or {}))):
+            real = getattr(voice_import, attr, None)
+            setattr(voice_import, attr, fake)
+            self.addCleanup(lambda a=attr, r=real: setattr(voice_import, a, r)
+                            if r else delattr(voice_import, a))
+        self.ride._M["flourish"] = voicelines.Flourish(Always())   # noqa: SLF001
+        self.addCleanup(self.ride._M.pop, "flourish", None)        # noqa: SLF001
+
+    def test_a_character_line_goes_after_the_whole_instruction(self):
+        turn, far = self.add("turn-left"), self.add("dist-400ft")
+        self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3"}})
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False},
+                      "In 400 ft, turn left onto Grand Ave", fired("turn left"))
+        self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
+                                        ("clip", turn, "turn left"),
+                                        ("flourish", "/v/now.mp3", None)]])
+
+    def test_a_ride_prompt_can_cough_between_distance_and_turn(self):
+        turn, far = self.add("turn-left"), self.add("dist-400ft")
+        self.flourishes({}, coughs={"interject-cough": "/v/cough.mp3"})
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False},
+                      "In 400 ft, turn left onto Grand Ave", fired("turn left"))
+        self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
+                                        ("flourish", "/v/cough.mp3", None),
+                                        ("clip", turn, "turn left")]])
+
+    def test_no_character_line_six_seconds_from_the_corner(self):
+        self.add("turn-left")
+        self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3"}})
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False}, "turn left onto Grand Ave",
+                      fired("turn left", band="now"))
+        self.assertNotIn("/v/now.mp3", repr(self.played))
+
+    def test_the_switch_turns_the_theatre_off_and_keeps_the_voice(self):
+        turn = self.add("turn-left")
+        self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3"}})
+        prefs.set_value("voice", True)
+        self.assertTrue(prefs.flourishes())                     # on by default
+        prefs.set_value("flourishes", False)
+        # A far prompt, where one WOULD be added (the rng always says yes).
+        self.announce({"ok": True, "off_route": False}, "In 400 ft, turn left",
+                      fired("turn left"))
+        self.assertEqual(self.played, [[("tts", "In 400 ft,", None),
+                                        ("clip", turn, "turn left")]])
+
+    def test_an_angry_one_after_off_route(self):
+        self.flourishes({"angry": {"flourish-angry-big-mistake": "/v/mistake.mp3"}})
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.assertEqual(self.played, [[("tts", "Off route.", None),
+                                        ("tts", "Re-routing.", None),
+                                        ("flourish", "/v/mistake.mp3", None)]])
 
     def test_off_route_and_rerouting_go_as_one_playlist(self):
         prefs.set_value("voice", True)
@@ -606,6 +780,15 @@ class TheSettingsPage(_Clean):
         holder_of(built, "turn-right").on_click(None)
         self.assertEqual(played, [[("clip", mine, "turn left")],
                                   [("clip", arnold, "turn right")]])
+
+    def test_the_character_lines_switch_is_there_and_on(self):
+        from tests.test_road_test import holder_of, texts
+        built = self.build()
+        row = holder_of(built, "Character lines")
+        self.assertIsNotNone(row, texts(built))
+        switch = next(c for c in __import__("tests.test_road_test", fromlist=["walk"]).walk(row)
+                      if isinstance(c, ft.Switch))
+        self.assertTrue(switch.value)
 
     def test_the_import_panel_refreshes_the_list(self):
         from tests.test_road_test import holder_of, texts

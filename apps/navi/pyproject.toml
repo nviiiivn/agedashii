@@ -93,6 +93,10 @@ agedashii-washi = "../../packages/agedashii-washi"
 # Keep the screen on while navigating. A phone that sleeps at 60 mph is not
 # a navigation device.
 "android.permission.WAKE_LOCK" = true
+# The ongoing notification of the location foreground service (location.py).
+# Undeclared, Android 13+ still runs the service but HIDES its notification:
+# GPS on with nothing on screen saying so. She must always see it, and stop it.
+"android.permission.POST_NOTIFICATIONS" = true
 # The exhaust note, for the loudness meter and the RPM estimate. Declared
 # because the code that uses it exists and ships in this build - Settings has
 # the switch and it starts OFF. A permission declared ahead of a feature is

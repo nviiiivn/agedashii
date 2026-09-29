@@ -636,11 +636,162 @@ class Prompts(unittest.TestCase):
                  for p in self.points[:20]]
         self.assertTrue(any(again), "a re-route went silent")
 
+    def test_the_fired_parts_name_the_maneuver(self):
+        # One flourish per maneuver across its far/near/now prompts needs to
+        # know which maneuver a prompt is for.
+        indexes = set()
+        for point in self.points[:20]:
+            if self.follower.update(point, speed_ms=15.0)["say"]:
+                indexes.add(self.follower.fired["index"])
+        self.assertEqual(indexes, {20})
+
+    def test_riding_off_does_not_repeat_what_was_just_said(self):
+        # minion 2's find: picked at a light, crawl "far" fires; riding off
+        # makes the speed-scaled "near" due at almost the same distance, and
+        # the same "In 600 ft" played twice, 6 s apart.
+        self.assertIsNotNone(
+            self.follower.update(self.points[16], speed_ms=0.0)["say"])
+        self.assertIsNone(
+            self.follower.update(self.points[17], speed_ms=15.0)["say"])
+
+    def test_the_turn_itself_always_speaks(self):
+        self.follower.update(self.points[16], speed_ms=0.0)
+        self.follower.update(self.points[17], speed_ms=15.0)
+        now = self.follower.update(self.points[19], speed_ms=15.0)["say"]
+        self.assertIsNotNone(now)
+        self.assertNotIn("In ", now)
+
+    def test_a_prompt_well_nearer_than_the_last_still_speaks(self):
+        self.follower.update(self.points[16], speed_ms=0.0)
+        near = self.follower.update(self.points[18], speed_ms=15.0)["say"]
+        self.assertIsNotNone(near, "a real closer prompt was swallowed")
+
     def test_the_head_instruction_is_never_a_prompt(self):
         # routing.next_maneuver starts at maneuvers[1]; "head north" describes
         # what she is already doing.
         status = self.follower.update(self.points[0], speed_ms=15.0)
         self.assertNotIn("head", (status["say"] or "").lower())
+
+
+MPH = 1 / 2.2369362920544
+FT = 1 / 3.280839895
+#: Arnold's four distances, as his clips actually say them (Whisper, minion 5).
+ARNOLD_FT = (528.0, 1320.0, 2640.0, 5280.0)
+
+
+class PromptsFireWhereHerVoiceHasADistance(unittest.TestCase):
+    """His four distances (0.1 mi, a quarter, a half, a mile) are the points
+    Waze ANNOUNCES AT, not a scale to round to. Fired at a fixed 60 s and 20 s,
+    the near prompt on every 25-35 mph street fell between his clips and the
+    phone said the number. Fired when she REACHES one of his distances - the
+    one nearest the band's time, within ANCHOR_WINDOW - every distance is his,
+    and exact. With no distance clips nothing changes."""
+
+    def points(self, mph):
+        return guidance.prompt_points(mph * MPH, anchors_ft=ARNOLD_FT)
+
+    def test_thirty_mph_is_a_half_then_a_quarter(self):
+        p = self.points(30)
+        self.assertAlmostEqual(p["far"], 2640 * FT, places=3)
+        self.assertAlmostEqual(p["near"], 1320 * FT, places=3)
+
+    def test_twenty_five_mph_is_a_half_then_a_tenth(self):
+        p = self.points(25)
+        self.assertAlmostEqual(p["far"], 2640 * FT, places=3)
+        self.assertAlmostEqual(p["near"], 528 * FT, places=3)
+
+    def test_forty_five_mph_is_a_mile_then_a_quarter(self):
+        p = self.points(45)
+        self.assertAlmostEqual(p["far"], 5280 * FT, places=3)
+        self.assertAlmostEqual(p["near"], 1320 * FT, places=3)
+
+    def test_now_is_never_moved(self):
+        for mph in (15, 30, 45, 65):
+            self.assertAlmostEqual(self.points(mph)["now"], mph * MPH * 6.0)
+
+    def test_far_is_always_before_near_and_near_before_now(self):
+        for mph in range(5, 90):
+            p = self.points(mph)
+            self.assertGreater(p["far"], p["near"], mph)
+            self.assertGreater(p["near"], p["now"], mph)
+
+    def test_nothing_is_moved_further_than_the_window(self):
+        for mph in range(8, 90):
+            ms = mph * MPH
+            timed = guidance.prompt_points(ms)
+            for band in ("far", "near"):
+                ratio = self.points(mph)[band] / timed[band]
+                self.assertLessEqual(ratio, guidance.ANCHOR_WINDOW + 1e-9, (mph, band))
+                self.assertGreaterEqual(ratio, 1 / guidance.ANCHOR_WINDOW - 1e-9, (mph, band))
+
+    def test_no_distance_clips_changes_nothing(self):
+        for mph in (10, 30, 60):
+            self.assertEqual(guidance.prompt_points(mph * MPH, anchors_ft=()),
+                             guidance.prompt_points(mph * MPH))
+
+    def test_a_crawl_is_unchanged(self):
+        self.assertEqual(guidance.prompt_points(1.0, anchors_ft=ARNOLD_FT),
+                         guidance.CRAWL_BANDS_M)
+
+    def test_the_follower_fires_the_near_prompt_at_his_quarter_mile(self):
+        points = [(37.80 + i * 0.0005, -122.27) for i in range(41)]
+        route = _route(points)
+        route.maneuvers = [_man("head north", "A St", 0.0, 0),
+                           _man("turn left", "Grand Ave", route.cum_m[30], 30),
+                           _man("arrive at your destination", "", route.cum_m[-1], 40)]
+        follower = guidance.Follower(route, offroute_m=45, anchors_ft=ARNOLD_FT)
+        fired = []
+        for p in points[:30]:
+            if follower.update(p, speed_ms=30 * MPH)["say"]:
+                fired.append((follower.fired["band"], follower.fired["metres"]))
+        near = [m for band, m in fired if band == "near"]
+        self.assertEqual(len(near), 1, fired)
+        # at or just inside a quarter mile, the first fix past it
+        self.assertLessEqual(near[0], 1320 * FT)
+        self.assertGreater(near[0], 1320 * FT - 60)
+
+
+class TheFollowerKnowsHerDistances(unittest.TestCase):
+    """live builds the Follower; it has to hand it the distances her voice can
+    say, or prompts stay on the clock. Read on every route, so a clip imported
+    mid-ride counts from the next re-route."""
+
+    def setUp(self):
+        from agedashii_navi import live, voice_import
+        self.live, self.voice_import = live, voice_import
+        live.reset()
+        prefs.reset()
+        self.addCleanup(live.reset)
+        points = [(37.80 + i * 0.0005, -122.27) for i in range(5)]
+        self.route = _route(points)
+        self.route.maneuvers = [_man("head north", "A St", 0.0, 0),
+                                _man("arrive at your destination", "", self.route.cum_m[-1], 4)]
+        live.LIVE["pos"] = points[0]
+        live.LIVE["dest"] = (points[-1][0], points[-1][1], "there")
+
+    def route_with(self, clips, on=True):
+        with unittest.mock.patch.object(routing, "route", return_value=self.route), \
+                unittest.mock.patch.object(self.voice_import, "distance_clips", return_value=clips), \
+                unittest.mock.patch.object(self.live, "ANCHOR_PROMPTS", on):
+            self.live.route_now()
+        return self.live.LIVE["follower"].anchors_ft
+
+    def test_it_ships_switched_off_until_she_has_heard_it(self):
+        # It changes WHEN every prompt fires; she decides, with the table.
+        self.assertFalse(self.live.ANCHOR_PROMPTS)
+        self.assertEqual(self.route_with({"dist-half": "/v/h.mp3"}, on=False), ())
+
+    def test_a_route_hands_the_follower_her_distances(self):
+        got = self.route_with({"dist-half": "/v/h.mp3", "dist-quarter": "/v/q.mp3"})
+        self.assertEqual(got, (1320.0, 2640.0))
+
+    def test_a_re_route_picks_up_a_new_clip(self):
+        self.route_with({"dist-half": "/v/h.mp3"})
+        got = self.route_with({"dist-half": "/v/h.mp3", "dist-1mile": "/v/m.mp3"})
+        self.assertEqual(got, (2640.0, 5280.0))
+
+    def test_no_distance_clips_means_clock_timed_prompts(self):
+        self.assertEqual(self.route_with({}), ())
 
 
 class ANameChangeIsShownNotSaid(unittest.TestCase):

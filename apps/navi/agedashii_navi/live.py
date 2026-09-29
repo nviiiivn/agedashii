@@ -113,10 +113,15 @@ def graph_status():
     """What the router has to work with, in words. Never raises."""
     try:
         status = routing.status()
+        installed = bool(routing.graph_path())
     except Exception:                    # noqa: BLE001 - never fatal
-        return {"ready": False, "detail": "router unavailable"}
-    return {"ready": bool(routing.ready()),
-            "detail": status.get("detail", "")}
+        return {"ready": False, "phase": "failed", "installed": False,
+                "detail": "router unavailable"}
+    # The phase and whether a file is installed, not just "ready": the graph
+    # loads on the FIRST ROUTE, and "not ready" before that was shown on her
+    # phone as "no graph" - read as offline routing dead. It was not.
+    return {"ready": bool(routing.ready()), "phase": status.get("phase", ""),
+            "installed": installed, "detail": status.get("detail", "")}
 
 
 def route_now(allow_server=False, timeout=25.0):
@@ -170,10 +175,37 @@ def route_now(allow_server=False, timeout=25.0):
             follower.offroute_m = float(prefs.offroute_m())
             follower.imperial = prefs.imperial()
             follower.set_route(route)
+        # Where her recorded distances are, so the far and near prompts fire
+        # AT them (guidance.prompt_points). Every route, not once: a clip she
+        # imports mid-ride counts from the next re-route.
+        LIVE["follower"].anchors_ft = _voice_anchors()
         LIVE["note"] = ""
     else:
         LIVE["note"] = route.reason or "no route"
     return route
+
+
+#: Fire the far and near prompts AT her recorded distances (guidance.
+#: prompt_points) instead of on the 60 s / 20 s clock. OFF until she has heard
+#: it: it changes when every prompt fires, and AGEDASHII is putting the
+#: before/after table to her. Turning it on is this one line.
+ANCHOR_PROMPTS = False
+
+
+def _voice_anchors():
+    """The distances her recorded voice can say, in feet, nearest first - hers
+    and the bundled ones (voice_import.distance_clips). () if none, if the
+    voice store cannot be read, or while ANCHOR_PROMPTS is off: prompts then
+    stay on the clock."""
+    if not ANCHOR_PROMPTS:
+        return ()
+    try:
+        from . import voice_import
+        feet = (voice_import.distance_feet(n) for n in voice_import.distance_clips())
+        return tuple(sorted(f for f in feet if f))
+    except Exception as exc:                              # noqa: BLE001
+        print(f"[navi] voice distances unreadable: {type(exc).__name__}: {exc}", flush=True)
+        return ()
 
 
 async def route_async(**kw):

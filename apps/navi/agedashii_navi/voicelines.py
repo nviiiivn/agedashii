@@ -18,10 +18,11 @@ Pure: no audio here. `playlist` returns [(kind, value, fallback)] - kind "clip"
 with a file path, or "tts" with words - and speech.py plays it.
 """
 import math
+import random
 import re
 
 from . import guidance
-from .voice_import import FIXED_DISTANCES, distance_feet
+from .voice_import import FIXED_DISTANCES, FLOURISH_MOODS, distance_feet
 
 #: Instruction words -> her maneuver clip, checked in order. The offline router
 #: says "bear" where the clips say "slight"; server routes may say either.
@@ -282,6 +283,104 @@ class Cues:
             return False
         self.refusal_said = True
         return True
+
+
+# ------------------------------------------------------ character lines
+
+#: Hers: "i asked for almost everything to be prefaced or postfaced with some
+#: other clips and like DO IT NOW and yeaaararrghhhhh and get to the choppaa
+#: ... peppered in randomly and accordingly." A nav voice is not a character;
+#: these make it one. Files are flourish-<mood>-<slug>.<ext> (agreed with
+#: minion 5, who levels the pool, and minion 2, whose Kotlin app mirrors this).
+#: The moods are voice_import.FLOURISH_MOODS - one list, where names are read.
+#: How often each kind of moment gets one - ONE edit to change. "urgent" is
+#: the ordinary turn: one in four, so it stays a surprise.
+FLOURISH_RATE = {"urgent": 0.25, "arrival": 1.0, "start": 1.0,
+                 "angry": 0.5, "scold": 0.5,
+                 # After the app has SAID what failed (a refused re-route) -
+                 # never instead of the words, and not at all with no voice.
+                 "sorry": 1.0}
+#: Her cough, "now and then": dropped into the join between a prompt's
+#: distance and its turn ("in a quarter mile *cough* turn left"). Rarer than
+#: any flourish, far/near only, never twice running.
+COUGH_RATE = 0.08
+
+
+def flourish_mood(names, parts):
+    """Which pool this moment draws from, or None for no flourish.
+
+    THE INSTRUCTION IS NEVER DELAYED: on the "now" band - six seconds from the
+    corner - nothing is added, except to arriving, where nothing follows.
+    Arrival is ONLY that "now" prompt; the far and near ones get none.
+    Otherwise by priority: angry (off route, re-routing) > scold (speeding) >
+    start > urgent (an ordinary turn prompt).
+    """
+    parts = parts or {}
+    arriving = parts.get("kind") == "arrive" or (
+        "kind" not in parts and maneuver_name(parts.get("instruction")) == "arrive")
+    band = parts.get("band")
+    if arriving and band == "now":
+        return "arrival"
+    if band == "now":
+        return None
+    if "offroute" in names or "rerouting" in names:
+        return "angry"
+    if "speeding" in names:
+        return "scold"
+    if "start" in names:
+        return "start"
+    if parts and not arriving:
+        return "urgent"
+    return None
+
+
+class Flourish:
+    """Picks the character line, remembering enough to not repeat itself.
+
+    Never the same one twice running; at most one per maneuver across its
+    far/near/now prompts. `rng` is for tests.
+    """
+
+    def __init__(self, rng=None):
+        self.rng = rng or random.Random()
+        self.last = None
+        self.maneuver = None
+        self.coughed = False
+
+    def pick(self, mood, pool, maneuver=None):
+        """(name, path) from `pool` ({name: path}) for `mood`, or None."""
+        if not pool or mood not in FLOURISH_RATE:
+            return None
+        if maneuver is not None and maneuver == self.maneuver:
+            return None
+        if self.rng.random() >= FLOURISH_RATE[mood]:
+            return None
+        names = sorted(n for n, path in pool.items() if path and n != self.last)
+        if not names:
+            return None
+        name = self.rng.choice(names)
+        self.last = name
+        if maneuver is not None:
+            self.maneuver = maneuver
+        return name, pool[name]
+
+    def cough(self, items, pool, band=None):
+        """`items` with a cough in the join after the distance, now and then.
+
+        Only between the FIRST two pieces - the distance and the turn - of a
+        far/near prompt: never inside a clip, never on the "now" band, never
+        on two prompts running. A cough is a ("flourish", ...) item, so any
+        newer prompt cuts it like one.
+        """
+        if band == "now" or len(items) < 2 or not pool:
+            self.coughed = False
+            return items
+        if self.coughed or self.rng.random() >= COUGH_RATE:
+            self.coughed = False
+            return items
+        path = pool[self.rng.choice(sorted(pool))]
+        self.coughed = True
+        return [items[0], ("flourish", path, None)] + list(items[1:])
 
 
 def refusal(reason):

@@ -59,7 +59,7 @@ import flet as ft
 
 from agedashii_washi.routing import haversine_m
 
-from .. import (audio, bikes, daylight, gauges, gears, guidance, live,
+from .. import (audio, bikes, daylight, gauges, gears, guidance, live, location,
                 prefs, sensors, speech, telemetry, theme, tiles, ui, uploads,
                 voice_import, voicelines)
 from ..theme import BRD, PAD, PAL, RAD
@@ -122,14 +122,35 @@ def _announce(out, limit):
                                      voice_import.clip_path,
                                      prefs.clip_streets(), prefs.imperial(),
                                      distances=voice_import.distance_clips())
+        if prefs.flourishes() and (out.get("say_parts") or {}).get("metres"):
+            prompt = _M.setdefault("flourish", voicelines.Flourish()).cough(
+                prompt, voice_import.interjections("interject-cough"),
+                band=(out.get("say_parts") or {}).get("band"))
     # On the "now" band the TURN goes first and cuts in: six seconds from the
     # junction, a 1.5 s speeding line in front of it ate a quarter of the
     # warning (minion 4's audit, #10).
     now = (out.get("say_parts") or {}).get("band") == "now"
     items = prompt + situations if now else situations + prompt
+    # A character line, if this moment gets one - always LAST, so it can
+    # never come before the turn or between the distance and the turn.
     if items:
+        items += _flourish(voicelines.flourish_mood(names, out.get("say_parts")
+                                                    if out.get("say") else None),
+                           out.get("say_parts"))
         speech.play(items, urgent=now)
     return items
+
+
+def _flourish(mood, parts=None):
+    """[("flourish", path, None)] or [] - see voicelines.Flourish."""
+    if mood is None or not prefs.flourishes():
+        return []
+    parts = parts or {}
+    maneuver = parts.get("index", (parts.get("kind"), parts.get("instruction"),
+                                   parts.get("street")) if parts else None)
+    pick = _M.setdefault("flourish", voicelines.Flourish()).pick(
+        mood, voice_import.flourishes(mood), maneuver=maneuver)
+    return [("flourish", pick[1], None)] if pick else []
 
 
 def _refused(route):
@@ -146,6 +167,10 @@ def _refused(route):
     if not cues.refused() or not prefs.voice():
         return []
     items = voicelines.refusal(getattr(route, "reason", "") or "")
+    # "sorry" only AFTER the words - and with no working voice the words are
+    # dropped (speech.py), so an apology alone would be an apology for nothing.
+    if speech.STATE.get("ready"):
+        items += _flourish("sorry")
     speech.play(items)
     return items
 
@@ -229,6 +254,63 @@ def is_wide(page):
     return bool(width and height and width > height)
 
 
+def _dash_ride():
+    """The ride whose newest row the gauges read, or None.
+
+    The recording when there is one. Otherwise, while the gauges are on
+    screen, a live ride that derives exactly what a recording does and writes
+    nothing - the Kotlin app's always-on telemetry (minion 1, phase 3). Outside
+    a recording the gauges read ONLY the recording's row, so they sat blank
+    and she concluded "the sensors don't seem to work" while every sensor was
+    reporting. With the gauges off nothing is kept: a hidden gauge costs
+    nothing, which is where her "hopefully making the front end lighter" pays.
+    """
+    recording = live.LIVE.get("ride")
+    if recording is not None and recording.recording:
+        _M.pop("live_ride", None)
+        return recording
+    if not prefs.dash():
+        _M.pop("live_ride", None)
+        return None
+    return _M.setdefault("live_ride", telemetry.Ride())
+
+
+def _feed_fix():
+    """Hand one taken fix, and this second's sensor and microphone window, to
+    the ride the gauges read. A recording has its fix already (live.set_position
+    adds it); the live ride takes the same one here. Returns that ride."""
+    ride = _dash_ride()
+    if ride is None:
+        return None
+    if ride is not live.LIVE.get("ride"):
+        here = live.LIVE.get("pos")
+        if here is None:
+            return ride
+        ride.add_fix(lat=here[0], lon=here[1], t=live.LIVE.get("t"),
+                     speed_ms=live.LIVE.get("speed_ms"),
+                     heading=live.LIVE.get("heading"),
+                     alt_m=live.LIVE.get("alt_m"), acc_m=live.LIVE.get("acc_m"))
+    # The sensors and the microphone run far faster than this 1 Hz fix, and
+    # they are merged INTO the sample the fix just created rather than logged
+    # on their own clock. That is what keeps one row per fix while still
+    # carrying the worst jolt of the second it covers - the peaks are reset
+    # immediately afterwards so the next window starts clean.
+    extra = dict(sensors.latest())
+    extra.update(audio.latest())
+    # The GPS climb rate only goes in when the barometer did not supply one,
+    # so the column means one thing per ride rather than switching source
+    # halfway down the file.
+    if "climb_mps" not in extra:
+        gps_climb = live.LIVE.get("climb_gps_mps")
+        if gps_climb is not None:
+            extra["climb_mps"] = round(gps_climb, 2)
+    if extra:
+        ride.feed_extra(extra)
+    sensors.reset_peaks()
+    audio.reset_peaks()
+    return ride
+
+
 def _hud_state():
     """Every number the overlay draws, gathered once.
 
@@ -236,7 +318,7 @@ def _hud_state():
     handed to a test without a page. Everything may be None; every gauge
     handles that.
     """
-    ride = live.LIVE.get("ride")
+    ride = _dash_ride()
     row = ride.samples[-1] if (ride is not None and ride.samples) else {}
     speed = live.LIVE.get("speed_ms")
     rpm = audio.STATE.get("rpm_est")
@@ -273,7 +355,7 @@ def _dash_row():
     every gauge handles that: an empty gauge is the honest picture of a phone
     with no barometer, and it must not look like a reading of zero.
     """
-    ride = live.LIVE.get("ride")
+    ride = _dash_ride()
     row = ride.samples[-1] if (ride is not None and ride.samples) else {}
     state = sensors.STATE
     return gauges.dash(
@@ -457,7 +539,7 @@ def build(page, go=None):
             eta_text.value = "—"
             left_text.value = "—"
 
-        ride = live.LIVE.get("ride")
+        ride = _dash_ride()
         lean = ride.samples[-1].get("lean_deg") if (
             ride is not None and ride.samples) else None
         lean_text.value = "—" if lean is None else f"{abs(lean):.0f}°"
@@ -624,26 +706,9 @@ def build(page, go=None):
         # A new prompt fires once per band; say it as it fires. Handed to the
         # speech worker, so this fix handler never waits on the engine.
         _announce(out, (live.LIVE.get("limit") or (None, ""))[0])
-        # The sensors and the microphone run far faster than this 1 Hz fix, and
-        # they are merged INTO the sample the fix just created rather than
-        # logged on their own clock. That is what keeps one row per fix while
-        # still carrying the worst jolt of the second it covers - the peaks are
-        # reset immediately afterwards so the next window starts clean.
-        ride = live.LIVE.get("ride")
-        if ride is not None and ride.recording:
-            extra = dict(sensors.latest())
-            extra.update(audio.latest())
-            # The GPS climb rate only goes in when the barometer did not supply
-            # one, so the column means one thing per ride rather than switching
-            # source halfway down the file.
-            if "climb_mps" not in extra:
-                gps_climb = live.LIVE.get("climb_gps_mps")
-                if gps_climb is not None:
-                    extra["climb_mps"] = round(gps_climb, 2)
-            if extra:
-                ride.feed_extra(extra)
-            sensors.reset_peaks()
-            audio.reset_peaks()
+        # This second's sensors into the recording, or into the live ride the
+        # gauges read when nothing records (see _dash_ride).
+        _feed_fix()
 
         marker.coordinates = fmap.MapLatitudeLongitude(lat, lon)
 
@@ -743,12 +808,13 @@ def build(page, go=None):
         # five seconds, and `distance_filter` of 3 m stops the stream firing
         # while the bike is parked - a stationary GPS wanders, and every wander
         # was a message, a log line and a repaint.
+        #
+        # And the location FOREGROUND SERVICE, so fixes keep coming with the
+        # screen off - without it the app went silent and the ride log became
+        # a straight line the moment her screen locked. See location.py for
+        # the Flet 0.86.5 bug this works around, and the emulator A/B.
         geo = fgeo.Geolocator(
-            configuration=fgeo.GeolocatorAndroidConfiguration(
-                accuracy=fgeo.GeolocatorPositionAccuracy.HIGH,
-                distance_filter=3,
-                interval_duration=ft.Duration(
-                    milliseconds=int(1000 / max(1, prefs.hz())))),
+            configuration=location.android_config(prefs.hz()),
             on_position_change=on_position, on_error=on_geo_error)
         _M["geo"] = geo
         if isinstance(getattr(page, "services", None), list):

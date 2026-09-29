@@ -37,7 +37,8 @@ import flet as ft
 from agedashii_washi import config
 from agedashii_washi import prefs as wprefs
 
-from agedashii_navi import boot, live, prefs, sensors, theme, ui
+from agedashii_navi import awake, boot, live, prefs, sensors, theme, ui
+from agedashii_navi.pages import diagnostics as diagnostics_page
 from agedashii_navi.pages import help as help_page
 from agedashii_navi.pages import log as log_page
 from agedashii_navi.pages import ride as ride_page
@@ -45,24 +46,37 @@ from agedashii_navi.pages import routes as routes_page
 from agedashii_navi.pages import search as search_page
 from agedashii_navi.pages import settings as settings_page
 
-PAGES = ["ride", "routes", "search", "log", "settings", "help"]
+PAGES = ["ride", "routes", "search", "log", "settings", "help", "diagnostics"]
 #: Help is not on the bar - see the module docstring.
 BAR_PAGES = ["ride", "routes", "search", "log", "settings"]
+#: The drawer's rows. The diagnostics page is not one: it is the last door in
+#: Settings, and a drawer row for it would be one more thing to scan past.
+DRAWER_PAGES = ["ride", "routes", "search", "log", "settings", "help"]
+#: Where Back goes from a surface that lives under another one. Anything not
+#: here, Back leaves the app, exactly as before.
+PARENT = {"diagnostics": "settings"}
+#: Whether Back goes up a level (see `on_back`). Off until the Settings doors
+#: land and it has been pressed on a real phone: a Back that Flutter hands to
+#: Python and never hears about again is a Back button that does nothing.
+UP_ON_BACK = False
 
 LABELS = {"ride": "Ride", "routes": "Where to", "search": "Around",
-          "log": "Rides", "settings": "Settings", "help": "How this works"}
+          "log": "Rides", "settings": "Settings", "help": "How this works",
+          "diagnostics": "What this build is getting"}
 #: The bar and a drawer row have no room for four words; the page still calls
 #: itself "How this works".
-NAV_LABELS = dict(LABELS, help="Help")
+NAV_LABELS = dict(LABELS, help="Help", diagnostics="This build")
 
 ICONS = {"ride": ft.Icons.NAVIGATION_OUTLINED,
          "routes": ft.Icons.SIGNPOST_OUTLINED,
          "search": ft.Icons.TRAVEL_EXPLORE_OUTLINED,
          "log": ft.Icons.HISTORY, "settings": ft.Icons.SETTINGS_OUTLINED,
-         "help": ft.Icons.HELP_OUTLINE}
+         "help": ft.Icons.HELP_OUTLINE,
+         "diagnostics": ft.Icons.MONITOR_HEART_OUTLINED}
 ICONS_ON = {"ride": ft.Icons.NAVIGATION, "routes": ft.Icons.SIGNPOST,
             "search": ft.Icons.TRAVEL_EXPLORE, "log": ft.Icons.HISTORY,
-            "settings": ft.Icons.SETTINGS, "help": ft.Icons.HELP}
+            "settings": ft.Icons.SETTINGS, "help": ft.Icons.HELP,
+            "diagnostics": ft.Icons.MONITOR_HEART}
 
 #: One line per surface for the drawer, so the menu says what each one is for
 #: rather than making her remember. "Where to" and "Around" are the pair most
@@ -73,7 +87,8 @@ BLURB = {"ride": "the map, the gauges, recording",
          "search": "what is nearby by category - needs signal",
          "log": "rides on this phone, and their exports",
          "settings": "themes, gauges, the bike, the sensors",
-         "help": "what each part does, and what needs the network"}
+         "help": "what each part does, and what needs the network",
+         "diagnostics": "maps, routing, sensors, this build"}
 
 _HERE = {"key": "ride"}
 
@@ -105,13 +120,21 @@ async def main(page):
     theme.S["chrome_alola"] = prefs.alola_chrome()
     theme.apply(page, prefs.theme_key())
 
-    # A phone that sleeps at 60 mph is not a navigation device. Guarded because
-    # this is a no-op on the desktop and not every Flet build exposes it.
-    if prefs.keep_awake():
-        try:
-            page.wakelock_enabled = True
-        except Exception:                    # noqa: BLE001 - desktop, or old
-            pass
+    # A phone that sleeps at 60 mph is not a navigation device. A task, not an
+    # await: a phone slow to answer must not hold up the first paint. `render`
+    # keeps it following the switch after this; see `awake`.
+    page.run_task(awake.follow, page, True)
+
+    def on_lifecycle(e):
+        """Back to the front: hold the screen again.
+
+        The flag lives on the activity's window, and a window Android rebuilt
+        while she was elsewhere comes back without it.
+        """
+        if e.state == ft.AppLifecycleState.RESUME:
+            page.run_task(awake.follow, page, True)
+
+    page.on_app_lifecycle_state_change = on_lifecycle
 
     async def apply_orientation():
         """Hold the phone the way the mount holds it.
@@ -302,7 +325,7 @@ async def main(page):
         # vertically?" - a spacer between every row rather than a bigger row,
         # so the tap targets stay the size they are and only the gaps grow.
         rows = []
-        for key in PAGES:
+        for key in DRAWER_PAGES:
             rows.append(row(key))
             rows.append(ft.Container(height=8))
         return ft.NavigationDrawer(bgcolor=p["bg"], controls=[
@@ -352,6 +375,8 @@ async def main(page):
             return settings_page.build(page, go=go)
         if key == "help":
             return help_page.build(page, go=go)
+        if key == "diagnostics":
+            return diagnostics_page.build(page, go=go)
         return ride_page.build(page, go=go)
 
     def render(key=None):
@@ -419,11 +444,50 @@ async def main(page):
         # on the desktop, where Flutter reports no intrusions.
         page.add(ft.SafeArea(content=shell, expand=True))
         page.update()
+        # Every setting change comes through here, so this is how the Keep the
+        # screen on switch takes effect the moment she flips it. Free when
+        # nothing changed.
+        page.run_task(awake.follow, page)
 
     # How a page asks for a full rebuild - a theme change, a new destination, the
     # record button. Parked on the page so any module can find it without
     # importing this one.
     page._navi_rerender = lambda: render()   # noqa: SLF001 - our own attribute
+
+    async def on_back(e):
+        """Android's Back: up one level where there is one, else out as before.
+
+        A surface can take a Back for itself by exposing `back(page)` that
+        returns True - a Settings door closing to the door list. A surface in
+        PARENT goes up to it. Anything else leaves the app: `confirm_pop(True)`
+        on the root view is Flet's SystemNavigator.pop, the old behaviour.
+
+        confirm_pop is ALWAYS answered: Flutter waits up to five minutes for
+        it, and an unanswered Back is a Back button that does nothing.
+        """
+        stay = False
+        try:
+            key = _HERE["key"]
+            handler = getattr({"settings": settings_page}.get(key), "back",
+                              None)
+            if callable(handler) and handler(page):
+                stay = True
+            elif key in PARENT:
+                go(PARENT[key])
+                stay = True
+        except Exception:                    # noqa: BLE001 - Back must answer
+            traceback.print_exc()
+        finally:
+            await e.control.confirm_pop(not stay)
+
+    # Every Back comes to `on_back` rather than closing the app outright. A
+    # dialog or the drawer still takes its own Back first: they are routes on
+    # top of this view, and this view's pop scope is only asked when it is on
+    # top.
+    views = getattr(page, "views", None)
+    if UP_ON_BACK and views:
+        views[0].can_pop = False
+        views[0].on_confirm_pop = on_back
 
     def on_resized(_e=None):
         """Rotation. Rebuild, but only when the orientation actually flipped.

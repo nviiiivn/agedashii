@@ -59,6 +59,15 @@ CRAWL_MS = 3.0
 #: The fixed distances used below `CRAWL_MS`, in metres, matched to the bands.
 CRAWL_BANDS_M = {"far": 250.0, "near": 90.0, "now": 25.0}
 
+#: A maneuver already announced is announced again, short of "now", only once
+#: the distance has fallen below this share of where it last was. The bands
+#: move with speed: picked at a light, "far" (crawl, 250 m) fired at 178 m, then
+#: riding off at 15 m/s made "near" (300 m) due at 170 m - the same "In 600 ft,
+#: turn right" twice, 6 s apart. And a maneuver that first comes up just
+#: outside "near" got "far" then "near" 2 s apart. At one speed far to near is
+#: 1/3, and crawl 90/250.
+REPEAT_FRACTION = 0.6
+
 #: Typical posted limits in California by OSM road class, in mph. NOT from the
 #: graph - the graph has no maxspeed - and labelled as typical everywhere it
 #: is shown. See the module docstring.
@@ -218,15 +227,48 @@ def over_limit(speed_ms, limit):
     return mph(speed_ms) > limit + OVER_LIMIT_MPH
 
 
-def prompt_points(speed_ms):
+#: How far in time an anchored prompt may move from its band's target: from
+#: target / ANCHOR_WINDOW to target * ANCHOR_WINDOW. Wide enough that his four
+#: distances cover 15-75 mph, narrow enough that "far" stays far and "near"
+#: stays near - and never inside the 6 s "now".
+ANCHOR_WINDOW = 1.6
+FT_PER_M = 3.280839895
+
+
+def prompt_points(speed_ms, anchors_ft=()):
     """{band: metres} at which each prompt for the next turn should fire.
 
-    Time-based above a crawl and fixed below it. Returned as a dict rather
-    than computed inline so a test can state the distances directly.
+    Time-based above a crawl and fixed below it. With `anchors_ft` - the
+    distances her recorded voice says, in feet - the far and near prompts fire
+    instead when she REACHES one of them: the one nearest the band's time,
+    within ANCHOR_WINDOW, far and near never the same. His four (0.1 mi, a
+    quarter, a half, a mile) are the points Waze announces at, not a scale to
+    round to; fired on a clock, the near prompt on every 25-35 mph street fell
+    between them and the phone said the number. "now" never moves, and a band
+    with no distance in its window keeps its time.
     """
     if speed_ms is None or speed_ms < CRAWL_MS:
         return dict(CRAWL_BANDS_M)
-    return {band: speed_ms * secs for secs, band in PROMPT_BANDS}
+    points = {band: speed_ms * secs for secs, band in PROMPT_BANDS}
+    candidates = sorted({ft / FT_PER_M for ft in anchors_ft or () if ft and ft > 0})
+    taken = None
+    for secs, band in PROMPT_BANDS:                  # far first, then near
+        if band == "now" or not candidates:
+            continue
+        best = None
+        for metres in candidates:
+            if taken is not None and metres >= taken:
+                continue                             # near must come after far
+            ratio = metres / (speed_ms * secs)
+            if 1 / ANCHOR_WINDOW <= ratio <= ANCHOR_WINDOW:
+                key = abs(math.log(ratio))
+                if best is None or key < best[0]:
+                    best = (key, metres)
+        if best is not None:
+            points[band] = taken = best[1]
+        else:
+            taken = points[band]
+    return points
 
 
 #: routing.KINDS -> glyph. "exit" is left out: its side is in the words.
@@ -329,7 +371,10 @@ class Follower:
     with a list of coordinates. The UI reads `status()` after every fix.
     """
 
-    def __init__(self, route=None, offroute_m=45, imperial=True):
+    def __init__(self, route=None, offroute_m=45, imperial=True, anchors_ft=()):
+        #: The distances her recorded voice says, in feet (see prompt_points).
+        #: Set by whoever builds the Follower; empty means clock-timed prompts.
+        self.anchors_ft = tuple(anchors_ft or ())
         self.route = route
         self.offroute_m = float(offroute_m)
         self.imperial = imperial
@@ -338,6 +383,7 @@ class Follower:
         self.arrived = False
         self._bad_run = 0
         self._said = set()          # (maneuver index, band) already spoken
+        self._said_at = {}          # maneuver index -> metres when last spoken
         self._last = None
         self.reroutes = 0
         self.fired = None           # the parts of the prompt just fired
@@ -356,6 +402,7 @@ class Follower:
         self.arrived = False
         self._bad_run = 0
         self._said.clear()
+        self._said_at.clear()
         self._last = None
         return route
 
@@ -475,7 +522,7 @@ class Follower:
         if metres is None:
             return None
         index = getattr(man, "index", None)
-        points = prompt_points(speed_ms)
+        points = prompt_points(speed_ms, self.anchors_ft)
         for _secs, band in reversed(PROMPT_BANDS):
             if metres > points.get(band, 0.0):
                 continue
@@ -489,11 +536,20 @@ class Follower:
                 self._said.add((index, other))
                 if other == band:
                     break
+            # Short of "now", not again while it is still about as far as
+            # when she last heard it: only her speed moved the bands.
+            before = self._said_at.get(index)
+            if band != "now" and before is not None and metres > before * REPEAT_FRACTION:
+                return None
+            self._said_at[index] = metres
             # The parts as well as the sentence: her recorded lines replace the
             # MANEUVER and the DISTANCE, not our wording, so the voice layer
             # needs to know which turn this is rather than re-parse the text.
             self.fired = {"instruction": getattr(man, "instruction", ""),
                           "kind": getattr(man, "kind", None),
+                          # Which maneuver: its far, near and now prompts share
+                          # it, so a flourish can be held for all three.
+                          "index": index,
                           "street": getattr(man, "street", ""),
                           "metres": metres, "band": band}
             return spoken(getattr(man, "instruction", ""),

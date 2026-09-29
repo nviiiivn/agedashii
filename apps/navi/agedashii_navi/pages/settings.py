@@ -139,6 +139,36 @@ def _line_groups():
     )
 
 
+def _router_chip(graph, p):
+    """(words, colour) for the offline router - by phase, not just "ready".
+
+    It loads LAZILY, on the first route. Every phase but "ready" used to read
+    "no graph", so an installed graph not loaded yet looked like offline
+    routing was dead (her v1.17.0 panel; it was working).
+    """
+    phase = graph.get("phase")
+    if graph.get("ready"):
+        return "offline router", p["good"]
+    if phase == "loading":
+        return "offline router loading", p["text2"]
+    if phase == "failed":
+        return "router failed", p["bad"]
+    if phase == "absent" or not graph.get("installed"):
+        return "no graph", p["warn"]
+    return "offline router", p["good"]                 # installed, not loaded yet
+
+
+def _router_line(graph):
+    detail = graph.get("detail") or ""
+    if graph.get("ready"):
+        return detail or "loaded"
+    if graph.get("phase") in ("idle", "", None) and graph.get("installed"):
+        return "installed - it loads on the first route, offline, in about a second"
+    if graph.get("phase") == "loading":
+        return "loading"
+    return detail or "unknown"
+
+
 def _voice_lines(page):
     """Every one of her line names, hers or not yet, with a tap to hear it.
 
@@ -464,6 +494,11 @@ def build(page, go=None, on_change=None):
                     "the phone's voice adds \"onto Broadway\" after a turn you "
                     "recorded. Off: your line is the whole line.",
                     prefs.clip_streets(), _flag("clip_streets")),
+        _switch_row("Character lines",
+                    "his wild lines after some prompts - always after the "
+                    "instruction, never in the last seconds before a turn. "
+                    "Off keeps the voice and drops the theatre.",
+                    prefs.flourishes(), _flag("flourishes")),
         _switch_row("Record automatically",
                     "start a ride log as soon as the bike is rolling",
                     prefs.autorecord(), _flag("autorecord")),
@@ -564,10 +599,10 @@ def build(page, go=None, on_change=None):
                         else "online maps only",
                         p["good"] if choice["offline"] else p["warn"],
                         ft.Icons.MAP),
-                ui.chip("offline router" if graph["ready"] else "no graph",
-                        p["good"] if graph["ready"] else p["warn"],
-                        ft.Icons.ALT_ROUTE)]),
-            ft.Text(graph["detail"] or "the road graph is loaded",
+                ui.chip(*_router_chip(graph, p), ft.Icons.ALT_ROUTE)]),
+            # "Road graph:" so this line cannot be read as the sensors' status,
+            # which is what she took "not started" for.
+            ft.Text("Road graph: " + _router_line(graph),
                     size=ui.SMALL, color=p["text2"]),
             ft.Row(wrap=True, spacing=8, run_spacing=8, controls=[
                 ui.chip(name.replace("_", " "), p["good"], ft.Icons.SENSORS)

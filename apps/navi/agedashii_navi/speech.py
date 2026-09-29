@@ -325,6 +325,9 @@ def play(items, urgent=False):
             clean.append(("tts", for_the_ear(value.strip()), None))
         elif kind == "clip" and value:
             clean.append(("clip", value, for_the_ear(fallback) if fallback else None))
+        elif kind == "flourish" and value:
+            # A character line: no stand-in words, and the first thing cut.
+            clean.append(("flourish", value, None))
     if not clean:
         return False
     start()
@@ -405,21 +408,25 @@ def _run(gen):
         if not STATE["ready"]:
             # No voice passed the test word: her clips still play, the
             # phone's words (and a broken clip's fallback) cannot.
-            items = [(k, v, None) for k, v, _f in items if k == "clip"]
+            items = [(k, v, None) for k, v, _f in items if k in ("clip", "flourish")]
             if not items:
                 continue
         _speak_one(backend, items, gen)
 
 
-def _wait(busy, started):
+def _wait(busy, started, yields=False):
     """Poll `busy()` to start and then to finish; stop early for an URGENT
-    newer prompt (a merely newer one waits for this line to end - play())."""
+    newer prompt (a merely newer one waits for this line to end - play()).
+    `yields` - a character line - stops for ANY newer prompt: a flourish can
+    never be what is still playing when a turn needs saying (minion 2)."""
+    def cut():
+        return _M["pending"] and (yields or _M.get("urgent"))
     while not busy() and time.time() - started < START_TIMEOUT_S:
-        if _M["pending"] and _M.get("urgent"):
+        if cut():
             return
         time.sleep(POLL_S)
     while busy() and time.time() - started < MAX_UTTERANCE_S:
-        if _M["pending"] and _M.get("urgent"):
+        if cut():
             return
         time.sleep(POLL_S)
 
@@ -431,7 +438,7 @@ def _say_words(backend, words):
     _wait(backend.is_speaking, time.time())
 
 
-def _play_clip(backend, path):
+def _play_clip(backend, path, yields=False):
     """Her clip. False if it would not play, so the caller says the words."""
     try:
         backend.play(path)
@@ -440,7 +447,7 @@ def _play_clip(backend, path):
               flush=True)
         return False
     try:
-        _wait(backend.is_playing, time.time())
+        _wait(backend.is_playing, time.time(), yields)
     finally:
         backend.stop_clip()
     return True
@@ -461,7 +468,9 @@ def _speak_one(backend, items, gen=None):
                                          for k, v, _f in items),
                          quiet_until=time.time() + MAX_UTTERANCE_S)
             for kind, value, fallback in items:
-                if kind == "clip":
+                if kind == "flourish":
+                    _play_clip(backend, value, yields=True)    # skipped if broken
+                elif kind == "clip":
                     if not _play_clip(backend, value) and fallback:
                         _say_words(backend, fallback)
                 else:

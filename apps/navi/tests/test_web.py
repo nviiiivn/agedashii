@@ -83,5 +83,48 @@ class TheRidePageBuildsInABrowser(_Clean):
         self.assertEqual([s for s in page.services if isinstance(s, REFUSE_WEB)], [])
 
 
+class TheGpsKeepsComingWithTheScreenOff(unittest.TestCase):
+    """flet_geolocator 0.86.5 nests the foreground-service settings; its Dart
+    side reads FLAT keys (geolocator.dart:64-82), so the service never started
+    and the app went silent the moment her screen locked. Proved on
+    emulator-5556 asleep: plain config 1 of 60 fixes, flat keys 58-59 of 60
+    with isForeground=true."""
+
+    def encoded(self, config):
+        from flet.controls.base_control import BaseControl
+        from flet.messaging.protocol import configure_encode_object_for_msgpack
+        return configure_encode_object_for_msgpack(BaseControl)(config)
+
+    def test_the_keys_the_dart_side_reads_are_sent(self):
+        from agedashii_navi import location
+        sent = self.encoded(location.android_config(hz=1))
+        self.assertEqual(sent["foreground_notification_enable_wake_lock"], True)
+        self.assertTrue(sent["foreground_notification_title"])
+        self.assertTrue(sent["foreground_notification_text"])
+        self.assertNotIn("foreground_notification_config", sent)   # the dropped form
+        self.assertEqual(sent["distance_filter"], 3)
+
+    def test_the_ride_page_streams_with_the_service_on(self):
+        import flet_geolocator as fgeo
+        from agedashii_navi.pages import ride
+        prefs.reset()
+        live.reset()
+        ride.forget_map()
+        self.addCleanup(ride.forget_map)
+        # The stream is built once per process and kept; start from none.
+        ride._M.pop("geo", None)                                 # noqa: SLF001
+        self.addCleanup(ride._M.pop, "geo", None)                # noqa: SLF001
+        page = page_on(ft.PagePlatform.ANDROID)
+        ride.build(page)
+        geo = next(s for s in page.services if isinstance(s, fgeo.Geolocator))
+        sent = self.encoded(geo.configuration)
+        self.assertEqual(sent.get("foreground_notification_enable_wake_lock"), True)
+
+    def test_the_rate_follows_her_setting(self):
+        from agedashii_navi import location
+        sent = self.encoded(location.android_config(hz=5))
+        self.assertEqual(sent["interval_duration"].milliseconds, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

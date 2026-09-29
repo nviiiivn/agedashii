@@ -134,6 +134,11 @@ _FLAGS = {
     # words, and a robot tacking "Broadway" onto "GO LEFT IF YOU WANT TO LIVE"
     # ruins the joke, which is the point of the feature.
     "clip_streets": False,
+    # His wild lines after some prompts (voicelines.Flourish). ON by default:
+    # hers - "i want those peppered in randomly and accordingly" - and it is
+    # a switch so she can turn the theatre off for a long ride and keep the
+    # voice.
+    "flourishes": True,
     # Whether the surfaces that are NOT the map follow the dashboard's own
     # alola.lol palette. On by default, because they are read at a stop with the
     # phone in a hand, where looking like the rest of the family is worth more
@@ -376,6 +381,11 @@ def buildings():
 def clip_streets():
     """Whether the street name follows her recorded lines."""
     return bool(S.get("clip_streets", False))
+
+
+def flourishes():
+    """Whether character lines are added after some prompts."""
+    return bool(S.get("flourishes", True))
 
 
 def alola_chrome():

@@ -455,6 +455,92 @@ class TheBuiltInVoice(_Case):
         self.assertLess((time.perf_counter() - started) / 4000, 0.001)
 
 
+class Flourishes(_Case):
+    """Character lines that play alongside the instructions: flourish-<mood>-
+    <slug>, mood one of start, arrival, angry, urgent, scold (agreed with
+    minion 5 and the Kotlin app). Never "missing" - they are extras."""
+
+    def test_they_import_with_the_usual_forgiveness(self):
+        result = vi.import_files([_write(self.src, "Flourish_Angry_Hasta La Vista.mp3"),
+                                  _write(self.src, "flourish-start-ill-be-back.wav")])
+        self.assertEqual(sorted(result["imported"]),
+                         ["flourish-angry-hasta-la-vista", "flourish-start-ill-be-back"])
+        self.assertTrue(vi.clip_path("flourish-angry-hasta-la-vista").endswith(".mp3"))
+
+    def test_an_unknown_mood_is_left_out_and_named(self):
+        bad = ["flourish-happy-yay.mp3", "flourish-start-.mp3", "flourish-urgent.mp3",
+               "flourish-scold-café.mp3", "flourishes-angry-x.mp3"]
+        result = vi.import_files([_write(self.src, n) for n in bad])
+        self.assertEqual(result["imported"], [])
+        self.assertEqual(sorted(result["ignored"]), sorted(bad))
+        self.assertIn("flourish-happy-yay.mp3", vi.summary(result))
+
+    def test_flourishes_by_mood_are_hers_and_the_bundled_ones(self):
+        self.bundle("flourish-angry-get-down.mp3", "flourish-angry-hasta.mp3",
+                    "flourish-arrival-done.mp3")
+        vi.import_files([_write(self.src, "flourish-angry-hasta.mp3", b"hers"),
+                         _write(self.src, "flourish-angry-mine.mp3", b"hers")])
+        got = vi.flourishes("angry")
+        self.assertEqual(sorted(got), ["flourish-angry-get-down", "flourish-angry-hasta",
+                                       "flourish-angry-mine"])
+        self.assertTrue(got["flourish-angry-hasta"].startswith(vi.voice_dir()))
+        self.assertTrue(got["flourish-angry-get-down"].startswith(self.builtin))
+        self.assertEqual(list(vi.flourishes("arrival")), ["flourish-arrival-done"])
+        self.assertEqual(vi.flourishes("scold"), {})
+
+    def test_they_are_never_missing_and_counted_apart(self):
+        vi.import_files([_write(self.src, "arrive.mp3"),
+                         _write(self.src, "flourish-urgent-move.mp3"),
+                         _write(self.src, "flourish-scold-slow.mp3")])
+        st = vi.status()
+        self.assertEqual(st["flourishes"], ["flourish-scold-slow", "flourish-urgent-move"])
+        self.assertNotIn("flourish-urgent-move", st["present"])
+        self.assertFalse([n for n in st["missing"] if n.startswith("flourish")])
+        self.assertEqual(st["unknown"], [])
+        self.assertIn("2 character lines", vi.status_text())
+
+    def test_the_moods_are_the_agreed_six(self):
+        self.assertEqual(vi.FLOURISH_MOODS,
+                         ("start", "arrival", "angry", "urgent", "scold", "sorry"))
+
+    def test_sorry_is_a_mood(self):
+        result = vi.import_files([_write(self.src, "flourish-sorry-my-bad.mp3")])
+        self.assertEqual(result["imported"], ["flourish-sorry-my-bad"])
+        self.assertEqual(list(vi.flourishes("sorry")), ["flourish-sorry-my-bad"])
+
+
+class Interjections(_Case):
+    """Not flourishes: sounds that drop INTO a prompt (a cough between the
+    distance and the turn). interject-<slug>; never missing."""
+
+    def test_they_import_with_the_usual_forgiveness(self):
+        result = vi.import_files([_write(self.src, "interject-cough.mp3"),
+                                  _write(self.src, "Interject_Cough-2.wav")])
+        self.assertEqual(sorted(result["imported"]), ["interject-cough", "interject-cough-2"])
+
+    def test_bad_names_are_left_out(self):
+        bad = ["interject-.mp3", "interjects-cough.mp3", "interject-cöugh.mp3"]
+        result = vi.import_files([_write(self.src, n) for n in bad])
+        self.assertEqual(result["imported"], [])
+        self.assertEqual(sorted(result["ignored"]), sorted(bad))
+
+    def test_by_prefix_hers_and_the_bundled_ones(self):
+        self.bundle("interject-cough.mp3", "interject-cough-2.mp3", "interject-sneeze.mp3")
+        vi.import_files([_write(self.src, "interject-cough-2.mp3", b"hers")])
+        got = vi.interjections()
+        self.assertEqual(sorted(got), ["interject-cough", "interject-cough-2"])
+        self.assertTrue(got["interject-cough-2"].startswith(vi.voice_dir()))
+        self.assertTrue(got["interject-cough"].startswith(self.builtin))
+        self.assertEqual(list(vi.interjections("interject-sneeze")), ["interject-sneeze"])
+
+    def test_never_missing_and_not_a_prompt(self):
+        vi.import_files([_write(self.src, "interject-cough.mp3")])
+        st = vi.status()
+        self.assertEqual(st["interjections"], ["interject-cough"])
+        self.assertNotIn("interject-cough", st["present"])
+        self.assertEqual(st["unknown"], [])
+
+
 class TheRoundaboutLine(_Case):
     def test_it_is_a_name_she_may_record(self):
         self.assertIn("roundabout", vi.NAMES)
@@ -668,3 +754,94 @@ class ThePanel(_Case):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheTheatreCard(_Case):
+    """Her character lines, grouped by when they play, each a tap to hear.
+
+    Hers to curate: she asked for them by mood with a tap to hear each one.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from agedashii_navi import prefs
+        prefs.reset()
+        self.played = []
+
+    def card(self, page=None):
+        return vi.theatre_card(page or StubPage(), play=self.played.append)
+
+    def test_every_mood_and_the_cough_in_ride_order(self):
+        order = [mood for mood, *_rest in vi.theatre()]
+        self.assertEqual(order, ["start", "urgent", "angry", "scold", "sorry",
+                                 "arrival", "cough"])
+        self.assertEqual(sorted(order[:-1]), sorted(vi.FLOURISH_MOODS))
+
+    def test_how_often_is_the_rides_own_rate(self):
+        from agedashii_navi import voicelines
+        often = {mood: o for mood, _t, _w, o, _c in vi.theatre()}
+        self.assertEqual(often["start"], "every time")
+        self.assertEqual(often["urgent"],
+                         f"1 time in {round(1 / voicelines.FLOURISH_RATE['urgent'])}")
+        self.assertEqual(often["cough"],
+                         f"1 time in {round(1 / voicelines.COUGH_RATE)}")
+
+    def test_a_clip_is_shown_by_what_it_says(self):
+        self.assertEqual(vi.words_of("flourish-angry-you-idiot"), "you idiot")
+        self.assertEqual(vi.words_of("interject-cough-2"), "cough 2")
+
+    def test_each_clip_is_a_glove_sized_tile_in_its_group(self):
+        from agedashii_navi import ui
+        self.bundle("flourish-angry-you-idiot.mp3", "flourish-angry-no.mp3",
+                    "interject-cough.mp3")
+        vi.import_files([_write(self.src, "flourish-start-ill-be-back.mp3")])
+        card, _refresh = self.card()
+        text = _texts(card)
+        for words in ("you idiot", "no", "ill be back", "cough"):
+            self.assertIn(words, text)
+        self.assertIn("yours", text)
+        self.assertIn("built in", text)
+        tiles = [c for c in _walk(card) if getattr(c, "on_click", None)]
+        self.assertEqual(len(tiles), 4)
+        self.assertTrue(all(t.height >= ui.TOUCH for t in tiles))
+
+    def test_an_empty_group_says_how_to_fill_it(self):
+        card, _refresh = self.card()
+        self.assertIn("flourish-scold-<words>.mp3", _texts(card))
+        self.assertIn("interject-cough-<words>.mp3", _texts(card))
+
+    def test_a_tap_plays_that_clip_and_lights_its_tile(self):
+        import flet as ft
+        (path,) = self.bundle("flourish-arrival-goodbye.mp3")
+        page = StubPage()
+        card, _refresh = self.card(page)
+        _tap(_button(card, "goodbye"))
+        self.assertEqual(self.played, [[("flourish", path, None)]])
+        self.assertIn('Playing "goodbye", built in.', _texts(card))
+        icons = [c.icon for c in _walk(card) if type(c).__name__ == "Icon"]
+        self.assertEqual(icons.count(ft.Icons.VOLUME_UP), 1)
+        self.assertGreater(page.updates, 0)
+
+    def test_only_the_last_tapped_tile_is_lit(self):
+        import flet as ft
+        self.bundle("flourish-urgent-now.mp3", "flourish-urgent-hurry.mp3")
+        card, _refresh = self.card()
+        _tap(_button(card, "now"))
+        _tap(_button(card, "hurry"))
+        icons = [c.icon for c in _walk(card) if type(c).__name__ == "Icon"]
+        self.assertEqual(icons.count(ft.Icons.VOLUME_UP), 1)
+
+    def test_it_says_when_character_lines_are_off(self):
+        from agedashii_navi import prefs
+        card, _refresh = self.card()
+        self.assertNotIn("Character lines is off", _texts(card))
+        prefs.set_value("flourishes", False)
+        card, _refresh = self.card()
+        self.assertIn("Character lines is off", _texts(card))
+
+    def test_refresh_sees_a_new_import(self):
+        card, refresh = self.card()
+        self.assertNotIn("hasta la vista", _texts(card))
+        vi.import_files([_write(self.src, "flourish-angry-hasta-la-vista.mp3")])
+        refresh()
+        self.assertIn("hasta la vista", _texts(card))

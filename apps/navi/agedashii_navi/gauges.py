@@ -87,10 +87,22 @@ def horizon(lean_deg=None, pitch_deg=None, roll_deg=None, size=92):
 
     All three angles may be None - the state before the first fix, and on a
     device with no accelerometer. The ball then sits level and the caption says
-    nothing, rather than reading a confident zero.
+    when it will read ("lean · while riding"), never a confident zero.
+
+    STANDING STILL there is no lean - it is derived from speed and yaw - so the
+    ball shows the PHONE's own roll instead, captioned "phone", never "lean".
+    It moves when she tilts the phone, which is how she can tell at a
+    standstill that the sensors are alive (hers: "the sensors don't seem to
+    work" - they were, and nothing on this gauge could show it). Beside a KNOWN
+    lean the thin needle below keeps its own meaning, the mount off angle; the
+    captions keep the two states apart.
     """
     p = PAL()
-    lean = 0.0 if lean_deg is None else _clamp(lean_deg, -89.0, 89.0)
+    phone = lean_deg is None and roll_deg is not None
+    if phone:
+        lean = _clamp(roll_deg, -89.0, 89.0)
+    else:
+        lean = 0.0 if lean_deg is None else _clamp(lean_deg, -89.0, 89.0)
     pitch = 0.0 if pitch_deg is None else _clamp(pitch_deg, -89.0, 89.0)
 
     # Sky above, ground below, each a full ball tall, so rotating the pair never
@@ -142,12 +154,17 @@ def horizon(lean_deg=None, pitch_deg=None, roll_deg=None, size=92):
             rotate=ft.Rotate(angle=-math.radians(_clamp(roll_deg, -89.0, 89.0)),
                              alignment=ft.Alignment.CENTER)))
 
-    caption = "—" if lean_deg is None else f"{abs(lean_deg):.0f}°"
+    if phone:
+        caption = f"phone {abs(roll_deg):.0f}°"
+    elif lean_deg is None:
+        caption = "lean · while riding"
+    else:
+        caption = f"lean {abs(lean_deg):.0f}°"
     return ft.Column(spacing=4, tight=True,
                      horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                      controls=[ft.Stack(width=size, height=size,
                                         controls=layers),
-                               ui.label(f"lean {caption}")])
+                               ui.label(caption)])
 
 
 def meter(fraction, peak=None, label="", value="", height=92, width=26):
@@ -264,7 +281,8 @@ def g_ball(g_lat=None, g_long=None, size=92):
                                  bgcolor=p["bad"] if total > 0.8
                                  else p["accent"]))]),
             ui.label(f"{total:.2f} g" if (g_lat is not None
-                                          or g_long is not None) else "—")])
+                                          or g_long is not None)
+                     else "g · while riding")])
 
 
 def loudness_norm(dbfs):
