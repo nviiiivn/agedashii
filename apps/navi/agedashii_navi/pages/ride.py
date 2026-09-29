@@ -678,6 +678,11 @@ def build(page, go=None):
             pin_detail.value = (live.LIVE.get("note")
                                 or getattr(route, "reason", "") or "no route")
             pin_band.visible = True
+        else:
+            # A route is up without the page rebuilding: switch the screen-off
+            # service on now, and ask for the notification that shows it.
+            _sync_location(_M.get("geo"))
+            page.run_task(location.ask_notifications, page)
         draw_route()
         paint()
         _update(page)
@@ -846,7 +851,8 @@ def build(page, go=None):
         _sync_location(geo)
     # A route is up: from here the location service matters, so this is where
     # the notification permission is asked - with its reason, not at launch.
-    if geo is not None and live.LIVE.get("dest") is not None:
+    # A ROUTE, not a remembered destination (main.py restores that at launch).
+    if geo is not None and live.LIVE.get("route") is not None:
         page.run_task(location.ask_notifications, page)
 
     async def _locate(_e=None):

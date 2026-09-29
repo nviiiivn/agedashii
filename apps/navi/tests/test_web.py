@@ -116,6 +116,7 @@ class TheGpsKeepsComingWithTheScreenOff(unittest.TestCase):
         ride._M.pop("geo", None)                                 # noqa: SLF001
         self.addCleanup(ride._M.pop, "geo", None)                # noqa: SLF001
         live.set_destination(37.81, -122.25, "Lake Merritt")    # a route is up
+        _routed()
         self.addCleanup(live.reset)
         page = page_on(ft.PagePlatform.ANDROID)
         ride.build(page)
@@ -133,7 +134,12 @@ class TheGpsKeepsComingWithTheScreenOff(unittest.TestCase):
         live.reset()
         self.addCleanup(live.reset)
         self.assertFalse(location.wants_service())      # a map at a stop
+        # A REMEMBERED destination is not a route: main.py restores the last
+        # one at launch without routing it, and v1.19.0 then ran the service
+        # from launch (emulator-5556). Only a computed route counts.
         live.set_destination(37.81, -122.25, "Lake Merritt")
+        self.assertFalse(location.wants_service())
+        live.LIVE["route"] = object()                     # routed
         self.assertTrue(location.wants_service())
         live.clear_destination()
         self.assertFalse(location.wants_service())
@@ -155,6 +161,7 @@ class TheGpsKeepsComingWithTheScreenOff(unittest.TestCase):
         geo = next(s for s in page.services if isinstance(s, fgeo.Geolocator))
         self.assertNotIn("foreground_notification_title", self.encoded(geo.configuration))
         live.set_destination(37.81, -122.25, "Lake Merritt")
+        _routed()
         ride.build(page)                                         # back to Ride
         self.assertIs(ride._M["geo"], geo)                       # noqa: SLF001 - same stream
         self.assertEqual(self.encoded(geo.configuration)
@@ -166,6 +173,28 @@ class TheGpsKeepsComingWithTheScreenOff(unittest.TestCase):
         self.assertEqual(sent["interval_duration"].milliseconds, 200)
 
 
+def _routed():
+    """A real, drawable route - what live.route_now leaves in LIVE["route"]."""
+    from agedashii_washi import routing
+    points = [(37.8044, -122.2712), (37.8100, -122.2600)]
+    cum = routing.cumulative_m(points)
+    live.LIVE["route"] = routing.Route(ok=True, source="offline", points=points,
+                                       cum_m=cum, maneuvers=[], distance_m=cum[-1],
+                                       duration_s=300.0)
+
+
+def _has(module):
+    import importlib.util
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+# flet-permission-handler is a Navi dependency, but a dev venv can lack it: then
+# these SKIP, saying why, rather than going red for an environment problem.
+@unittest.skipUnless(_has("flet_permission_handler"),
+                     "flet-permission-handler is not installed in this venv")
 class SheCanSeeTheGpsIsOn(unittest.TestCase):
     """Android 13+ hides a foreground service's notification until the app is
     granted POST_NOTIFICATIONS at runtime: GPS on, nothing on screen saying so.
@@ -198,6 +227,8 @@ class SheCanSeeTheGpsIsOn(unittest.TestCase):
 
     def test_asked_once_on_android(self):
         page = page_on(ft.PagePlatform.ANDROID)
+        self.location.ASK_DELAY_S = 0
+        self.addCleanup(setattr, self.location, "ASK_DELAY_S", 2.0)
         self.asyncio.run(self.location.ask_notifications(page))
         self.asyncio.run(self.location.ask_notifications(page))
         self.assertEqual(self.asked, [self.fph.Permission.NOTIFICATION])
@@ -207,6 +238,35 @@ class SheCanSeeTheGpsIsOn(unittest.TestCase):
             page_on(ft.PagePlatform.LINUX, web=True)))
         self.assertEqual(self.asked, [])
 
+    def test_an_unanswered_ask_is_asked_again(self):
+        # v1.19.0: the request collided with another permission request and
+        # came back with no result - and the once-per-launch flag was spent.
+        test = self
+
+        class Interfered(self.fph.PermissionHandler):
+            async def request(self, permission):
+                test.asked.append(permission)
+                return None
+        with mock.patch.object(self.fph, "PermissionHandler", Interfered), \
+                mock.patch.object(self.location, "ASK_DELAY_S", 0):
+            page = page_on(ft.PagePlatform.ANDROID)
+            self.asyncio.run(self.location.ask_notifications(page))
+            self.location._ASKED.pop("handler", None)                # noqa: SLF001
+            self.asyncio.run(self.location.ask_notifications(page))
+        self.assertEqual(len(self.asked), 2)
+
+    def test_a_remembered_destination_does_not_ask_at_launch(self):
+        from agedashii_navi.pages import ride
+        prefs.reset()
+        live.reset()
+        ride.forget_map()
+        self.addCleanup(ride.forget_map)
+        self.addCleanup(live.reset)
+        live.LIVE["dest"] = (37.81, -122.25, "Lake Merritt")      # main.py's restore
+        page = page_on(ft.PagePlatform.ANDROID)
+        ride.build(page)
+        self.assertNotIn(self.location.ask_notifications, [fn for fn, _a in page.tasks])
+
     def test_the_ride_page_asks_when_a_route_is_up(self):
         from agedashii_navi.pages import ride
         prefs.reset()
@@ -215,6 +275,7 @@ class SheCanSeeTheGpsIsOn(unittest.TestCase):
         self.addCleanup(ride.forget_map)
         self.addCleanup(live.reset)
         live.set_destination(37.81, -122.25, "Lake Merritt")
+        _routed()
         page = page_on(ft.PagePlatform.ANDROID)
         ride.build(page)
         self.assertIn(self.location.ask_notifications, [fn for fn, _a in page.tasks])

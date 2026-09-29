@@ -27,6 +27,7 @@ notification is how she sees that her position is being taken. flet_geolocator
 restarts the stream on every update with the configuration it then has, so
 switching the service on or off is a configuration change (ride._sync_location).
 """
+import asyncio
 from typing import Optional
 
 import flet as ft
@@ -51,9 +52,15 @@ class _FlatForeground(fgeo.GeolocatorAndroidConfiguration):
     foreground_notification_set_ongoing: bool = False
 
 
-#: Whether this launch has asked for the notification permission. Once is
-#: enough: a refusal is hers, and asking on every route would be nagging.
+#: Whether this launch has had an ANSWER to the notification permission. Once
+#: is enough: a refusal is hers, and asking on every route would be nagging.
 _ASKED = {}
+#: Seconds to wait before asking. The trigger (a route, a recording) is also
+#: when the location stream restarts, and on v1.19.0 the two permission
+#: requests collided: permission_handler logged "onRequestPermissionsResult is
+#: called without results ... interfering request codes", no dialog showed,
+#: and the ask was spent.
+ASK_DELAY_S = 2.0
 
 
 async def ask_notifications(page):
@@ -66,12 +73,14 @@ async def ask_notifications(page):
     it was not asked. Never raises: a permission it cannot ask for is printed
     and the ride goes on.
     """
-    if _ASKED.get("done"):
+    if _ASKED.get("done") or _ASKED.get("asking"):
         return None
     if getattr(page, "web", False) or getattr(page, "platform", None) != ft.PagePlatform.ANDROID:
         return None
-    _ASKED["done"] = True
+    _ASKED["asking"] = True
     try:
+        if ASK_DELAY_S:
+            await asyncio.sleep(ASK_DELAY_S)
         import flet_permission_handler as fph
         handler = _ASKED.get("handler")
         if handler is None:
@@ -80,20 +89,33 @@ async def ask_notifications(page):
             if isinstance(getattr(page, "services", None), list):
                 page.services.append(handler)
         status = await handler.get_status(fph.Permission.NOTIFICATION)
-        if status == fph.PermissionStatus.GRANTED:
-            return status
-        return await handler.request(fph.Permission.NOTIFICATION)
+        if status != fph.PermissionStatus.GRANTED:
+            status = await handler.request(fph.Permission.NOTIFICATION)
+        if status is not None:
+            _ASKED["done"] = True              # answered: never nag again
+        else:
+            print("[navi] location: the notification request came back with no "
+                  "answer - asking again next time", flush=True)
+        return status
     except Exception as exc:                            # noqa: BLE001
+        _ASKED["done"] = True                  # cannot ask here: stop trying
         print(f"[navi] location: could not ask for notifications: "
               f"{type(exc).__name__}: {exc}", flush=True)
         return None
+    finally:
+        _ASKED["asking"] = False
 
 
 def wants_service():
     """Whether the screen-off location service should run: a ride recording,
-    or a route up. Not while she only looks at the map."""
+    or a ROUTE up. Not while she only looks at the map.
+
+    A route, not a destination: main.py restores her last destination at
+    launch WITHOUT routing it, and keyed on that, v1.19.0 ran the service from
+    the moment the app opened (emulator-5556).
+    """
     from . import live
-    return bool(live.recording() or live.LIVE.get("dest") is not None)
+    return bool(live.recording() or live.LIVE.get("route") is not None)
 
 
 def android_config(hz=1, foreground=True):

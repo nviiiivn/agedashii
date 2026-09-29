@@ -467,6 +467,11 @@ def _speak_one(backend, items, gen=None):
                          last=" + ".join(v if k == "tts" else f"[{v.rsplit('/', 1)[-1]}]"
                                          for k, v, _f in items),
                          quiet_until=time.time() + MAX_UTTERANCE_S)
+            # One line per prompt, clip names in brackets, so a device run can
+            # show WHICH lines played (the character rules: no urgent on far,
+            # angry once a minute, the cough in the join) - dumpsys only shows
+            # that a player started.
+            print(f"[navi] speech: playing {STATE['last']}", flush=True)
             for kind, value, fallback in items:
                 if kind == "flourish":
                     _play_clip(backend, value, yields=True)    # skipped if broken
