@@ -83,7 +83,7 @@ class WhichClip(unittest.TestCase):
 
     def test_every_clip_name_is_one_of_hers_and_every_one_of_hers_is_used(self):
         names = set(voice_import.NAMES)
-        used = ({n for _w, n in voicelines.MANEUVERS}
+        used = ({n for _w, n in voicelines.MANEUVERS} | set(voicelines.SIDED)
                 | set(voice_import.FIXED_DISTANCES) | set(voicelines.SITUATIONS))
         self.assertEqual(used, names)
         self.assertEqual(set(voicelines.STAND_IN), {n for _w, n in voicelines.MANEUVERS})
@@ -260,7 +260,7 @@ class TheRule(unittest.TestCase):
     def test_every_name_has_a_preview(self):
         for name in voice_import.NAMES:
             items = voicelines.preview(name, clips())
-            if name == "speeding":
+            if name in ("speeding", "open"):
                 self.assertEqual(items, [])
             else:
                 self.assertEqual(items[0][0], "tts", name)
@@ -380,21 +380,6 @@ class CharacterLines(unittest.TestCase):
         self.assertIsNone(f.pick("urgent", POOL, maneuver=7))        # near
         self.assertIsNotNone(f.pick("urgent", POOL, maneuver=8))     # the next turn
 
-    def test_a_cough_drops_into_the_join_now_and_then(self):
-        # Between the distance and the turn of one prompt - never inside a
-        # clip, never on the "now" band, never twice running.
-        coughs = {"interject-cough": "/v/cough.mp3"}
-        items = [("clip", "/v/dist.mp3", "In 400 ft,"), ("clip", "/v/turn.mp3", "turn left")]
-        f = voicelines.Flourish(Always())
-        got = f.cough(items, coughs, band="near")
-        self.assertEqual(got, [items[0], ("flourish", "/v/cough.mp3", None), items[1]])
-        self.assertEqual(f.cough(items, coughs, band="near"), items)          # not twice running
-        self.assertEqual(voicelines.Flourish(Always()).cough(items, coughs, band="now"), items)
-        self.assertEqual(voicelines.Flourish(Always()).cough(items[1:], coughs, band="near"),
-                         items[1:])                                        # one piece: no join
-        self.assertEqual(voicelines.Flourish(Never()).cough(items, coughs, band="near"), items)
-        self.assertLess(voicelines.COUGH_RATE, voicelines.FLOURISH_RATE["urgent"])
-
     def test_the_mood_follows_the_moment(self):
         mood = voicelines.flourish_mood
         self.assertEqual(mood([], fired("turn left")), "urgent")             # near
@@ -430,6 +415,220 @@ class CharacterLines(unittest.TestCase):
                          "flourish-angry-bastard": "/v/b.mp3"}, now=0)
         self.assertFalse(f.angry_ok(now=30))
         self.assertTrue(f.angry_ok(now=61))
+
+
+class Script(Always):
+    """An rng that answers random() from a list, then yes for ever."""
+
+    def __init__(self, *rolls):
+        self.rolls = list(rolls)
+
+    def random(self):
+        return self.rolls.pop(0) if self.rolls else 0.0
+
+
+COUGHS = {"interject-cough": "/v/cough.mp3"}
+COUGH = ("flourish", "/v/cough.mp3", None)
+
+
+def piece(instruction="turn left", band="near", have=("turn-left", "dist-400ft"),
+          halves=None, **extra):
+    return voicelines.core(dict(fired(instruction, band=band), **extra),
+                           clips(*have), distances=dists(*have), halves=halves)
+
+
+def dists(*have):
+    return {n: f"/voice/{n}.m4a" for n in have if n.startswith("dist-")}
+
+
+def split(slot, path):
+    return [f"/voice/part-{slot}-a.m4a", f"/voice/part-{slot}-b.m4a"]
+
+
+D = ("clip", "/voice/dist-400ft.m4a", "In 400 ft,")
+D_AFTER = ("clip", "/voice/dist-400ft.m4a", "in 400 ft")
+M = ("clip", "/voice/turn-left.m4a", "turn left")
+A = ("clip", "/voice/part-turn-left-a.m4a", "turn left")
+B = ("clip", "/voice/part-turn-left-b.m4a", "turn left")
+
+
+class Composition(unittest.TestCase):
+    """AGEDASHII, from her: COMPOSITION, not a template - "turn left" + "in 200
+    meters", "continue -" + cough + "- straight", "exit left human" + "do it
+    now" + "damn it". Rules agreed with minion 2 (voicelines.Arranger)."""
+
+    def test_the_maneuver_can_come_first(self):
+        # order roll under P_MANEUVER_FIRST; no coughs to roll for.
+        got = voicelines.Arranger(Script(0.1)).arrange(piece(), "near")
+        self.assertEqual(got, [M, D_AFTER])
+        got = voicelines.Arranger(Never()).arrange(piece(), "near")
+        self.assertEqual(got, [D, M])
+
+    def test_the_tail_and_street_go_with_the_maneuver(self):
+        core = voicelines.core(dict(fired("take the exit on the right"), kind="exit"),
+                               clips("exit", "dist-400ft"), streets=True,
+                               distances=dists("dist-400ft"))
+        got = voicelines.Arranger(Script(0.1)).arrange(core, "near")
+        self.assertEqual(got, [("clip", "/voice/exit.m4a", "take the exit on the right"),
+                               ("tts", "on the right", None),
+                               ("tts", "onto Grand Ave", None),
+                               ("clip", "/voice/dist-400ft.m4a", "in 400 ft")])
+
+    def test_now_is_the_maneuver_alone(self):
+        got = voicelines.Arranger(Always()).arrange(
+            piece(band="now", halves=split), "now", coughs=COUGHS)
+        self.assertEqual(got, [M])
+
+    def test_the_same_shape_never_twice_running(self):
+        a = voicelines.Arranger(Never())
+        self.assertEqual(a.arrange(piece(), "far"), [D, M])
+        self.assertEqual(a.arrange(piece(), "near"), [M, D_AFTER])     # flipped
+        a.arrange(piece(band="now"), "now")                           # not counted
+        self.assertEqual(a.arrange(piece(), "far"), [D, M])
+        # A flourish makes it a different shape: no flip needed.
+        f = [("flourish", "/v/now.mp3", None)]
+        self.assertEqual(a.arrange(piece(), "near", f), [D, M] + f)
+
+    def test_the_cough_goes_inside_a_line_in_halves(self):
+        got = voicelines.Arranger(Script(0.9, 0.0)).arrange(
+            piece(halves=split), "near", coughs=COUGHS)
+        self.assertEqual(got, [D, A, COUGH, B])
+        # The same shape again flips the order; the cough stays inside.
+        a = voicelines.Arranger(Script(0.9, 0.0, 0.9, 0.0))
+        a.arrange(piece(halves=split), "far", coughs=COUGHS)
+        a.coughed = False                        # as if a prompt came between
+        got = a.arrange(piece(halves=split), "near", coughs=COUGHS)
+        self.assertEqual(got, [A, COUGH, B, D_AFTER])
+
+    def test_without_halves_the_cough_takes_the_join(self):
+        got = voicelines.Arranger(Script(0.9, 0.0)).arrange(piece(), "near", coughs=COUGHS)
+        self.assertEqual(got, [D, COUGH, M])
+        got = voicelines.Arranger(Script(0.1, 0.0)).arrange(piece(), "near", coughs=COUGHS)
+        self.assertEqual(got, [M, COUGH, D_AFTER])
+
+    def test_no_cough_twice_running_on_now_or_with_nowhere_to_go(self):
+        a = voicelines.Arranger(Script(0.9, 0.0, 0.9, 0.0))
+        self.assertIn(COUGH, a.arrange(piece(), "near", coughs=COUGHS))
+        self.assertNotIn(COUGH, a.arrange(piece(), "near", coughs=COUGHS))
+        self.assertNotIn(COUGH, voicelines.Arranger(Always()).arrange(
+            piece(band="now"), "now", coughs=COUGHS))
+        no_d = piece(metres=None)
+        self.assertEqual(voicelines.Arranger(Always()).arrange(no_d, "near", coughs=COUGHS), [M])
+        self.assertNotIn(COUGH, voicelines.Arranger(Never()).arrange(
+            piece(), "near", coughs=COUGHS))
+        self.assertLess(voicelines.COUGH_RATE, voicelines.FLOURISH_RATE["urgent"])
+
+    def test_the_instruction_survives_every_arrangement(self):
+        # Direction and distance whole in every shape, nothing but the cough
+        # before the instruction ends, and his lines only after it.
+        import random as r
+        f = [("flourish", "/v/now.mp3", None), ("flourish", "/v/damn.mp3", None)]
+        for seed in range(400):
+            a = voicelines.Arranger(r.Random(seed))
+            for band, halves in (("far", split), ("near", None), ("now", split)):
+                got = a.arrange(piece(band=band, halves=halves), band, f, COUGHS)
+                self.assertEqual(got[-2:], f)
+                body = got[:-2]
+                self.assertTrue(M in body or (A in body and B in body), body)
+                if band == "now":
+                    self.assertEqual(body, [M])
+                else:
+                    self.assertTrue(D in body or D_AFTER in body, body)
+                    self.assertEqual([i for i in body if i[0] == "flourish"],
+                                     [COUGH] if COUGH in body else [])
+                    self.assertNotIn(body[0], [COUGH])
+                    self.assertNotEqual(body[-1], COUGH)
+
+    def test_our_own_sentence_stays_whole(self):
+        got = voicelines.Arranger(Always()).arrange(None, "near", [("flourish", "/v/x", None)],
+                                                    COUGHS, text="In 400 ft, turn left")
+        self.assertEqual(got, [("tts", "In 400 ft, turn left", None), ("flourish", "/v/x", None)])
+
+
+class InHalves(unittest.TestCase):
+    """part-<slot>-a / -b: the plain line cut at a silence, for the cough."""
+
+    def halves(self, path="/v/continue.mp3", where=None):
+        where = where or {}
+        return voicelines.halves("continue", path,
+                                 source=lambda n: where.get(n, "built in"),
+                                 clip_path=lambda n: f"/v/{n}.mp3")
+
+    def test_both_halves_from_the_same_place(self):
+        self.assertEqual(self.halves(), ["/v/part-continue-a.mp3", "/v/part-continue-b.mp3"])
+
+    def test_never_her_half_and_his(self):
+        self.assertIsNone(self.halves(where={"part-continue-a": "yours"}))
+        self.assertIsNone(self.halves(where={"continue": "yours"}))
+        self.assertIsNotNone(self.halves(where={"continue": "yours", "part-continue-a": "yours",
+                                                "part-continue-b": "yours"}))
+
+    def test_never_over_one_of_his_wild_takes(self):
+        self.assertIsNone(self.halves(path="/v/wild-continue-go-on.mp3"))
+
+    def test_a_half_that_will_not_play_says_the_whole_line(self):
+        got = piece(halves=split)
+        self.assertEqual([h[2] for h in got.halves], ["turn left", "turn left"])
+
+
+class TheExitSaysItsSide(unittest.TestCase):
+    """minion 2's rule E: exit-left / exit-right say the side themselves."""
+
+    def exit(self, *have, instruction="take the exit on the right"):
+        return voicelines.playlist(instruction, dict(fired(instruction), kind="exit"),
+                                   clips(*have), distances=dists(*have))
+
+    def test_the_sided_line_plays_and_the_phone_does_not_repeat_the_side(self):
+        self.assertEqual(self.exit("exit", "exit-right", "dist-400ft"),
+                         [D, ("clip", "/voice/exit-right.m4a", "take the exit on the right")])
+
+    def test_without_one_it_is_exit_and_the_side(self):
+        self.assertEqual(self.exit("exit", "exit-left", "dist-400ft"),
+                         [D, ("clip", "/voice/exit.m4a", "take the exit on the right"),
+                          ("tts", "on the right", None)])
+
+    def test_an_exit_with_no_side_is_the_plain_exit(self):
+        self.assertEqual(self.exit("exit", "exit-right", "dist-400ft", instruction="take the exit"),
+                         [D, ("clip", "/voice/exit.m4a", "take the exit")])
+
+    def test_a_sided_exit_is_a_direction_slot(self):
+        self.assertLessEqual(set(voicelines.SIDED), voicelines.DIRECTION_SLOTS)
+
+
+URGENT = {"flourish-urgent-do-it-now": "/v/now.mp3", "flourish-urgent-move": "/v/move.mp3"}
+ANGRY = {"flourish-angry-damn-it": "/v/damn.mp3"}
+
+
+class ASecondLine(unittest.TestCase):
+    """"do it now" + "damn it": a second flourish after the first, sometimes."""
+
+    def test_where_it_may_come_from(self):
+        second = voicelines.second_moods
+        self.assertEqual(second([], fired("turn left")), ["urgent", "angry"])
+        self.assertEqual(second([], fired("turn left"), angry_ok=False), ["urgent"])
+        self.assertEqual(second([], fired("turn left", band="now")), [])
+        self.assertEqual(second([], fired("turn left", band="far")), [])
+        self.assertEqual(second(["offroute", "speeding"], None), ["angry", "scold"])
+        self.assertEqual(second([], dict(fired("arrive at your destination"), kind="arrive")), [])
+
+    def test_never_the_first_ones_line_and_at_the_named_rate(self):
+        f = voicelines.Flourish(Always())
+        first = f.pick("urgent", URGENT, now=0)[0]
+        got = f.second({"urgent": URGENT}, first, now=0)
+        self.assertNotEqual(got[0], first)
+        self.assertIsNone(voicelines.Flourish(Never()).second({"urgent": URGENT}, first, now=0))
+        self.assertIsNone(voicelines.Flourish(Always()).second(
+            {"urgent": {first: "/v/now.mp3"}}, first, now=0))
+        self.assertIsNone(voicelines.Flourish(Always()).second({"urgent": URGENT}, None, now=0))
+        self.assertEqual(voicelines.P_SECOND, 0.35)
+
+    def test_an_angry_second_line_waits_out_the_minute(self):
+        f = voicelines.Flourish(Always())
+        f.pick("angry", {"flourish-angry-no": "/v/no.mp3"}, now=0)
+        self.assertIsNone(f.second({"angry": ANGRY}, "flourish-urgent-move", now=30))
+        got = f.second({"angry": ANGRY}, "flourish-urgent-move", now=61)
+        self.assertEqual(got, ("flourish-angry-damn-it", "/v/damn.mp3"))
+        self.assertFalse(f.angry_ok(now=90))                    # it counts, too
 
 
 class HisWildLinesLead(unittest.TestCase):
@@ -640,6 +839,11 @@ class TheRidePage(_Clean):
         ride._M.pop("cues", None)                          # noqa: SLF001
         self.addCleanup(ride._M.pop, "cues", None)         # noqa: SLF001
         self.played = self.capture_play()
+        # Distance first, no cough - unless a test says otherwise.
+        from agedashii_navi import character
+        arrange = mock.patch.object(character, "ARRANGE", voicelines.Arranger(Never()))
+        arrange.start()
+        self.addCleanup(arrange.stop)
 
     def announce(self, status=None, say="", parts=None, reroute=False):
         out = {"moved": True, "status": status, "say": say, "say_parts": parts,
@@ -735,14 +939,57 @@ class TheRidePage(_Clean):
                                         ("flourish", "/v/now.mp3", None)]])
 
     def test_a_ride_prompt_can_cough_between_distance_and_turn(self):
+        from agedashii_navi import character
         turn, far = self.add("turn-left"), self.add("dist-400ft")
         self.flourishes({}, coughs={"interject-cough": "/v/cough.mp3"})
+        arrange = mock.patch.object(character, "ARRANGE", voicelines.Arranger(Script(0.9, 0.0)))
+        arrange.start()
+        self.addCleanup(arrange.stop)
         prefs.set_value("voice", True)
         self.announce({"ok": True, "off_route": False},
                       "In 400 ft, turn left onto Grand Ave", fired("turn left"))
         self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
                                         ("flourish", "/v/cough.mp3", None),
                                         ("clip", turn, "turn left")]])
+
+    def test_a_near_turn_can_get_two_of_his_lines(self):
+        turn, far = self.add("turn-left"), self.add("dist-400ft")
+        self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3"},
+                         "angry": {"flourish-angry-damn-it": "/v/damn.mp3"}})
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False},
+                      "In 400 ft, turn left onto Grand Ave", fired("turn left"))
+        self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
+                                        ("clip", turn, "turn left"),
+                                        ("flourish", "/v/now.mp3", None),
+                                        ("flourish", "/v/damn.mp3", None)]])
+
+    def test_the_corner_gets_one_line_at_most(self):
+        turn = self.add("turn-left")
+        self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3",
+                                    "flourish-urgent-move": "/v/move.mp3"},
+                         "angry": {"flourish-angry-damn-it": "/v/damn.mp3"}})
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False}, "turn left onto Grand Ave",
+                      fired("turn left", band="now"))
+        self.assertEqual(self.played, [[("clip", turn, "turn left"),
+                                        ("flourish", "/v/now.mp3", None)]])
+
+    def test_a_ride_prompt_coughs_inside_a_line_in_halves(self):
+        from agedashii_navi import character
+        turn, far = self.built_in("continue"), self.built_in("dist-400ft")
+        a, b = self.built_in("part-continue-a"), self.built_in("part-continue-b")
+        self.flourishes({}, coughs={"interject-cough": "/v/cough.mp3"})
+        arrange = mock.patch.object(character, "ARRANGE", voicelines.Arranger(Script(0.9, 0.0)))
+        arrange.start()
+        self.addCleanup(arrange.stop)
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": False}, "In 400 ft, continue straight",
+                      dict(fired("continue straight"), kind="continue"))
+        self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
+                                        ("clip", a, "continue straight"),
+                                        ("flourish", "/v/cough.mp3", None),
+                                        ("clip", b, "continue straight")]])
 
     def test_no_urgent_line_on_the_far_prompt(self):
         self.add("turn-left")
@@ -799,6 +1046,47 @@ class TheRidePage(_Clean):
             self.assertEqual(character.tap(), [])           # never over a prompt
         prefs.set_value("flourish_taps", False)
         self.assertEqual(character.tap(), [])
+
+    def open_clean(self):
+        from agedashii_navi import character
+        character._OPENED.clear()                           # noqa: SLF001
+        self.addCleanup(character._OPENED.clear)            # noqa: SLF001
+        wild = mock.patch.object(character, "WILD", voicelines.Wild(Always()))
+        wild.start()
+        self.addCleanup(wild.stop)
+        return character
+
+    def test_her_launch_line_plays_once_per_launch(self):
+        character = self.open_clean()
+        self.built_in("open")
+        prefs.set_value("voice", True)
+        self.assertEqual(len(character.opening()), 1)
+        self.assertEqual(character.opening(), [])            # not on a repaint
+
+    def test_the_launch_line_is_a_slot_not_theatre(self):
+        # Character lines off: her open line still plays; the wild takes do not.
+        character = self.open_clean()
+        plain = self.built_in("open")
+        self.built_in("wild-open-hello")
+        prefs.set_value("voice", True)
+        prefs.set_value("flourishes", False)
+        self.assertEqual(character.opening(), [("clip", plain, None)])
+
+    def test_no_clip_or_no_voice_is_silence(self):
+        character = self.open_clean()
+        prefs.set_value("voice", True)
+        self.assertEqual(character.opening(), [])            # no clip: no robot greeting
+        character._OPENED.clear()                           # noqa: SLF001
+        self.built_in("open")
+        prefs.set_value("voice", False)
+        self.assertEqual(character.opening(), [])
+
+    def test_the_launch_line_never_talks_over_a_prompt(self):
+        character = self.open_clean()
+        self.built_in("open")
+        prefs.set_value("voice", True)
+        with mock.patch.object(speech, "voice_active", return_value=True):
+            self.assertEqual(character.opening(), [])
 
     def test_off_route_and_rerouting_go_as_one_playlist(self):
         prefs.set_value("voice", True)

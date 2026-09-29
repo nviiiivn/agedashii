@@ -50,9 +50,10 @@ FT_PER_M = 3.280839895
 
 #: What the phone says for a situation she has no clip for. `speeding` has
 #: none on purpose: a robot nagging about speed is not what she asked for, so
-#: it only ever plays her own line.
+#: it only ever plays her own line. Nor has `open`, the launch line
+#: (character.opening): the phone's voice greeting her is not the line.
 SITUATIONS = {"offroute": "Off route.", "rerouting": "Re-routing.",
-              "start": "Starting the route.", "speeding": None}
+              "start": "Starting the route.", "speeding": None, "open": None}
 
 
 #: Her maneuver clip names - what a router's `kind` may be taken as directly.
@@ -105,17 +106,39 @@ def _bare(instruction):
     return (instruction or "continue").split(" onto ")[0].strip()
 
 
-def playlist(text, parts, clip_path, streets=False, imperial=True, distances=None):
-    """The items to play for one fired prompt.
+class Core:
+    """The instruction's pieces for one prompt - what every arrangement keeps
+    whole: the distance (said first, or after the maneuver), the maneuver
+    line, its two halves when it can be cut, and its tail (the side or exit
+    number, the street), which is glued to the maneuver whichever comes first.
+    """
 
-    `parts` is what guidance fired ({instruction, street, metres, band}) or
-    None; `clip_path(name)` gives a file or None; `streets` is her switch for
-    saying the street name after her line (off by default); `distances` is
-    {name: path} of every distance clip she has - by default the fixed names,
-    looked up through `clip_path`.
+    def __init__(self, d_first, d_after, m, halves, tail):
+        self.d_first = d_first      # "In 400 feet," before the maneuver
+        self.d_after = d_after      # "in 400 feet" after it
+        self.m = m
+        self.halves = halves        # [a, b] or None
+        self.tail = tail
+
+    def classic(self):
+        """Distance, maneuver, tail - the order before composition."""
+        return ([self.d_first] if self.d_first else []) + [self.m] + self.tail
+
+
+def core(parts, clip_path, streets=False, imperial=True, distances=None,
+         halves=None):
+    """The Core for one fired prompt, or None when none of her clips applies
+    and the prompt is our own sentence, unchanged.
+
+    `parts` is what guidance fired ({instruction, street, metres, band,
+    kind}); `clip_path(name)` gives a file or None; `streets` is her switch
+    for saying the street name after her line (off by default); `distances`
+    is {name: path} of every distance clip she has - by default the fixed
+    names, looked up through `clip_path`; `halves(slot, path)` gives the two
+    halves of that slot's line, or None (see `halves`).
     """
     if not parts:
-        return [("tts", text, None)]
+        return None
     band = parts.get("band")
     metres = parts.get("metres") if band != "now" else None
     # KIND BEATS WORDS: words are for her to read, the router's kind is for the
@@ -134,29 +157,72 @@ def playlist(text, parts, clip_path, streets=False, imperial=True, distances=Non
         man = kind
     else:
         man = None                          # None, or "start" (the depart)
-    man_clip = clip_path(man) if man else None
+    man_clip = None
+    if man == "exit":
+        # The exit that says its own side, when there is one for this side
+        # (her "exit left human"); else the plain exit and the phone's side.
+        side = _SIDE.search((parts.get("instruction") or "").lower())
+        if side:
+            man_clip = clip_path(f"exit-{side.group(1)}")
+            if man_clip:
+                man = f"exit-{side.group(1)}"
+    if man_clip is None and man:
+        man_clip = clip_path(man)
     if distances is None:
         distances = {n: clip_path(n) for n in FIXED_DISTANCES}
     found = distance_clip(metres, distances) if metres else None
     dist_clip = found[1] if found else None
     if man_clip is None and dist_clip is None:
-        return [("tts", text, None)]          # none of hers applies: our sentence
-    items = []
+        return None                         # none of hers applies: our sentence
+    d_first = d_after = None
     if metres:
-        spoken = f"In {guidance.distance_text(metres, imperial)},"
-        items.append(("clip", dist_clip, spoken) if dist_clip else ("tts", spoken, None))
+        words = guidance.distance_text(metres, imperial)
+        first, after = f"In {words},", f"in {words}"
+        d_first = ("clip", dist_clip, first) if dist_clip else ("tts", first, None)
+        d_after = ("clip", dist_clip, after) if dist_clip else ("tts", after, None)
     bare = _bare(parts.get("instruction"))
-    items.append(("clip", man_clip, bare) if man_clip else ("tts", bare, None))
+    m = ("clip", man_clip, bare) if man_clip else ("tts", bare, None)
+    cut = halves(man, man_clip) if (man_clip and halves) else None
+    # Either half that will not play is replaced by the WHOLE maneuver in the
+    # phone's voice - "turn *cough* Turn left" still says left (minion 2).
+    cut = [("clip", cut[0], bare), ("clip", cut[1], bare)] if cut else None
+    tail = []
     # Her line replaces the verb, so what only the words carry follows it in
     # the phone's voice: which exit off a roundabout, which side a ramp is on.
     if man_clip:
-        tail = _after_her_line(man, parts.get("instruction"))
-        if tail:
-            items.append(("tts", tail, None))
+        said = _after_her_line(man, parts.get("instruction"))
+        if said:
+            tail.append(("tts", said, None))
     street = parts.get("street")
     if streets and street and man != "arrive":
-        items.append(("tts", f"onto {street}", None))
-    return items
+        tail.append(("tts", f"onto {street}", None))
+    return Core(d_first, d_after, m, cut, tail)
+
+
+def playlist(text, parts, clip_path, streets=False, imperial=True, distances=None):
+    """The items for one fired prompt in the classic order - distance,
+    maneuver, tail - or our own sentence when none of her clips applies.
+    A ride composes the same Core instead (Arranger)."""
+    got = core(parts, clip_path, streets, imperial, distances)
+    return got.classic() if got else [("tts", text, None)]
+
+
+def halves(slot, path, source, clip_path):
+    """[a, b] - the two halves of `slot`'s line, part-<slot>-a and -b - or None.
+
+    Only for the plain line: `path` must be the slot's own clip, not one of
+    his wild takes, and both halves must come from the same place as it -
+    never her half and Arnold's half in one line. `source` and `clip_path`
+    are voice_import's.
+    """
+    if not path or path != clip_path(slot):
+        return None
+    whose = source(slot)
+    a, b = f"part-{slot}-a", f"part-{slot}-b"
+    if source(a) != whose or source(b) != whose:
+        return None
+    got = clip_path(a), clip_path(b)
+    return list(got) if all(got) else None
 
 
 _EXIT_NUMBER = re.compile(r"\btake the (\w+) exit\b")
@@ -196,12 +262,19 @@ STAND_IN = {"turn-left": "turn left", "turn-right": "turn right",
             "merge": "merge", "exit": "take the exit",
             "arrive": "arrive at your destination",
             "roundabout": "take the roundabout"}
+#: The exits that say their own side. Never matched from words: an "exit"
+#: whose instruction says "on the left" or "on the right" plays one when
+#: there is one (core), else "exit" and the phone adds the side.
+SIDED = {"exit-left": "take the exit on the left",
+         "exit-right": "take the exit on the right"}
 
 
 def stand_in(name, imperial=True):
-    """The phone's words for `name` when she has no clip, or None (speeding)."""
+    """The phone's words for `name` when she has no clip, or None (speeding, open)."""
     if name in STAND_IN:
         return STAND_IN[name]
+    if name in SIDED:
+        return SIDED[name]
     feet = distance_feet(name)
     if feet:
         return f"In {guidance.distance_text(feet / FT_PER_M, imperial)},"
@@ -342,10 +415,17 @@ FLOURISH_RATE = {"urgent": 0.25, "arrival": 1.0, "start": 1.0,
                  # Rarer: theatre on a button pressed ten times a day wears
                  # thin fast. Minion 2's Kotlin number, kept identical.
                  "ui": 0.15}
-#: Her cough, "now and then": dropped into the join between a prompt's
-#: distance and its turn ("in a quarter mile *cough* turn left"). Rarer than
-#: any flourish, far/near only, never twice running.
+#: Her cough, "now and then": inside the instruction - in the middle of the
+#: maneuver line when it comes in halves ("continue *cough* straight"), else
+#: in the join between the distance and the turn. Rarer than any flourish,
+#: far/near only, never twice running.
 COUGH_RATE = 0.08
+#: How often a far/near prompt says the maneuver FIRST: "turn left, in 400
+#: feet" (hers: "turn left" + "in 200 meters"). Agreed with minion 2.
+P_MANEUVER_FIRST = 0.3
+#: How often a flourish gets a second one after it: "do it now" + "damn it".
+#: Never on the "now" band. Agreed with minion 2.
+P_SECOND = 0.35
 
 
 #: At most one angry line a minute. A long wrong-turn burst rolled angry on
@@ -368,23 +448,47 @@ def flourish_mood(names, parts, angry_ok=True):
     The arrive maneuver's far and near prompts get no urgent or arrival line.
     `angry_ok` False (inside ANGRY_EVERY_S) passes over angry to the next.
     """
-    parts = parts or {}
-    arriving = parts.get("kind") == "arrive" or (
+    moods = flourish_moods(names, parts, angry_ok)
+    return moods[0] if moods else None
+
+
+def _arriving(parts):
+    return parts.get("kind") == "arrive" or (
         "kind" not in parts and maneuver_name(parts.get("instruction")) == "arrive")
+
+
+def flourish_moods(names, parts, angry_ok=True):
+    """Every mood this moment allows, best first (see flourish_mood, which
+    is the first of these)."""
+    parts = parts or {}
+    arriving = _arriving(parts)
     band = parts.get("band")
     if band == "now":
         if arriving:
-            return "arrival"
-        return "urgent" if parts else None
+            return ["arrival"]
+        return ["urgent"] if parts else []
+    moods = []
     if ("offroute" in names or "rerouting" in names) and angry_ok:
-        return "angry"
+        moods.append("angry")
     if "speeding" in names:
-        return "scold"
+        moods.append("scold")
     if "start" in names:
-        return "start"
+        moods.append("start")
     if parts and not arriving and band == "near":
-        return "urgent"
-    return None
+        moods.append("urgent")
+    return moods
+
+
+def second_moods(names, parts, angry_ok=True):
+    """Where a SECOND flourish may come from: every mood this moment allows,
+    plus angry on a near turn - hers, "do it now" + "damn it" - under the
+    same one-a-minute cap. None on the "now" band, which stays short."""
+    if (parts or {}).get("band") == "now":
+        return []
+    moods = flourish_moods(names, parts, angry_ok)
+    if angry_ok and "urgent" in moods and "angry" not in moods:
+        moods.append("angry")
+    return moods
 
 
 class Flourish:
@@ -397,8 +501,8 @@ class Flourish:
     def __init__(self, rng=None):
         self.rng = rng or random.Random()
         self.last = None
+        self.earlier = None            # the one before `last`
         self.maneuver = None
-        self.coughed = False
         self.angry_at = None
 
     def angry_ok(self, now):
@@ -417,30 +521,113 @@ class Flourish:
         if not names:
             return None
         name = self.rng.choice(names)
-        self.last = name
+        self._heard(name, mood, now)
         if maneuver is not None:
             self.maneuver = maneuver
-        if mood == "angry" and now is not None:
-            self.angry_at = now
         return name, pool[name]
 
-    def cough(self, items, pool, band=None):
-        """`items` with a cough in the join after the distance, now and then.
+    def second(self, pools, first, now=None):
+        """(name, path) of a second line after `first`, or None.
 
-        Only between the FIRST two pieces - the distance and the turn - of a
-        far/near prompt: never inside a clip, never on the "now" band, never
-        on two prompts running. A cough is a ("flourish", ...) item, so any
-        newer prompt cuts it like one.
+        `pools` is {mood: {name: path}} for second_moods. A mood is picked
+        evenly among those with a line other than `first`, then a line in it,
+        passing over the one heard before `first` when there is a choice. It
+        may share first's mood ("DO IT NOW" + "RIGHT NOW"); an angry one
+        still waits out ANGRY_EVERY_S. Rules agreed with minion 2.
         """
-        if band == "now" or len(items) < 2 or not pool:
+        if first is None or self.rng.random() >= P_SECOND:
+            return None
+        choices = {}
+        for mood, pool in (pools or {}).items():
+            if mood == "angry" and now is not None and not self.angry_ok(now):
+                continue
+            names = sorted(n for n, path in (pool or {}).items() if path and n != first)
+            if names:
+                choices[mood] = names
+        if not choices:
+            return None
+        mood = self.rng.choice(sorted(choices))
+        names = [n for n in choices[mood] if n != self.earlier] or choices[mood]
+        name = self.rng.choice(names)
+        self._heard(name, mood, now)
+        return name, pools[mood][name]
+
+    def _heard(self, name, mood, now):
+        self.earlier, self.last = self.last, name
+        if mood == "angry" and now is not None:
+            self.angry_at = now
+
+
+class Arranger:
+    """Puts one prompt together from its pieces - COMPOSED, not a template.
+
+    Hers: "everything needs to be significantly CREATIVE. with random things
+    thrown in" - "turn left" + "in 200 meters", "continue -" + cough +
+    "- straight", "exit left human" + "do it now" + "damn it". Rules agreed
+    with minion 2, so both apps compose alike:
+
+    - ORDER, far/near: the distance first, or the maneuver first
+      (P_MANEUVER_FIRST). Its tail and street always stay glued to it. The
+      "now" band is the maneuver alone: no distance, no reordering.
+    - COUGH (COUGH_RATE, far/near, never two prompts running): inside the
+      maneuver when it comes in halves, else in the join between the
+      distance and the maneuver - never before the first piece of the
+      instruction or after the last, where it would sound like its end.
+    - FLOURISHES: after the whole instruction, always (character.flourishes
+      picks them: up to two, one on "now").
+    - SHAPE (order, cough, how many flourishes): never the same as the last
+      far/near prompt's; a repeat flips the order, and the cough's join goes
+      with it. "now" neither counts nor resets it.
+
+    Every flourish and the cough are ("flourish", ...) items, so any newer
+    prompt cuts them. The instruction itself is never cut or delayed past
+    the distance: nothing but a cough goes before its end. `rng` is for tests.
+    """
+
+    def __init__(self, rng=None):
+        self.rng = rng or random.Random()
+        self.shape = None
+        self.coughed = False
+
+    def arrange(self, piece, band, flourishes=(), coughs=None, text=None):
+        """The items for one prompt. `piece` is a Core, or None for our own
+        sentence `text`; `flourishes` the items character.flourishes chose;
+        `coughs` {name: path} of the cough takes (empty: no cough)."""
+        flourishes = list(flourishes or [])
+        if piece is None:
             self.coughed = False
-            return items
-        if self.coughed or self.rng.random() >= COUGH_RATE:
-            self.coughed = False
-            return items
-        path = pool[self.rng.choice(sorted(pool))]
-        self.coughed = True
-        return [items[0], ("flourish", path, None)] + list(items[1:])
+            return ([("tts", text, None)] if text else []) + flourishes
+        has_d = band != "now" and piece.d_first is not None
+        order = ("first" if has_d and self.rng.random() < P_MANEUVER_FIRST
+                 else "classic")
+        cough = None
+        if (band != "now" and coughs and not self.coughed
+                and (piece.halves or has_d)
+                and self.rng.random() < COUGH_RATE):
+            cough = "inside" if piece.halves else "join"
+        self.coughed = cough is not None
+        if has_d:
+            shape = (order, cough, len(flourishes))
+            if shape == self.shape:
+                order = "classic" if order == "first" else "first"
+                shape = (order, cough, len(flourishes))
+            self.shape = shape
+        said = None
+        if cough:
+            said = ("flourish", coughs[self.rng.choice(sorted(coughs))], None)
+        if cough == "inside":
+            group = [piece.halves[0], said, piece.halves[1]]
+        else:
+            group = [piece.m]
+        group += piece.tail
+        join = [said] if cough == "join" else []
+        if not has_d:
+            items = group
+        elif order == "classic":
+            items = [piece.d_first] + join + group
+        else:
+            items = group + join + [piece.d_after]
+        return items + flourishes
 
 
 #: Slots whose clip carries a DIRECTION. Their wild lines come ONLY from files
@@ -448,7 +635,8 @@ class Flourish:
 #: would be us guessing left from right (AGEDASHII's ruling; minion 2's Kotlin
 #: is identical, and minion 5 ships no wild direction takes).
 DIRECTION_SLOTS = frozenset({"turn-left", "turn-right", "slight-left", "slight-right",
-                             "sharp-left", "sharp-right", "uturn"})
+                             "sharp-left", "sharp-right", "uturn",
+                             "exit-left", "exit-right"})
 
 
 class Wild:

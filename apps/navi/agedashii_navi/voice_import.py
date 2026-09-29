@@ -67,12 +67,15 @@ NAMES = (
     "sharp-right", "uturn", "continue", "merge", "exit", "arrive",
     "dist-100ft", "dist-200ft", "dist-300ft", "dist-500ft", "dist-quarter",
     "dist-half", "dist-1mile", "dist-2miles", "offroute", "rerouting", "start",
-    "speeding", "roundabout",
+    "speeding", "roundabout", "open", "exit-left", "exit-right",
 )
 _NAMES = frozenset(NAMES)
 #: Names she may record and is never told are missing. A roundabout clip was
 #: added after the set went to her; without one, the words are spoken.
-OPTIONAL = frozenset({"roundabout"})
+#: "open" is her "That's amazing, where are we?", once per cold launch.
+#: exit-left / exit-right say their own side (her "exit left human"); without
+#: one, "exit" plays and the phone adds the side.
+OPTIONAL = frozenset({"roundabout", "open", "exit-left", "exit-right"})
 #: The fixed distance names. Once she has any distance clip, these stop being
 #: "missing": the player rounds to what she has.
 FIXED_DISTANCES = tuple(n for n in NAMES if n.startswith("dist-"))
@@ -111,6 +114,12 @@ _WILD = re.compile(r"^wild-(" + "|".join(sorted(WILD_SLOTS, key=len, reverse=Tru
 #: like. Extras, never "missing".
 COUNT_KINDS = ("number", "hours", "seconds")
 _COUNT = re.compile(r"^(" + "|".join(COUNT_KINDS) + r")-([1-9][0-9]*)$")
+#: A line in two halves, cut at a silence so the cough can go INSIDE it
+#: ("continue - *cough* - straight"): part-<slot>-a and part-<slot>-b, with a
+#: direction word whole in one half. Agreed with minion 2 and minion 5.
+#: Extras, never "missing".
+_PART = re.compile(r"^part-(" + "|".join(sorted(WILD_SLOTS, key=len, reverse=True))
+                   + r")-(a|b)$")
 
 
 def _is_flourish(name):
@@ -129,10 +138,14 @@ def _is_count(name):
     return bool(_COUNT.match(name or ""))
 
 
+def _is_part(name):
+    return bool(_PART.match(name or ""))
+
+
 def _is_extra(name):
     """A clip that plays beside or inside the lines - never "missing"."""
     return (_is_flourish(name) or _is_interjection(name) or _is_wild(name)
-            or _is_count(name))
+            or _is_count(name) or _is_part(name))
 
 
 def distance_feet(name):
@@ -780,7 +793,8 @@ def theatre(directory=None, builtin=None):
 #: What each line slot is called on the card; any other is its name, spaced.
 SLOT_TITLES = {"arrive": "Arriving", "offroute": "Off route",
                "rerouting": "Re-routing", "speeding": "Speeding",
-               "start": "Setting off", "continue": "Continue"}
+               "start": "Setting off", "continue": "Continue",
+               "open": "Opening the app"}
 
 
 def wild_groups(directory=None, builtin=None):

@@ -249,6 +249,10 @@ async def main(page):
         boot.mark_booted()
         theme.apply(page)
         render("ride")
+        # Her "That's amazing, where are we?" - once per cold launch, with the
+        # map already up. character.opening is once-per-process and silent
+        # without a clip, with Announce turns off, or over a prompt.
+        character.opening()
 
     def go(key):
         """Move to a surface. Fast, because a slow handler drops taps."""

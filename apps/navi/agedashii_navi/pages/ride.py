@@ -116,28 +116,29 @@ def _announce(out, limit):
         return []
     # Every clip through character.clip: her recording, else his wild line,
     # else the Waze one, else the phone (voicelines.Wild).
-    band = (out.get("say_parts") or {}).get("band")
+    parts = out.get("say_parts") if out.get("say") else None
+    band = (parts or {}).get("band")
     situations = [item for name in names
                   for item in voicelines.situation(name, character.clip)]
+    # His lines are chosen first: how many there are is part of the prompt's
+    # shape, which the Arranger never repeats twice running.
+    lines = character.flourishes(names, parts)
     prompt = []
     if out.get("say"):
-        prompt = voicelines.playlist(out["say"], out.get("say_parts"),
-                                     lambda name: character.clip(name, band),
-                                     prefs.clip_streets(), prefs.imperial(),
-                                     distances=voice_import.distance_clips())
-        if (out.get("say_parts") or {}).get("metres"):
-            prompt = character.cough(prompt, band=(out.get("say_parts") or {}).get("band"))
+        piece = voicelines.core(parts, lambda name: character.clip(name, band),
+                                prefs.clip_streets(), prefs.imperial(),
+                                distances=voice_import.distance_clips(),
+                                halves=character.halves)
+        prompt = character.arrange(piece, band, text=out["say"])
     # On the "now" band the TURN goes first and cuts in: six seconds from the
     # junction, a 1.5 s speeding line in front of it ate a quarter of the
     # warning (minion 4's audit, #10).
-    now = (out.get("say_parts") or {}).get("band") == "now"
+    now = band == "now"
     items = prompt + situations if now else situations + prompt
-    # A character line, if this moment gets one - always LAST, so it can
-    # never come before the turn or between the distance and the turn.
+    # His lines always LAST, after the whole instruction and any situation,
+    # so they can never come before the turn or delay it.
     if items:
-        items += character.flourish(character.mood(
-            names, out.get("say_parts") if out.get("say") else None),
-            out.get("say_parts"))
+        items += lines
         speech.play(items, urgent=now)
     return items
 

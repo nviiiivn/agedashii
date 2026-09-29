@@ -1,4 +1,5 @@
-"""His character, played: the wild lines, the flourishes, the cough, the taps.
+"""His character, played: the wild lines, the flourishes, the cough, the taps,
+and how one prompt is put together from them.
 
 Hers, across the evening: the wild lines "peppered in randomly and
 accordingly"; "id rather him scream things that make kind of sense than the
@@ -19,6 +20,7 @@ from . import prefs, speech, voice_import, voicelines
 #: Shared across the ride and every page.
 FLOURISH = voicelines.Flourish()
 WILD = voicelines.Wild()
+ARRANGE = voicelines.Arranger()
 
 
 def clip(name, band=None):
@@ -37,23 +39,74 @@ def mood(names, parts):
                                     angry_ok=FLOURISH.angry_ok(time.time()))
 
 
+def _maneuver(parts):
+    parts = parts or {}
+    return parts.get("index", (parts.get("kind"), parts.get("instruction"),
+                               parts.get("street")) if parts else None)
+
+
 def flourish(mood, parts=None):
     """[("flourish", path, None)] or [] for this moment - see voicelines.Flourish."""
     if mood is None or not prefs.flourishes():
         return []
-    parts = parts or {}
-    maneuver = parts.get("index", (parts.get("kind"), parts.get("instruction"),
-                                   parts.get("street")) if parts else None)
-    pick = FLOURISH.pick(mood, voice_import.flourishes(mood), maneuver=maneuver,
-                         now=time.time())
+    pick = FLOURISH.pick(mood, voice_import.flourishes(mood),
+                         maneuver=_maneuver(parts), now=time.time())
     return [("flourish", pick[1], None)] if pick else []
 
 
-def cough(items, band=None):
-    """`items` with his cough in the distance/turn join, now and then."""
-    if not prefs.flourishes():
-        return items
-    return FLOURISH.cough(items, voice_import.interjections("interject-cough"), band=band)
+def flourishes(names, parts):
+    """His lines after a prompt: none, one, or two ("do it now" + "damn it").
+
+    The first as it always was (voicelines.flourish_mood, its rate, one per
+    maneuver); the second only after a first, from voicelines.second_moods
+    (voicelines.Flourish.second). Never two on the "now" band.
+    """
+    first = flourish(mood(names, parts), parts)
+    if not first:
+        return []
+    now = time.time()
+    pools = {m: voice_import.flourishes(m) for m in voicelines.second_moods(
+        names, parts, angry_ok=FLOURISH.angry_ok(now))}
+    pick = FLOURISH.second(pools, FLOURISH.last, now=now)
+    return first + ([("flourish", pick[1], None)] if pick else [])
+
+
+def halves(slot, path):
+    """The two halves of `slot`'s plain line, or None - voicelines.halves."""
+    return voicelines.halves(slot, path, voice_import.clip_source,
+                             voice_import.clip_path)
+
+
+def arrange(piece, band, lines=(), text=None):
+    """One prompt composed - voicelines.Arranger - with his cough when
+    Character lines is on."""
+    coughs = (voice_import.interjections("interject-cough")
+              if prefs.flourishes() else {})
+    return ARRANGE.arrange(piece, band, lines, coughs, text=text)
+
+
+#: Whether this process has said its launch line.
+_OPENED = {}
+
+
+def opening():
+    """Her launch line - "That's amazing, where are we?" - once per cold launch.
+
+    A SLOT, not theatre (agreed with minion 2 and minion 5): her own open clip,
+    else one of his wild-open-* lines when Character lines are on, else the
+    built-in open.mp3; with none of those, silence - never the phone's voice
+    greeting her. Announce turns off means silent, and it never talks over a
+    prompt. Returns the items handed to speech, for tests.
+    """
+    if _OPENED.get("done") or not prefs.voice():
+        return []
+    _OPENED["done"] = True
+    path = clip("open")
+    if not path or speech.voice_active():
+        return []
+    items = [("clip", path, None)]
+    speech.play(items)
+    return items
 
 
 def tap():

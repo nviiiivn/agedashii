@@ -171,6 +171,7 @@ def route_now(allow_server=False, timeout=25.0):
     if route.ok:
         LIVE["route"] = route
         _sync_stream()
+        _log_route(route)
     if route.ok:
         follower = LIVE.get("follower")
         if follower is None:
@@ -191,6 +192,48 @@ def route_now(allow_server=False, timeout=25.0):
     else:
         LIVE["note"] = route.reason or "no route"
     return route
+
+
+#: Polyline characters per log line. logcat cuts a line near 4 kB and a
+#: Flutter print near 1 kB, so a long route goes out in numbered pieces.
+ROUTE_LOG_CHUNK = 800
+
+
+def polyline6(points):
+    """Google's encoded polyline at 1e6 - Valhalla's precision, so
+    routing.decode_polyline6 reads it back."""
+    out, prev = [], (0, 0)
+    for lat, lon in points:
+        cur = (round(lat * 1e6), round(lon * 1e6))
+        for delta in (cur[0] - prev[0], cur[1] - prev[1]):
+            v = ~(delta << 1) if delta < 0 else delta << 1
+            while v >= 0x20:
+                out.append(chr((0x20 | (v & 0x1F)) + 63))
+                v >>= 5
+            out.append(chr(v + 63))
+        prev = cur
+    return "".join(out)
+
+
+def _log_route(route):
+    """Every route the app computed, in the log - so a ride harness follows
+    THIS app's route, not one worked out elsewhere, and an off-route in its
+    report is the app's (AGEDASHII, for minion 1's ride test). One line per
+    ROUTE_LOG_CHUNK of the polyline:
+
+        [navi] route: <points> pts <km> km <source> polyline6 <i>/<n> <piece>
+    """
+    try:
+        points = list(route.points or [])
+        line = polyline6(points)
+        pieces = [line[i:i + ROUTE_LOG_CHUNK]
+                  for i in range(0, len(line), ROUTE_LOG_CHUNK)] or [""]
+        km = (route.distance_m or 0.0) / 1000.0
+        for i, piece in enumerate(pieces, 1):
+            print(f"[navi] route: {len(points)} pts {km:.2f} km {route.source} "
+                  f"polyline6 {i}/{len(pieces)} {piece}", flush=True)
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[navi] route: not logged: {type(exc).__name__}: {exc}", flush=True)
 
 
 #: Fire the far and near prompts AT her recorded distances (guidance.

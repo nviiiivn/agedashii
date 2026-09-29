@@ -74,6 +74,16 @@ REPEAT_FRACTION = 0.6
 #: left" then "Turn left" came 1 s apart (minion 1's rides, #4).
 NOW_SOON_S = 3.0
 
+#: "and then": the maneuver after this one is said on this one's "now" prompt
+#: when it is too close to get a warning of its own - within THEN_S at her
+#: speed (its own "now" plus NOW_SOON_S), and never closer than THEN_MIN_M
+#: counts as too close, stopped or crawling. Not for an arrival, a continue or
+#: a merge, which need no warning ahead. Agreed by minion 1, minion 2 and
+#: AGEDASHII; the Kotlin app uses the same numbers.
+THEN_S = PROMPT_BANDS[-1][0] + NOW_SOON_S
+THEN_MIN_M = 60.0
+THEN_NOT = frozenset({"arrive", "continue", "merge"})
+
 #: Typical posted limits in California by OSM road class, in mph. NOT from the
 #: graph - the graph has no maxspeed - and labelled as typical everywhere it
 #: is shown. See the module docstring.
@@ -374,6 +384,32 @@ def _next_spoken(route, man, metres):
     return None, None
 
 
+def _then(route, man, speed_ms):
+    """The spoken maneuver straight after `man`, when it is too close to get
+    its own warning - see THEN_S - or None."""
+    if getattr(man, "kind", None) == "arrive":
+        return None
+    mans = list(getattr(route, "maneuvers", ()) or ())
+    at = next((i for i, m in enumerate(mans) if m is man), None)
+    if at is None:
+        return None
+    nxt = next((m for m in mans[at + 1:] if getattr(m, "spoken", True)), None)
+    if nxt is None or getattr(nxt, "kind", None) in THEN_NOT:
+        return None
+    gap = nxt.cum_m - man.cum_m
+    reach = THEN_MIN_M
+    if speed_ms is not None and speed_ms >= CRAWL_MS:
+        reach = max(THEN_S * speed_ms, THEN_MIN_M)
+    return nxt if 0.0 <= gap <= reach else None
+
+
+def _then_words(instruction):
+    """"Turn right onto Main St." -> "turn right": the next maneuver as it
+    follows "and then" - no street, no full stop."""
+    words = (instruction or "").split(" onto ")[0].strip().rstrip(".")
+    return words[:1].lower() + words[1:]
+
+
 class Follower:
     """Live state for following one route. Feed it fixes, ask it questions.
 
@@ -572,9 +608,20 @@ class Follower:
                           "index": index,
                           "street": getattr(man, "street", ""),
                           "metres": metres, "band": band}
-            return spoken(getattr(man, "instruction", ""),
+            line = spoken(getattr(man, "instruction", ""),
                           getattr(man, "street", ""), metres,
                           self.imperial, band)
+            # Her AndThen: the next turn, on this one's "now", when it will
+            # come too soon to be warned about. Its own "now" still fires.
+            nxt = _then(self.route, man, speed_ms) if band == "now" else None
+            if nxt is not None:
+                self.fired["then"] = {"instruction": getattr(nxt, "instruction", ""),
+                                      "kind": getattr(nxt, "kind", None),
+                                      "index": getattr(nxt, "index", None),
+                                      "band": "now"}
+                line = (f"{line.rstrip().rstrip('.')}, and then "
+                        f"{_then_words(getattr(nxt, 'instruction', ''))}")
+            return line
         return None
 
 

@@ -69,9 +69,12 @@ class WhereTheVoiceLives(_Case):
     def test_it_is_the_apps_own_storage_under_voice(self):
         self.assertEqual(vi.voice_dir(), os.path.join(_TMP.name, "voice"))
 
-    def test_the_names_are_the_twenty_three_fixed_ones_and_roundabout(self):
-        self.assertEqual(len(vi.NAMES), 24)
-        self.assertEqual(vi.OPTIONAL, frozenset({"roundabout"}))
+    def test_the_names_are_the_twenty_three_fixed_ones_and_the_optional_four(self):
+        self.assertEqual(len(vi.NAMES), 27)
+        self.assertEqual(vi.NAMES[-3:], ("open", "exit-left", "exit-right"),
+                         "appended, so no index moves")
+        self.assertEqual(vi.OPTIONAL, frozenset({"roundabout", "open",
+                                                 "exit-left", "exit-right"}))
         for name in ("turn-left", "dist-quarter", "dist-2miles", "offroute",
                      "rerouting", "start", "speeding", "uturn"):
             self.assertIn(name, vi.NAMES)
@@ -559,7 +562,7 @@ class StatusSaysWhatIsThere(_Case):
     def test_nothing_yet(self):
         st = vi.status()
         self.assertEqual(st["present"], [])
-        self.assertEqual(st["missing"], [n for n in vi.NAMES if n != "roundabout"])
+        self.assertEqual(st["missing"], [n for n in vi.NAMES if n not in vi.OPTIONAL])
         self.assertIn("No recorded voice", vi.status_text())
 
     def test_some_of_them(self):
