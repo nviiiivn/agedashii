@@ -508,17 +508,46 @@ def second_moods(names, parts, angry_ok=True):
     return moods
 
 
+#: How many of a pool's recent lines are held back: the last k of a pool of
+#: n, k = min(RECENT_MAX, n // 2) - two lines alternate, four hold back two,
+#: nine or more hold back four. She heard the same few lines over and over
+#: (AGEDASHII, relayed); one line of memory is no memory in a pool of nine.
+#: A POOL is a wild slot's takes, a flourish mood, or the cough. Agreed with
+#: minion 2.
+RECENT_MAX = 4
+
+
+class Recent:
+    """Each pool's recent picks, newest last."""
+
+    def __init__(self):
+        self.picks = {}
+
+    def fresh(self, pool, names):
+        """`names` - the pool's whole list - less the ones it played lately:
+        its last min(RECENT_MAX, n // 2). Never empty for a pool that is not
+        (a pool of one holds nothing back)."""
+        k = min(RECENT_MAX, len(names) // 2)
+        held = set(self.picks.get(pool, [])[-k:]) if k else set()
+        return [n for n in names if n not in held]
+
+    def heard(self, pool, name):
+        picks = self.picks.setdefault(pool, [])
+        picks.append(name)
+        del picks[:-RECENT_MAX]
+
+
 class Flourish:
     """Picks the character line, remembering enough to not repeat itself.
 
-    Never the same one twice running; at most one per maneuver across its
-    far/near/now prompts. `rng` is for tests.
+    Each mood holds back its last few lines (Recent); at most one per
+    maneuver across its far/near/now prompts. `rng` is for tests.
     """
 
     def __init__(self, rng=None):
         self.rng = rng or random.Random()
-        self.last = None
-        self.earlier = None            # the one before `last`
+        self.recent = Recent()
+        self.last = None               # the last line played, any mood
         self.maneuver = None
         self.angry_at = None
 
@@ -534,7 +563,7 @@ class Flourish:
             return None
         if self.rng.random() >= FLOURISH_RATE[mood]:
             return None
-        names = sorted(n for n, path in pool.items() if path and n != self.last)
+        names = self.recent.fresh(mood, sorted(n for n, path in pool.items() if path))
         if not names:
             return None
         name = self.rng.choice(names)
@@ -547,10 +576,11 @@ class Flourish:
         """(name, path) of a second line after `first`, or None.
 
         `pools` is {mood: {name: path}} for second_moods. A mood is picked
-        evenly among those with a line other than `first`, then a line in it,
-        passing over the one heard before `first` when there is a choice. It
-        may share first's mood ("DO IT NOW" + "RIGHT NOW"); an angry one
-        still waits out ANGRY_EVERY_S. Rules agreed with minion 2.
+        evenly among those with a line other than `first`, then a line in
+        it, passing over the ones its mood played lately (Recent) unless only
+        those are left. It may share first's mood ("DO IT NOW" + "RIGHT
+        NOW"); an angry one still waits out ANGRY_EVERY_S. Rules agreed with
+        minion 2.
         """
         if first is None or self.rng.random() >= P_SECOND:
             return None
@@ -558,19 +588,21 @@ class Flourish:
         for mood, pool in (pools or {}).items():
             if mood == "angry" and now is not None and not self.angry_ok(now):
                 continue
-            names = sorted(n for n, path in (pool or {}).items() if path and n != first)
+            full = sorted(n for n, path in (pool or {}).items() if path)
+            names = ([n for n in self.recent.fresh(mood, full) if n != first]
+                     or [n for n in full if n != first])
             if names:
                 choices[mood] = names
         if not choices:
             return None
         mood = self.rng.choice(sorted(choices))
-        names = [n for n in choices[mood] if n != self.earlier] or choices[mood]
-        name = self.rng.choice(names)
+        name = self.rng.choice(choices[mood])
         self._heard(name, mood, now)
         return name, pools[mood][name]
 
     def _heard(self, name, mood, now):
-        self.earlier, self.last = self.last, name
+        self.last = name
+        self.recent.heard(mood, name)
         if mood == "angry" and now is not None:
             self.angry_at = now
 
@@ -605,6 +637,7 @@ class Arranger:
         self.rng = rng or random.Random()
         self.shape = None
         self.coughed = False
+        self.recent = Recent()
 
     def arrange(self, piece, band, flourishes=(), coughs=None, text=None):
         """The items for one prompt. `piece` is a Core, or None for our own
@@ -631,7 +664,9 @@ class Arranger:
             self.shape = shape
         said = None
         if cough:
-            said = ("flourish", coughs[self.rng.choice(sorted(coughs))], None)
+            take = self.rng.choice(self.recent.fresh("cough", sorted(coughs)))
+            self.recent.heard("cough", take)
+            said = ("flourish", coughs[take], None)
         if cough == "inside":
             group = [piece.halves[0], said, piece.halves[1]]
         else:
@@ -662,9 +697,10 @@ class Wild:
     Hers: "id rather him scream things that make kind of sense than the normal
     waze arnold talking. only use that shit as fall back". So per slot: HER
     imported clip; else one of the wild-<slot>-* lines at random, never the
-    same one twice running; else the built-in (Waze) clip; else None, the
-    phone's voice. With one wild line for a slot it alternates with the Waze
-    one rather than repeating. "Character lines" off skips the wild step.
+    same one twice running - a slot holds back its last few (Recent); else
+    the built-in (Waze) clip; else None, the phone's voice. With one wild line
+    for a slot it alternates with the Waze one rather than repeating.
+    "Character lines" off skips the wild step.
 
     ONLY A FILE NAMED FOR THIS SLOT is ever used for it (wild-<slot>-...),
     and for a DIRECTION slot only one SHE imported (AGEDASHII's ruling): we
@@ -677,7 +713,7 @@ class Wild:
 
     def __init__(self, rng=None):
         self.rng = rng or random.Random()
-        self.last = {}
+        self.recent = Recent()
 
     def resolve(self, name, *, source, clip_path, wilds, character=True, band=None):
         """The file to play for `name`, or None. `source`, `clip_path` and
@@ -693,13 +729,16 @@ class Wild:
         pool = {n: path for n, path in (wilds(name) or {}).items()
                 if path and n.startswith(mine)
                 and (name not in DIRECTION_SLOTS or source(n) == "yours")}
-        fresh = sorted(n for n in pool if n != self.last.get(name))
-        if not fresh:
-            self.last[name] = None                # the Waze line this time
+        if not pool:
             return clip_path(name)
-        pick = self.rng.choice(fresh)
-        self.last[name] = pick
-        return pool[pick]
+        # A lone take and the Waze line are a pool of two (None is the Waze
+        # line), so they take turns.
+        names = sorted(pool)
+        if len(names) == 1 and clip_path(name):
+            names.append(None)
+        pick = self.rng.choice(self.recent.fresh(name, names))
+        self.recent.heard(name, pick)
+        return clip_path(name) if pick is None else pool[pick]
 
 
 def refusal(reason):

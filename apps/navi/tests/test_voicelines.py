@@ -371,9 +371,11 @@ class CharacterLines(unittest.TestCase):
         second = f.pick("urgent", POOL)[0]
         self.assertNotEqual(first, second)
         self.assertIsNone(voicelines.Flourish(Always()).pick("urgent", {}))
+        # A mood of one line holds nothing back (k = n // 2 = 0, agreed with
+        # minion 2): skipping it every other time would only thin it out.
         lone = voicelines.Flourish(Always())
         lone.pick("urgent", {"flourish-urgent-move": "/v/b.mp3"})
-        self.assertIsNone(lone.pick("urgent", {"flourish-urgent-move": "/v/b.mp3"}))
+        self.assertIsNotNone(lone.pick("urgent", {"flourish-urgent-move": "/v/b.mp3"}))
 
     def test_at_most_one_per_maneuver(self):
         f = voicelines.Flourish(Always())
@@ -722,6 +724,81 @@ class AndThen(unittest.TestCase):
         self.assertEqual(voicelines.and_then(leave, clips("and-then")),
                          [("clip", "/voice/and-then.m4a", "and then"),
                           ("tts", "exit the roundabout", None)])
+
+
+def lines(prefix, n):
+    return {f"{prefix}-{i:02d}": f"/v/{prefix}-{i:02d}.mp3" for i in range(n)}
+
+
+def windows(seq, size):
+    return [seq[i:i + size] for i in range(len(seq) - size + 1)]
+
+
+class TheLastFewAreHeldBack(unittest.TestCase):
+    """She heard the same few lines (AGEDASHII, relayed): each pool holds back
+    its last k = min(4, n // 2) picks. Agreed with minion 2."""
+
+    def test_how_many_are_held_back(self):
+        recent = voicelines.Recent()
+        for n, k in ((2, 1), (4, 2), (9, 4), (20, 4)):
+            names = sorted(lines(f"p{n}", n))
+            for name in names[:k + 1]:
+                recent.heard(n, name)
+            self.assertEqual(len(recent.fresh(n, names)), n - k, n)
+
+    def test_a_mood_of_nine_never_repeats_inside_five(self):
+        f = voicelines.Flourish(Always())
+        pool = lines("flourish-angry", 9)
+        said = [f.pick("angry", pool)[0] for _ in range(20)]
+        for window in windows(said, 5):
+            self.assertEqual(len(set(window)), 5, said)
+
+    def test_each_mood_remembers_its_own(self):
+        # One memory for every mood let a scold line in between clear the
+        # urgent one, and the same urgent line came straight back.
+        f = voicelines.Flourish(Always())
+        urgent = {"flourish-urgent-a": "/v/a.mp3", "flourish-urgent-b": "/v/b.mp3"}
+        said = [f.pick("urgent", urgent)[0],
+                f.pick("scold", {"flourish-scold-z": "/v/z.mp3"})[0],
+                f.pick("urgent", urgent)[0]]
+        self.assertEqual(said, ["flourish-urgent-a", "flourish-scold-z", "flourish-urgent-b"])
+
+    def test_a_slot_of_four_takes_holds_back_two(self):
+        w = voicelines.Wild(Always())
+        takes = lines("wild-offroute", 4)
+        said = [w.resolve("offroute", source=lambda n: "built in",
+                          clip_path=lambda n: f"/v/{n}.mp3",
+                          wilds=lambda n: takes) for _ in range(12)]
+        for window in windows(said, 3):
+            self.assertEqual(len(set(window)), 3, said)
+        self.assertNotIn("/v/offroute.mp3", said)              # the Waze line: none
+
+    def test_a_second_line_falls_back_to_a_held_one_rather_than_none(self):
+        # Kotlin's rule: if F1 and the memory leave nothing, drop the memory
+        # (F1 stays excluded).
+        f = voicelines.Flourish(Always())
+        f.recent.heard("urgent", "flourish-urgent-b")
+        pool = {"flourish-urgent-a": "/v/a.mp3", "flourish-urgent-b": "/v/b.mp3"}
+        self.assertEqual(f.second({"urgent": pool}, "flourish-urgent-a", now=0),
+                         ("flourish-urgent-b", "/v/b.mp3"))
+
+    def test_a_lone_take_and_the_waze_line_take_turns(self):
+        w = voicelines.Wild(Always())
+        said = [w.resolve("start", source=lambda n: "built in",
+                          clip_path=lambda n: f"/v/{n}.mp3",
+                          wilds=lambda n: {"wild-start-come": "/v/come.mp3"})
+                for _ in range(4)]
+        self.assertEqual(said, ["/v/come.mp3", "/v/start.mp3"] * 2)
+
+    def test_two_coughs_take_turns(self):
+        a = voicelines.Arranger(Script(0.9, 0.0, 0.9, 0.0, 0.9, 0.0))
+        coughs = {"interject-cough": "/v/c1.mp3", "interject-cough-2": "/v/c2.mp3"}
+        heard = []
+        for band in ("far", "near", "far"):
+            a.coughed = False                     # as if a prompt came between
+            got = a.arrange(piece(band=band), band, coughs=coughs)
+            heard += [i[1] for i in got if i[0] == "flourish"]
+        self.assertEqual(heard, ["/v/c1.mp3", "/v/c2.mp3", "/v/c1.mp3"])
 
 
 class HisWildLinesLead(unittest.TestCase):
