@@ -300,29 +300,6 @@ def _feed_fix():
     return ride
 
 
-def _sync_location(geo):
-    """Point the one live stream at what this moment needs: the screen-off
-    service while recording or routed (location.wants_service), none while she
-    only looks at the map; and her sample rate, which otherwise took effect only
-    on a restart. flet_geolocator restarts the stream with its configuration on
-    every update, so this is a configuration change - no second service."""
-    if geo is None:
-        return False
-    wanted = (location.wants_service(), prefs.hz())
-    if _M.get("geo_mode") == wanted:
-        return False
-    geo.configuration = location.android_config(wanted[1], foreground=wanted[0])
-    _M["geo_mode"] = wanted
-    try:
-        geo.update()
-    except Exception as exc:                            # noqa: BLE001
-        # Not on a live page (a test, a render being torn down): the next
-        # page update carries the new configuration anyway.
-        print(f"[navi] location: stream not updated yet: {type(exc).__name__}: {exc}",
-              flush=True)
-    return True
-
-
 def _hud_state():
     """Every number the overlay draws, gathered once.
 
@@ -681,7 +658,7 @@ def build(page, go=None):
         else:
             # A route is up without the page rebuilding: switch the screen-off
             # service on now, and ask for the notification that shows it.
-            _sync_location(_M.get("geo"))
+            location.sync()
             page.run_task(location.ask_notifications, page)
         draw_route()
         paint()
@@ -758,7 +735,7 @@ def build(page, go=None):
             _M["track_len"] = len(track)
         if prefs.autorecord() and out["rolling"] and not live.recording():
             live.start_recording()
-            _sync_location(_M.get("geo"))
+            location.sync()
             page.run_task(location.ask_notifications, page)
         if out["reroute"]:
             page.run_task(_reroute)
@@ -813,7 +790,7 @@ def build(page, go=None):
             except ValueError:
                 pass
         _M["geo"] = geo = None
-        _M.pop("geo_mode", None)
+        location.forget()
     elif geo is None:
         # HIGH, not BEST, and an explicit Android configuration.
         #
@@ -833,11 +810,11 @@ def build(page, go=None):
         # screen off - without it the app went silent and the ride log became
         # a straight line the moment her screen locked. See location.py for
         # the Flet 0.86.5 bug this works around, and the emulator A/B.
-        _M["geo_mode"] = (location.wants_service(), prefs.hz())
+        mode = location.current_mode()
         geo = fgeo.Geolocator(
-            configuration=location.android_config(_M["geo_mode"][1],
-                                                  foreground=_M["geo_mode"][0]),
+            configuration=location.android_config(mode[1], foreground=mode[0]),
             on_position_change=on_position, on_error=on_geo_error)
+        location.register(geo, mode)
         _M["geo"] = geo
         if isinstance(getattr(page, "services", None), list):
             page.services.append(geo)
@@ -848,7 +825,8 @@ def build(page, go=None):
         # GPS that had stopped.
         geo.on_position_change = on_position
         geo.on_error = on_geo_error
-        _sync_location(geo)
+        location.adopt(geo)
+        location.sync()
     # A route is up: from here the location service matters, so this is where
     # the notification permission is asked - with its reason, not at launch.
     # A ROUTE, not a remembered destination (main.py restores that at launch).

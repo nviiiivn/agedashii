@@ -222,15 +222,30 @@ def preview(name, clip_path, imperial=True):
 SPEEDING_EVERY_S = 60.0
 
 
+#: While she stays off route, at most one situation line (off route /
+#: re-routing) per this many seconds; the FIRST of a spell always speaks at
+#: once. Riding away from each fresh route played one every 5-7 s on the
+#: emulator - 20 in 80 s - and a voice that talks constantly is one she stops
+#: hearing (AGEDASHII's ruling; minion 2's Kotlin Cues use the same numbers).
+SITUATION_EVERY_S = 30.0
+#: A spell ends only after she has been ON route this long without a break.
+#: A re-route hands her a fresh route and reads "on" at once; if that ended
+#: the spell, every re-route would reset the cap and the spam would stay.
+REJOIN_S = 30.0
+
+
 class Cues:
     """Which situation lines a fix calls for - each on its EDGE, never per fix.
 
     start      a route to a NEW destination is up; a re-route of the same one
                is not a start
     offroute   the follower has just confirmed she is off the route
-    rerouting  the first re-route asked for in that off-route spell. Once per
-               spell: a search that keeps failing asks again every 12 s
-               (live.REROUTE_EVERY), and she does not need telling each time
+    rerouting  a re-route has just been asked for (re-arms whenever a fresh
+               route briefly puts her back on one)
+               Both are held to SITUATION_EVERY_S while a spell lasts, except
+               the spell's FIRST line, which always speaks at once; a spell
+               ends after REJOIN_S on route. The new route's instructions are
+               never held - this caps situation lines, not guidance.
     speeding   the speed has just gone over (guidance.over_limit), at most
                once per SPEEDING_EVERY_S
 
@@ -246,6 +261,9 @@ class Cues:
         self.fast = False
         self.fast_at = None
         self.refusal_said = False
+        self.spell = False            # an off-route spell is running
+        self.situ_at = None           # when its last situation line spoke
+        self.on_since = None          # on route since, within a spell
 
     def update(self, status, dest, reroute, over, now):
         names = []
@@ -255,15 +273,34 @@ class Cues:
             self.dest = dest
             names.append("start")
         off = bool(status and status.get("off_route"))
-        if off and not self.off:
-            names.append("offroute")
+        # The spell ends after REJOIN_S on route without a break.
         if not off:
-            self.rerouted = False
-            self.refusal_said = False
+            if self.on_since is None:
+                self.on_since = now
+            if self.spell and now - self.on_since >= REJOIN_S:
+                self.spell = False
+                self.refusal_said = False
+        else:
+            self.on_since = None
+        situ = []
+        if off and not self.off:
+            situ.append("offroute")
+        if not off:
+            self.rerouted = False             # re-arms on a momentary new route
         elif reroute and not self.rerouted:
             self.rerouted = True
-            names.append("rerouting")
+            situ.append("rerouting")
         self.off = off
+        if situ:
+            # The first line of a spell always speaks; after that one situation
+            # playlist per SITUATION_EVERY_S - both edges of one fix together.
+            if not self.spell:
+                self.spell = True
+                self.situ_at = now
+                names += situ
+            elif now - self.situ_at >= SITUATION_EVERY_S:
+                self.situ_at = now
+                names += situ
         if over and not self.fast and (self.fast_at is None
                                        or now - self.fast_at >= SPEEDING_EVERY_S):
             self.fast_at = now
@@ -272,7 +309,8 @@ class Cues:
         return names
 
     def refused(self):
-        """True the first time a re-route is refused in this off-route spell.
+        """True the first time a re-route is refused in this off-route spell
+        (a spell as the cap defines it: it ends only after REJOIN_S on route).
 
         After "off route" and "re-routing", a refusal was SILENCE while the
         banner said re-routing and the search retried every 12 s - and with an

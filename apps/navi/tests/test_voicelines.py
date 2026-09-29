@@ -286,23 +286,36 @@ class Edges(unittest.TestCase):
         self.assertEqual(cues.update(self.OK, chosen(), False, False, 3),
                          ["start"])            # chosen again: a new start
 
-    def test_off_route_and_rerouting_once_per_spell(self):
+    def test_the_spam_cap_matches_kotlin_timeline(self):
+        # AGEDASHII's ruling; minion 2's Kotlin timeline, fix for fix. The first
+        # line of a spell always speaks; then at most one situation playlist per
+        # SITUATION_EVERY_S; the spell ends after REJOIN_S on route.
         cues = voicelines.Cues()
-        self.assertEqual(cues.update(self.OFF, None, True, False, 0),
-                         ["offroute", "rerouting"])
-        for t in (12, 24, 36):                 # the search keeps failing
-            self.assertEqual(cues.update(self.OFF, None, True, False, t), [])
-        self.assertEqual(cues.update(self.OK, None, False, False, 40), [])
-        self.assertEqual(cues.update(self.OFF, None, False, False, 50), ["offroute"])
-        self.assertEqual(cues.update(self.OFF, None, True, False, 62), ["rerouting"])
+        up = lambda status, t, reroute=False: cues.update(status, None, reroute, False, t)
+        self.assertEqual(up(self.OK, 0), [])
+        self.assertEqual(up(self.OFF, 10, True), ["offroute", "rerouting"])
+        self.assertEqual(up(self.OK, 11), [])
+        self.assertEqual(up(self.OFF, 17.5), [])                 # held
+        self.assertEqual(up(self.OFF, 22.6, True), [])           # held
+        self.assertEqual(up(self.OK, 23.6), [])
+        self.assertEqual(up(self.OFF, 30.7), [])                 # held
+        self.assertEqual(up(self.OK, 40.5), [])
+        self.assertEqual(up(self.OFF, 41), ["offroute"])         # 31 s after the last
+        for t in range(45, 77):
+            self.assertEqual(up(self.OK, t), [])                 # 31 s on: spell over
+        self.assertEqual(up(self.OFF, 80, True), ["offroute", "rerouting"])
 
     def test_a_refused_reroute_is_said_once_per_spell(self):
         cues = voicelines.Cues()
         cues.update(self.OFF, None, True, False, 0)
         self.assertTrue(cues.refused())
         self.assertFalse(cues.refused())               # the 12 s retries
-        cues.update(self.OK, None, False, False, 30)
-        cues.update(self.OFF, None, True, False, 40)
+        cues.update(self.OK, None, False, False, 5)    # a brief "on": same spell
+        cues.update(self.OFF, None, True, False, 8)
+        self.assertFalse(cues.refused())
+        for t in range(10, 42):
+            cues.update(self.OK, None, False, False, t)   # 31 s on route: spell over
+        cues.update(self.OFF, None, True, False, 50)
         self.assertTrue(cues.refused())
 
     def test_the_refusal_is_said_in_words_she_can_act_on(self):

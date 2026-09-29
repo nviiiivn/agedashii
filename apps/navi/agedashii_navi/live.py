@@ -100,7 +100,14 @@ def clear_destination():
     LIVE["follower"] = None
     LIVE["note"] = ""
     LIVE["prompt"] = ""
+    _sync_stream()
     return None
+
+
+def _sync_stream():
+    """The screen-off service follows the route from wherever it changes."""
+    from . import location
+    location.sync()
 
 
 def destination():
@@ -163,6 +170,7 @@ def route_now(allow_server=False, timeout=25.0):
     # A stale route is worse than a fresh one and enormously better than none.
     if route.ok:
         LIVE["route"] = route
+        _sync_stream()
     if route.ok:
         follower = LIVE.get("follower")
         if follower is None:
@@ -340,6 +348,9 @@ def set_position(lat, lon, *, speed_ms=None, heading=None, alt_m=None,
     if follower is not None and LIVE.get("route") is not None:
         status = follower.update(LIVE["pos"], speed_ms=speed_ms, now=t)
         out["status"] = status
+        # Arriving ends the screen-off service (unless a ride records):
+        # a comparison, and a stream update only when something changed.
+        _sync_stream()
         if status.get("say"):
             out["say"] = status["say"]
             # Which turn, how far, which band - for her recorded lines.

@@ -167,6 +167,39 @@ class TheGpsKeepsComingWithTheScreenOff(unittest.TestCase):
         self.assertEqual(self.encoded(geo.configuration)
                          .get("foreground_notification_enable_wake_lock"), True)
 
+    def test_clearing_the_route_anywhere_turns_it_off(self):
+        # v1.19.1 on 5556: cleared on Where-to, the service ran on until she
+        # opened the Ride page again - the sync only happened on a Ride build.
+        import flet_geolocator as fgeo
+        from agedashii_navi.pages import ride
+        prefs.reset()
+        live.reset()
+        ride.forget_map()
+        self.addCleanup(ride.forget_map)
+        self.addCleanup(live.reset)
+        ride._M.pop("geo", None)                                 # noqa: SLF001
+        self.addCleanup(ride._M.pop, "geo", None)                # noqa: SLF001
+        live.set_destination(37.81, -122.25, "Lake Merritt")
+        _routed()
+        page = page_on(ft.PagePlatform.ANDROID)
+        ride.build(page)
+        geo = next(s for s in page.services if isinstance(s, fgeo.Geolocator))
+        self.assertIn("foreground_notification_title", self.encoded(geo.configuration))
+        live.clear_destination()                                 # on Where-to
+        self.assertNotIn("foreground_notification_title", self.encoded(geo.configuration))
+
+    def test_arriving_turns_it_off_unless_recording(self):
+        from agedashii_navi import location
+        live.reset()
+        self.addCleanup(live.reset)
+        _routed()
+        live.LIVE["follower"] = type("F", (), {"arrived": False})()
+        self.assertTrue(location.wants_service())
+        live.LIVE["follower"].arrived = True
+        self.assertFalse(location.wants_service())
+        with mock.patch.object(live, "recording", return_value=True):
+            self.assertTrue(location.wants_service())
+
     def test_the_rate_follows_her_setting(self):
         from agedashii_navi import location
         sent = self.encoded(location.android_config(hz=5))

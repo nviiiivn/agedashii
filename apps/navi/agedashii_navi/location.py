@@ -106,6 +106,60 @@ async def ask_notifications(page):
         _ASKED["asking"] = False
 
 
+#: The one live GPS stream and the (service on?, hz) it was last given. Held
+#: here, not in a page, so whatever changes the route - Where-to clearing it,
+#: a route coming back, arriving - switches the service without waiting for
+#: the Ride page to be rebuilt (v1.19.1 on 5556: cleared on Where-to, the
+#: service ran on until she happened to open Ride again).
+_STREAM = {}
+
+
+def register(geo, mode):
+    """Hold the live stream built with `mode` = (service on?, hz)."""
+    _STREAM.update(geo=geo, mode=mode)
+
+
+def adopt(geo):
+    """Hold `geo` as the live stream if it is not already (a render that
+    reuses the stream built by an earlier one)."""
+    if _STREAM.get("geo") is not geo:
+        _STREAM.update(geo=geo, mode=None)
+
+
+def forget():
+    """The stream is gone (GPS switched off)."""
+    _STREAM.clear()
+
+
+def current_mode():
+    from . import prefs
+    return (wants_service(), prefs.hz())
+
+
+def sync():
+    """Point the live stream at what this moment needs: the service while a
+    ride records or a route is being followed, none otherwise; and her sample
+    rate. flet_geolocator restarts the stream with its configuration on every
+    update, so this is a configuration change - no second service. True if
+    anything changed."""
+    geo = _STREAM.get("geo")
+    if geo is None:
+        return False
+    wanted = current_mode()
+    if _STREAM.get("mode") == wanted:
+        return False
+    geo.configuration = android_config(wanted[1], foreground=wanted[0])
+    _STREAM["mode"] = wanted
+    try:
+        geo.update()
+    except Exception as exc:                            # noqa: BLE001
+        # Not on a live page (a test, a render being torn down): the next
+        # page update carries the new configuration anyway.
+        print(f"[navi] location: stream not updated yet: {type(exc).__name__}: {exc}",
+              flush=True)
+    return True
+
+
 def wants_service():
     """Whether the screen-off location service should run: a ride recording,
     or a ROUTE up. Not while she only looks at the map.
@@ -115,7 +169,14 @@ def wants_service():
     the moment the app opened (emulator-5556).
     """
     from . import live
-    return bool(live.recording() or live.LIVE.get("route") is not None)
+    if live.recording():
+        return True
+    if live.LIVE.get("route") is None:
+        return False
+    # Arrived: nothing left to guide her to, so GPS stops until she routes
+    # again (AGEDASHII). A recording keeps it, above.
+    follower = live.LIVE.get("follower")
+    return not getattr(follower, "arrived", False)
 
 
 def android_config(hz=1, foreground=True):
