@@ -98,6 +98,14 @@ RIBBON_CLEARANCE = 104
 _M = {}
 
 
+#: How long a situation line that fired on the fix asking for a re-route is
+#: held for the answer. If the new route's first prompt is "now", the line is
+#: dropped and the turn plays alone: "what the h-" cut after 0.3 s by "turn
+#: left" was the stutter (minion 2, 5554). The router answers in 16-300 ms.
+#: AGEDASHII's ruling; the Kotlin app holds the same way.
+HOLD_S = 1.5
+
+
 def _announce(out, limit):
     """Say what one taken fix calls for: situation lines on their edges, then
     the prompt, as ONE playlist - speech plays the newest playlist and drops
@@ -144,12 +152,54 @@ def _announce(out, limit):
     # so they can never come before the turn or delay it.
     if items:
         items += lines
+        if out.get("reroute") and ("offroute" in names or "rerouting" in names):
+            # Held for the re-route's answer (HOLD_S, _release).
+            _M["holds"] = _M.get("holds", 0) + 1
+            _M["held"] = {"items": items, "id": _M["holds"]}
+            return []
         speech.play(items, urgent=now)
     return items
 
 
-def _refused(route):
-    """Say a refused re-route - once per off-route spell (Cues.refused).
+def _release(route):
+    """The re-route has answered: say or drop the situation line held for it.
+
+    Dropped when the new route's first prompt is "now" (Follower.peek) - the
+    turn plays alone and clean. Otherwise it plays, and the new route's first
+    prompt waits for it, as before. A refused re-route says the held line and
+    then the refusal, as one playlist. Returns the items handed to speech.
+    """
+    held = _M.pop("held", None)
+    before = held["items"] if held else []
+    if route is not None and getattr(route, "ok", False):
+        follower = live.LIVE.get("follower")
+        band = (follower.peek(live.LIVE.get("pos"), live.LIVE.get("speed_ms"))
+                if follower is not None else None)
+        if before and band == "now":
+            print("[navi] speech: dropped "
+                  + " + ".join(v if k == "tts" else f"[{v.rsplit('/', 1)[-1]}]"
+                               for k, v, _f in before)
+                  + " - the new route starts with a turn", flush=True)
+            return []
+        if before:
+            speech.play(before)
+        return before
+    return _refused(route, before)
+
+
+async def _let_go(hold):
+    """Say a held line whose re-route has not answered within HOLD_S."""
+    import asyncio
+    await asyncio.sleep(HOLD_S)
+    held = _M.get("held")
+    if held is not None and held["id"] == hold:
+        _M.pop("held", None)
+        speech.play(held["items"])
+
+
+def _refused(route, before=()):
+    """Say a refused re-route - once per off-route spell (Cues.refused) -
+    after `before`, the situation line held for it (_release).
 
     It was silence: "off route", "re-routing", then nothing, while the banner
     said re-routing and the search retried every 12 s. The re-route is
@@ -159,14 +209,17 @@ def _refused(route):
     if route is not None and getattr(route, "ok", False):
         return []
     cues = _M.setdefault("cues", voicelines.Cues())
-    if not cues.refused() or not prefs.voice():
-        return []
-    items = voicelines.refusal(getattr(route, "reason", "") or "")
-    # "sorry" only AFTER the words - and with no working voice the words are
-    # dropped (speech.py), so an apology alone would be an apology for nothing.
-    if speech.STATE.get("ready"):
-        items += character.flourish("sorry")
-    speech.play(items)
+    items = list(before)
+    if cues.refused() and prefs.voice():
+        words = voicelines.refusal(getattr(route, "reason", "") or "")
+        # "sorry" only AFTER the words - and with no working voice the words
+        # are dropped (speech.py), so an apology alone would be an apology
+        # for nothing.
+        if speech.STATE.get("ready"):
+            words += character.flourish("sorry")
+        items += words
+    if items:
+        speech.play(items)
     return items
 
 
@@ -706,6 +759,8 @@ def build(page, go=None):
         # A new prompt fires once per band; say it as it fires. Handed to the
         # speech worker, so this fix handler never waits on the engine.
         _announce(out, (live.LIVE.get("limit") or (None, ""))[0])
+        if out.get("reroute") and _M.get("held"):
+            page.run_task(_let_go, _M["held"]["id"])
         # This second's sensors into the recording, or into the live ride the
         # gauges read when nothing records (see _dash_ride).
         _feed_fix()
@@ -857,7 +912,7 @@ def build(page, go=None):
         follower = live.LIVE.get("follower")
         if route is not None and route.ok and follower is not None:
             follower.note_reroute()
-        _refused(route)
+        _release(route)
         draw_route()
         paint()
         _update(page)

@@ -516,24 +516,53 @@ def second_moods(names, parts, angry_ok=True):
 #: minion 2.
 RECENT_MAX = 4
 
+_TAKE = re.compile(r"-[0-9]+$")
+
+
+def phrase(name):
+    """What a clip SAYS: its name less a trailing take number - "what the
+    hell" 4 and 6 are one phrase, and hearing one then the other is hearing
+    the same line twice (AGEDASHII's ruling, agreed with minion 2)."""
+    return _TAKE.sub("", name) if name else name
+
+
+def _phrase_order(p):
+    return (p is None, p or "")
+
 
 class Recent:
-    """Each pool's recent picks, newest last."""
+    """Each pool's recent PHRASES, newest last."""
 
     def __init__(self):
         self.picks = {}
 
-    def fresh(self, pool, names):
-        """`names` - the pool's whole list - less the ones it played lately:
-        its last min(RECENT_MAX, n // 2). Never empty for a pool that is not
-        (a pool of one holds nothing back)."""
-        k = min(RECENT_MAX, len(names) // 2)
-        held = set(self.picks.get(pool, [])[-k:]) if k else set()
-        return [n for n in names if n not in held]
+    def choose(self, rng, pool, names, exclude=()):
+        """A take from `names` - the pool's whole list - or None.
 
-    def heard(self, pool, name):
+        The phrase first, evenly among the pool's phrases less the last
+        min(RECENT_MAX, p // 2) it played and any in `exclude`; then a take of
+        it, evenly - so a phrase with three takes is not three times likelier.
+        Only when that leaves nothing is the memory dropped (`exclude` still
+        holds); a pool of one phrase holds nothing back. `names` may hold None,
+        which is a phrase of its own (Wild's Waze line).
+        """
+        takes = {}
+        for name in names:
+            takes.setdefault(phrase(name), []).append(name)
+        phrases = sorted(takes, key=_phrase_order)
+        k = min(RECENT_MAX, len(phrases) // 2)
+        held = set(self.picks.get(pool, [])[-k:]) if k else set()
+        left = ([p for p in phrases if p not in held and p not in exclude]
+                or [p for p in phrases if p not in exclude])
+        if not left:
+            return None, False
+        said = rng.choice(left)
+        self.heard(pool, said)
+        return rng.choice(takes[said]), True
+
+    def heard(self, pool, said):
         picks = self.picks.setdefault(pool, [])
-        picks.append(name)
+        picks.append(said)
         del picks[:-RECENT_MAX]
 
 
@@ -563,10 +592,10 @@ class Flourish:
             return None
         if self.rng.random() >= FLOURISH_RATE[mood]:
             return None
-        names = self.recent.fresh(mood, sorted(n for n, path in pool.items() if path))
-        if not names:
+        name, found = self.recent.choose(
+            self.rng, mood, sorted(n for n, path in pool.items() if path))
+        if not found:
             return None
-        name = self.rng.choice(names)
         self._heard(name, mood, now)
         if maneuver is not None:
             self.maneuver = maneuver
@@ -576,33 +605,30 @@ class Flourish:
         """(name, path) of a second line after `first`, or None.
 
         `pools` is {mood: {name: path}} for second_moods. A mood is picked
-        evenly among those with a line other than `first`, then a line in
-        it, passing over the ones its mood played lately (Recent) unless only
-        those are left. It may share first's mood ("DO IT NOW" + "RIGHT
-        NOW"); an angry one still waits out ANGRY_EVERY_S. Rules agreed with
-        minion 2.
+        evenly among those with a phrase other than `first`'s, then a line in
+        it (Recent.choose, never `first`'s phrase). It may share first's mood
+        ("DO IT NOW" + "RIGHT NOW"); an angry one still waits out
+        ANGRY_EVERY_S. Rules agreed with minion 2.
         """
         if first is None or self.rng.random() >= P_SECOND:
             return None
+        not_first = {phrase(first)}
         choices = {}
         for mood, pool in (pools or {}).items():
             if mood == "angry" and now is not None and not self.angry_ok(now):
                 continue
             full = sorted(n for n, path in (pool or {}).items() if path)
-            names = ([n for n in self.recent.fresh(mood, full) if n != first]
-                     or [n for n in full if n != first])
-            if names:
-                choices[mood] = names
+            if any(phrase(n) not in not_first for n in full):
+                choices[mood] = full
         if not choices:
             return None
         mood = self.rng.choice(sorted(choices))
-        name = self.rng.choice(choices[mood])
+        name, _found = self.recent.choose(self.rng, mood, choices[mood], exclude=not_first)
         self._heard(name, mood, now)
         return name, pools[mood][name]
 
     def _heard(self, name, mood, now):
         self.last = name
-        self.recent.heard(mood, name)
         if mood == "angry" and now is not None:
             self.angry_at = now
 
@@ -664,8 +690,7 @@ class Arranger:
             self.shape = shape
         said = None
         if cough:
-            take = self.rng.choice(self.recent.fresh("cough", sorted(coughs)))
-            self.recent.heard("cough", take)
+            take, _found = self.recent.choose(self.rng, "cough", sorted(coughs))
             said = ("flourish", coughs[take], None)
         if cough == "inside":
             group = [piece.halves[0], said, piece.halves[1]]
@@ -731,13 +756,12 @@ class Wild:
                 and (name not in DIRECTION_SLOTS or source(n) == "yours")}
         if not pool:
             return clip_path(name)
-        # A lone take and the Waze line are a pool of two (None is the Waze
-        # line), so they take turns.
+        # A lone phrase and the Waze line are a pool of two (None is the Waze
+        # line), so they take turns, however many takes the phrase has.
         names = sorted(pool)
-        if len(names) == 1 and clip_path(name):
+        if len({phrase(n) for n in names}) == 1 and clip_path(name):
             names.append(None)
-        pick = self.rng.choice(self.recent.fresh(name, names))
-        self.recent.heard(name, pick)
+        pick, _found = self.recent.choose(self.rng, name, names)
         return clip_path(name) if pick is None else pool[pick]
 
 

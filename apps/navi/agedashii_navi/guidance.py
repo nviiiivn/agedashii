@@ -517,6 +517,33 @@ class Follower:
         }
         return self._last
 
+    def peek(self, position, speed_ms=None):
+        """The band this route's next prompt will be SAID in from `position`,
+        or None when none is due - without saying it or marking anything.
+
+        A wider band due while "now" is under NOW_SOON_S away counts as "now":
+        _maybe_say holds it back for that "now". For the held situation line
+        (ride._release): a fresh route whose first prompt is "now" gets the
+        turn alone.
+        """
+        route = self.route
+        if route is None or not getattr(route, "ok", False) or position is None:
+            return None
+        man, metres, _off = routing.next_maneuver(route, position)
+        talk, talk_m = _next_spoken(route, man, metres)
+        if talk is None or talk_m is None:
+            return None
+        points = prompt_points(speed_ms, self.anchors_ft)
+        now_at = points.get("now", 0.0)
+        for _secs, band in reversed(PROMPT_BANDS):
+            if talk_m > points.get(band, 0.0):
+                continue
+            if (band != "now" and speed_ms is not None and speed_ms > 0
+                    and (talk_m - now_at) / speed_ms < NOW_SOON_S):
+                return "now"
+            return band
+        return None
+
     @property
     def last(self):
         return self._last

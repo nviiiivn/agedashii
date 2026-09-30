@@ -727,7 +727,8 @@ class AndThen(unittest.TestCase):
 
 
 def lines(prefix, n):
-    return {f"{prefix}-{i:02d}": f"/v/{prefix}-{i:02d}.mp3" for i in range(n)}
+    """n different phrases - letters, since a trailing number is a take."""
+    return {f"{prefix}-{chr(97 + i)}x": f"/v/{prefix}-{chr(97 + i)}x.mp3" for i in range(n)}
 
 
 def windows(seq, size):
@@ -739,12 +740,15 @@ class TheLastFewAreHeldBack(unittest.TestCase):
     its last k = min(4, n // 2) picks. Agreed with minion 2."""
 
     def test_how_many_are_held_back(self):
-        recent = voicelines.Recent()
+        # With every phrase but the held ones used up, a pool of n holds back
+        # exactly its last k: the next k + 1 picks are all different.
         for n, k in ((2, 1), (4, 2), (9, 4), (20, 4)):
+            recent = voicelines.Recent()
             names = sorted(lines(f"p{n}", n))
-            for name in names[:k + 1]:
-                recent.heard(n, name)
-            self.assertEqual(len(recent.fresh(n, names)), n - k, n)
+            said = [recent.choose(Always(), n, names)[0] for _ in range(3 * n)]
+            for window in windows(said, k + 1):
+                self.assertEqual(len(set(window)), k + 1, (n, said))
+            self.assertIn(names[0], said[k + 1:], "held back for longer than k")
 
     def test_a_mood_of_nine_never_repeats_inside_five(self):
         f = voicelines.Flourish(Always())
@@ -790,15 +794,73 @@ class TheLastFewAreHeldBack(unittest.TestCase):
                 for _ in range(4)]
         self.assertEqual(said, ["/v/come.mp3", "/v/start.mp3"] * 2)
 
-    def test_two_coughs_take_turns(self):
+    def cough_run(self, coughs):
         a = voicelines.Arranger(Script(0.9, 0.0, 0.9, 0.0, 0.9, 0.0))
-        coughs = {"interject-cough": "/v/c1.mp3", "interject-cough-2": "/v/c2.mp3"}
         heard = []
         for band in ("far", "near", "far"):
             a.coughed = False                     # as if a prompt came between
             got = a.arrange(piece(band=band), band, coughs=coughs)
             heard += [i[1] for i in got if i[0] == "flourish"]
-        self.assertEqual(heard, ["/v/c1.mp3", "/v/c2.mp3", "/v/c1.mp3"])
+        return heard
+
+    def test_two_cough_phrases_take_turns(self):
+        self.assertEqual(self.cough_run({"interject-cough": "/v/c.mp3",
+                                         "interject-sneeze": "/v/s.mp3"}),
+                         ["/v/c.mp3", "/v/s.mp3", "/v/c.mp3"])
+
+    def test_two_takes_of_the_cough_are_one_phrase(self):
+        # One phrase: nothing held back, so the same take may come again.
+        self.assertEqual(self.cough_run({"interject-cough": "/v/c1.mp3",
+                                         "interject-cough-2": "/v/c2.mp3"}),
+                         ["/v/c1.mp3"] * 3)
+
+    def test_takes_of_one_phrase_are_one_line(self):
+        f = voicelines.Flourish(Always())
+        pool = {"flourish-angry-what-the-hell-4": "/v/h4.mp3",
+                "flourish-angry-what-the-hell-6": "/v/h6.mp3",
+                "flourish-angry-what-the-hell-7": "/v/h7.mp3",
+                "flourish-angry-x-mistake": "/v/m.mp3",
+                "flourish-angry-x-oops": "/v/o.mp3"}
+        import re
+        said = [re.sub(r"-[0-9]+$", "", f.pick("angry", pool)[0]) for _ in range(9)]
+        for window in windows(said, 2):
+            self.assertEqual(len(set(window)), 2, said)
+
+    def test_the_phrase_is_picked_first_then_the_take(self):
+        import random as r
+        rng = r.Random(7)
+        names = ["wild-offroute-what-1", "wild-offroute-what-2", "wild-offroute-what-3",
+                 "wild-offroute-mistake"]
+        picks = [voicelines.Recent().choose(rng, "offroute", names)[0] for _ in range(4000)]
+        share = sum(p == "wild-offroute-mistake" for p in picks) / len(picks)
+        self.assertAlmostEqual(share, 0.5, delta=0.04)          # not 1 in 4
+
+    def test_the_second_line_is_never_the_first_ones_phrase(self):
+        f = voicelines.Flourish(Always())
+        pool = {"flourish-urgent-now-1": "/v/n1.mp3", "flourish-urgent-now-2": "/v/n2.mp3",
+                "flourish-urgent-quickly": "/v/q.mp3"}
+        got = f.second({"urgent": pool}, "flourish-urgent-now-1", now=0)
+        self.assertEqual(got, ("flourish-urgent-quickly", "/v/q.mp3"))
+
+
+class ThePeek(unittest.TestCase):
+    """Follower.peek: the band a fresh route's first prompt will be said in,
+    without saying it - for the held situation line."""
+
+    def test_the_band_it_will_say_and_nothing_marked(self):
+        route, points = two_turns(gap=10, step=0.0001, n=140, at=100)
+        follower = guidance.Follower(route, offroute_m=45)
+        self.assertEqual(follower.peek(points[95], 15.0), "now")      # 55 m
+        self.assertEqual(follower.peek(points[80], 15.0), "near")     # 220 m
+        self.assertIsNone(follower.peek(points[0], 15.0))             # 1.1 km
+        self.assertEqual(follower.update(points[95], speed_ms=15.0)["say_parts"]["band"], "now")
+
+    def test_a_near_prompt_held_back_for_now_counts_as_now(self):
+        # 100 m at 15 m/s: "near" is due, but "now" (90 m) is under a second
+        # away, so the Follower waits and says "now".
+        route, points = two_turns(gap=10, step=0.0001, n=140, at=100)
+        follower = guidance.Follower(route, offroute_m=45)
+        self.assertEqual(follower.peek(points[91], 15.0), "now")
 
 
 class HisWildLinesLead(unittest.TestCase):
@@ -1008,6 +1070,8 @@ class TheRidePage(_Clean):
         self.ride = ride
         ride._M.pop("cues", None)                          # noqa: SLF001
         self.addCleanup(ride._M.pop, "cues", None)         # noqa: SLF001
+        ride._M.pop("held", None)                          # noqa: SLF001
+        self.addCleanup(ride._M.pop, "held", None)         # noqa: SLF001
         self.played = self.capture_play()
         # Distance first, no cough - unless a test says otherwise.
         from agedashii_navi import character
@@ -1019,6 +1083,16 @@ class TheRidePage(_Clean):
         out = {"moved": True, "status": status, "say": say, "say_parts": parts,
                "reroute": reroute}
         return self.ride._announce(out, None)              # noqa: SLF001
+
+    def answer(self, band=None, ok=True):
+        """The re-route answers; its first prompt would be in `band`."""
+        from agedashii_washi import routing as R
+        route = (R.Route(ok=True, source="offline") if ok else
+                 R.Route(ok=False, source="offline", reason=R.START_OUTSIDE))
+        follower = mock.Mock()
+        follower.peek.return_value = band
+        live.LIVE["follower"] = follower
+        return self.ride._release(route)                   # noqa: SLF001
 
     def test_an_open_ended_distance_clip_is_played_from_a_fix(self):
         turn, far = self.add("turn-left", ".mp3"), self.add("dist-400ft", ".mp3")
@@ -1199,6 +1273,7 @@ class TheRidePage(_Clean):
         self.flourishes({"angry": {"flourish-angry-big-mistake": "/v/mistake.mp3"}})
         prefs.set_value("voice", True)
         self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.answer("far")
         self.assertEqual(self.played, [[("tts", "Off route.", None),
                                         ("tts", "Re-routing.", None),
                                         ("flourish", "/v/mistake.mp3", None)]])
@@ -1275,8 +1350,48 @@ class TheRidePage(_Clean):
     def test_off_route_and_rerouting_go_as_one_playlist(self):
         prefs.set_value("voice", True)
         self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.answer(None)
         self.assertEqual(self.played, [[("tts", "Off route.", None),
                                         ("tts", "Re-routing.", None)]])
+
+    def test_the_line_waits_for_the_reroute_to_answer(self):
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.assertEqual(self.played, [])                         # held
+        self.answer("near")
+        self.assertEqual(len(self.played), 1)
+
+    def test_it_is_dropped_when_the_new_route_starts_with_a_turn(self):
+        # 5ca2f16 on 5554: "what the h-" cut after 0.3 s by the turn.
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.assertEqual(self.answer("now"), [])
+        self.assertEqual(self.played, [])
+        self.assertNotIn("held", self.ride._M)                   # noqa: SLF001
+
+    def test_refused_it_is_the_line_then_the_refusal_as_one(self):
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": True}, reroute=True)
+        self.answer(ok=False)
+        self.assertEqual(len(self.played), 1)
+        words = [v for _k, v, _f in self.played[0]]
+        self.assertEqual(words[:2], ["Off route.", "Re-routing."])
+        self.assertIn("outside", words[2])
+
+    def test_with_no_answer_it_plays_after_the_hold(self):
+        import asyncio
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": True}, reroute=True)
+        with mock.patch.object(self.ride, "HOLD_S", 0.0):
+            asyncio.run(self.ride._let_go(self.ride._M["held"]["id"]))  # noqa: SLF001
+        self.assertEqual(len(self.played), 1)
+        self.assertEqual(self.answer("now"), [])              # nothing left to drop
+        self.assertEqual(len(self.played), 1)
+
+    def test_a_line_with_no_reroute_on_its_fix_plays_at_once(self):
+        prefs.set_value("voice", True)
+        self.announce({"ok": True, "off_route": True}, reroute=False)
+        self.assertEqual(self.played, [[("tts", "Off route.", None)]])
 
     def test_announce_off_says_nothing_and_does_not_blurt_later(self):
         prefs.set_value("voice", False)
