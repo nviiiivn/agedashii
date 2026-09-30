@@ -99,7 +99,11 @@ _NAMED_FEET = {"dist-quarter": 1320.0, "dist-half": 2640.0}
 #: named, never guessed. Flourishes are extras - never "missing".
 #: "ui" is the seventh: lines for taps in the app (opening search, picking a
 #: destination) rather than moments on the road.
-FLOURISH_MOODS = ("start", "arrival", "angry", "urgent", "scold", "sorry", "ui")
+#: "banter" is the eighth: lines true and kind in any moment ("haha", "trust
+#: me", "no problemo") - the app enjoying itself WITH her on a correct turn,
+#: never at her expense (AGEDASHII's ruling after minion 1's Flet rides).
+FLOURISH_MOODS = ("start", "arrival", "angry", "urgent", "scold", "sorry", "ui",
+                  "banter")
 _FLOURISH = re.compile(r"^flourish-(" + "|".join(FLOURISH_MOODS) + r")-([a-z0-9-]+)$")
 #: Sounds that drop INTO a prompt rather than beside it - a cough between the
 #: distance and the turn: interject-<slug>. Also extras, never "missing".
@@ -742,16 +746,17 @@ def panel(page, picker=None, on_change=None):
 #: How OFTEN comes from voicelines' own rates, so it cannot drift from them.
 THEATRE = (
     ("start", "Setting off", "a route to a new destination"),
-    ("urgent", "Ordinary turns", "after a turn prompt - never in the last "
-                                 "seconds before the turn"),
+    ("banter", "Along the way", "after a turn is announced, far or near - "
+                                "kind, never at your expense"),
+    ("urgent", "At the turn", "on the turn itself, the last prompt before it"),
     ("angry", "Off route", "off route, or re-routing"),
     ("scold", "Speeding", "going over the limit"),
     ("sorry", "Sorry", "after saying a re-route could not be made"),
     ("arrival", "Arriving", "the last prompt, at the destination"),
     ("ui", "In the app", "tapping into search, or picking a destination"),
 )
-COUGH = ("Cough", "between the distance and the turn - \"in a quarter mile "
-                  "*cough* turn left\"")
+COUGH = ("Cough", "inside a turn - \"continue *cough* straight\" - or "
+                  "between the distance and the turn")
 
 
 def how_often(rate):

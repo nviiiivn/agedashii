@@ -134,6 +134,53 @@ def archive_style(path):
     return style
 
 
+#: path -> (mtime, bounds) - the archive's own "bounds", read once.
+_ARCHIVE_BOUNDS = {}
+
+#: What the Ride page says past the offline map's edge, where the archive has
+#: no tiles and the map is black. Kotlin's words (minion 1's ride report).
+OUTSIDE_WORDS = "You are outside the offline map"
+
+
+def archive_bounds(path):
+    """(west, south, east, north) the archive at `path` says it covers - its
+    metadata "bounds" - or None when it does not say or cannot be read."""
+    if not path:
+        return None
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    cached = _ARCHIVE_BOUNDS.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    bounds = None
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE name = 'bounds'").fetchone()
+        finally:
+            conn.close()
+        west, south, east, north = (float(v) for v in str(row[0]).split(","))
+        if west < east and south < north:
+            bounds = (west, south, east, north)
+    except (sqlite3.Error, TypeError, ValueError) as exc:
+        print(f"[navi] tiles: the archive's bounds are unreadable: {exc}", flush=True)
+    _ARCHIVE_BOUNDS[path] = (mtime, bounds)
+    return bounds
+
+
+def outside(lat, lon, archive=None):
+    """True past the offline map's edge - where it draws only black - False
+    inside it, None with no archive or no bounds to judge by."""
+    bounds = archive_bounds(archive if archive is not None else M.mbtiles_path())
+    if bounds is None or lat is None or lon is None:
+        return None
+    west, south, east, north = bounds
+    return not (west <= lon <= east and south <= lat <= north)
+
+
 def pick(style=DEFAULT, archive=None):
     """Decide what the tile layer should fetch.
 

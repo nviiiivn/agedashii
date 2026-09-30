@@ -379,7 +379,12 @@ class Cues:
             self.rerouted = False             # re-arms on a momentary new route
         elif reroute and not self.rerouted:
             self.rerouted = True
-            situ.append("rerouting")
+            # One situation line per edge: on the fix that goes off route,
+            # "off route" says it; "re-routing" on top was the three-line
+            # stack before the new instruction (minion 1's Flet rides;
+            # AGEDASHII's ruling, minion 2's Kotlin is the same).
+            if not situ:
+                situ.append("rerouting")
         self.off = off
         if situ:
             # The first line of a spell always speaks; after that one situation
@@ -431,7 +436,9 @@ FLOURISH_RATE = {"urgent": 0.25, "arrival": 1.0, "start": 1.0,
                  # A tap in the app - opening search, picking a destination.
                  # Rarer: theatre on a button pressed ten times a day wears
                  # thin fast. Minion 2's Kotlin number, kept identical.
-                 "ui": 0.15}
+                 "ui": 0.15,
+                 # Kind lines on a correct turn, far or near. Kotlin's number.
+                 "banter": 0.25}
 #: Her cough, "now and then": inside the instruction - in the middle of the
 #: maneuver line when it comes in halves ("continue *cough* straight"), else
 #: in the join between the distance and the turn. Rarer than any flourish,
@@ -458,11 +465,11 @@ def flourish_mood(names, parts, angry_ok=True):
     per AGEDASHII's rulings (minion 2's Kotlin is identical):
     - "now": urgent for a turn ("DO IT NOW" - she asked for it by name), or
       arrival for the arrive maneuver, where nothing follows. Nothing else.
-    - "near": angry (off route, re-routing) > scold (speeding) > start >
-      urgent.
-    - "far": the same, but NEVER urgent - "In half a mile... NOW!" could send
-      her in early.
-    The arrive maneuver's far and near prompts get no urgent or arrival line.
+    - "far" and "near": angry (off route, re-routing) > scold (speeding) >
+      start > banter - what she DID, never urgent: "In half a mile... NOW!"
+      could send her in early, and "RIGHT NOW" at 900 ft was false. Banter
+      only on a correct turn, never with a mistake cued.
+    The arrive maneuver's far and near prompts get no line at all.
     `angry_ok` False (inside ANGRY_EVERY_S) passes over angry to the next.
     """
     moods = flourish_moods(names, parts, angry_ok)
@@ -484,6 +491,9 @@ def flourish_moods(names, parts, angry_ok=True):
         if arriving:
             return ["arrival"]
         return ["urgent"] if parts else []
+    if arriving and parts:
+        return []                   # arriving's line is for being there
+    mistake = any(n in names for n in ("offroute", "rerouting", "speeding"))
     moods = []
     if ("offroute" in names or "rerouting" in names) and angry_ok:
         moods.append("angry")
@@ -491,21 +501,27 @@ def flourish_moods(names, parts, angry_ok=True):
         moods.append("scold")
     if "start" in names:
         moods.append("start")
-    if parts and not arriving and band == "near":
-        moods.append("urgent")
+    # No urgent short of "now": "RIGHT NOW" at 900 ft on a near prompt at 34
+    # mph was false. A correct turn's far and near get BANTER - true and kind,
+    # the app enjoying itself with her - and a fix that carries a mistake
+    # never does: "big mistake" + "haha" is at her expense (AGEDASHII's
+    # rulings; minion 2's Kotlin is the same).
+    if parts and band in ("far", "near") and not mistake:
+        moods.append("banter")
     return moods
 
 
 def second_moods(names, parts, angry_ok=True):
-    """Where a SECOND flourish may come from: every mood this moment allows,
-    plus angry on a near turn - hers, "do it now" + "damn it" - under the
-    same one-a-minute cap. None on the "now" band, which stays short."""
-    if (parts or {}).get("band") == "now":
+    """Where a SECOND flourish may come from: the moods this moment allows,
+    and nothing more - a mood matches what she DID, so angry and scold only
+    ever follow the situation that earned them, never a plain turn
+    (AGEDASHII's ruling after minion 1's Flet rides; minion 2's Kotlin is the
+    same). None on the "now" band, which stays short, and none on the route
+    start, which gets one line (the same report: "aagh" + "your clothes
+    now")."""
+    if (parts or {}).get("band") == "now" or "start" in names:
         return []
-    moods = flourish_moods(names, parts, angry_ok)
-    if angry_ok and "urgent" in moods and "angry" not in moods:
-        moods.append("angry")
-    return moods
+    return flourish_moods(names, parts, angry_ok)
 
 
 #: How many of a pool's recent lines are held back: the last k of a pool of

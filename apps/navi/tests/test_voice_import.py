@@ -502,10 +502,13 @@ class Flourishes(_Case):
         self.assertEqual(st["unknown"], [])
         self.assertIn("2 character lines", vi.status_text())
 
-    def test_the_moods_are_the_agreed_six(self):
+    def test_the_moods_are_the_agreed_eight(self):
+        # banter: AGEDASHII's ruling after minion 1's Flet rides; Kotlin reads
+        # the same flourish-banter-* files.
         self.assertEqual(vi.FLOURISH_MOODS,
                          ("start", "arrival", "angry", "urgent", "scold", "sorry",
-                          "ui"))
+                          "ui", "banter"))
+        self.assertEqual(vi._canonical("flourish-banter-haha"), "flourish-banter-haha")
 
     def test_sorry_is_a_mood(self):
         result = vi.import_files([_write(self.src, "flourish-sorry-my-bad.mp3")])
@@ -777,7 +780,7 @@ class TheTheatreCard(_Case):
 
     def test_every_mood_and_the_cough_in_ride_order(self):
         order = [mood for mood, *_rest in vi.theatre()]
-        self.assertEqual(order, ["start", "urgent", "angry", "scold", "sorry",
+        self.assertEqual(order, ["start", "banter", "urgent", "angry", "scold", "sorry",
                                  "arrival", "ui", "cough"])
         self.assertEqual(sorted(order[:-1]), sorted(vi.FLOURISH_MOODS))
 

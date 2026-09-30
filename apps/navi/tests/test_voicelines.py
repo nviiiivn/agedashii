@@ -294,7 +294,7 @@ class Edges(unittest.TestCase):
         cues = voicelines.Cues()
         up = lambda status, t, reroute=False: cues.update(status, None, reroute, False, t)
         self.assertEqual(up(self.OK, 0), [])
-        self.assertEqual(up(self.OFF, 10, True), ["offroute", "rerouting"])
+        self.assertEqual(up(self.OFF, 10, True), ["offroute"])   # one line per edge
         self.assertEqual(up(self.OK, 11), [])
         self.assertEqual(up(self.OFF, 17.5), [])                 # held
         self.assertEqual(up(self.OFF, 22.6, True), [])           # held
@@ -304,7 +304,7 @@ class Edges(unittest.TestCase):
         self.assertEqual(up(self.OFF, 41), ["offroute"])         # 31 s after the last
         for t in range(45, 77):
             self.assertEqual(up(self.OK, t), [])                 # 31 s on: spell over
-        self.assertEqual(up(self.OFF, 80, True), ["offroute", "rerouting"])
+        self.assertEqual(up(self.OFF, 80, True), ["offroute"])
 
     def test_a_refused_reroute_is_said_once_per_spell(self):
         cues = voicelines.Cues()
@@ -385,10 +385,11 @@ class CharacterLines(unittest.TestCase):
 
     def test_the_mood_follows_the_moment(self):
         mood = voicelines.flourish_mood
-        self.assertEqual(mood([], fired("turn left")), "urgent")             # near
-        # AGEDASHII's ruling (minion 2's Kotlin matches): urgent on NEAR and
-        # NOW, never FAR - "In half a mile... NOW!" could send her in early.
-        self.assertIsNone(mood([], fired("turn left", band="far")))
+        # A correct turn short of "now" gets banter, never urgent: "RIGHT
+        # NOW" at 900 ft was false (AGEDASHII's rulings after minion 1's Flet
+        # rides; minion 2's Kotlin matches).
+        self.assertEqual(mood([], fired("turn left")), "banter")             # near
+        self.assertEqual(mood([], fired("turn left", band="far")), "banter")
         self.assertEqual(mood([], fired("turn left", band="now")), "urgent")
         # "now" takes urgent or arrival and nothing else.
         self.assertEqual(mood(["speeding"], fired("turn left", band="now")), "urgent")
@@ -401,8 +402,8 @@ class CharacterLines(unittest.TestCase):
         # Arrival only on the arrive maneuver's OWN "now" prompt (minion 2):
         # nothing follows it. Its far and near prompts get none.
         self.assertIsNone(mood([], dict(fired("arrive at your destination"), kind="arrive")))
-        self.assertEqual(mood(["offroute"], dict(fired("arrive at your destination"),
-                                                 kind="arrive")), "angry")
+        self.assertIsNone(mood(["offroute"], dict(fired("arrive at your destination"),
+                                                  kind="arrive")))
         self.assertEqual(mood(["offroute"], dict(fired("arrive", band="now"),
                                                  kind="arrive")), "arrival")
         self.assertIsNone(mood([], None))
@@ -607,12 +608,19 @@ class ASecondLine(unittest.TestCase):
 
     def test_where_it_may_come_from(self):
         second = voicelines.second_moods
-        self.assertEqual(second([], fired("turn left")), ["urgent", "angry"])
-        self.assertEqual(second([], fired("turn left"), angry_ok=False), ["urgent"])
+        # A correct turn is never insulted: no angry, no scold, from a plain
+        # turn prompt ("don't bullshit me" on a near prompt, minion 1's rides).
+        self.assertEqual(second([], fired("turn left")), ["banter"])
         self.assertEqual(second([], fired("turn left", band="now")), [])
-        self.assertEqual(second([], fired("turn left", band="far")), [])
+        self.assertEqual(second([], fired("turn left", band="far")), ["banter"])
+        # A mistake cued: never banter, and with angry barred, nothing.
+        self.assertEqual(second(["offroute"], fired("turn left")), ["angry"])
+        self.assertEqual(second(["offroute"], fired("turn left"), angry_ok=False), [])
+        self.assertEqual(second(["speeding"], fired("turn left")), ["scold"])
         self.assertEqual(second(["offroute", "speeding"], None), ["angry", "scold"])
         self.assertEqual(second([], dict(fired("arrive at your destination"), kind="arrive")), [])
+        # The route start gets one line ("aagh" + "your clothes now").
+        self.assertEqual(second(["start"], fired("turn left")), [])
 
     def test_never_the_first_ones_line_and_at_the_named_rate(self):
         f = voicelines.Flourish(Always())
@@ -863,6 +871,38 @@ class ThePeek(unittest.TestCase):
         self.assertEqual(follower.peek(points[91], 15.0), "now")
 
 
+class TheNewRouteSpeaksAtTheAnswer(unittest.TestCase):
+    """live.guide_now: the Follower run on the last fix when a re-route
+    answers, so its first prompt does not wait a second for the next fix."""
+
+    def setUp(self):
+        live.reset()
+        self.addCleanup(live.reset)
+
+    def test_the_first_prompt_fires_on_the_last_fix(self):
+        route, points = two_turns(gap=10, step=0.0001, n=140, at=100)
+        live.LIVE.update(route=route, follower=guidance.Follower(route, offroute_m=45),
+                         pos=points[95], speed_ms=15.0, t=100.0)
+        out = live.guide_now(t=100.0)
+        self.assertTrue(out["say"])
+        self.assertEqual(out["say_parts"]["band"], "now")
+        self.assertFalse(out["reroute"])
+
+    def test_no_fix_yet_is_nothing(self):
+        self.assertFalse(live.guide_now()["moved"])
+
+    def test_it_never_asks_for_another_reroute(self):
+        # It runs as a re-route answers; asking again from there would loop.
+        route, points = two_turns(gap=10, step=0.0001, n=140, at=100)
+        follower = guidance.Follower(route, offroute_m=45)
+        away = (points[50][0], points[50][1] + 0.01)                 # ~880 m off
+        for t in range(3):
+            follower.update(away, speed_ms=15.0, now=float(t))
+        self.assertTrue(follower.should_reroute())
+        live.LIVE.update(route=route, follower=follower, pos=away, speed_ms=15.0, t=10.0)
+        self.assertFalse(live.guide_now(t=100.0)["reroute"])
+
+
 class HisWildLinesLead(unittest.TestCase):
     """Hers: "id rather him scream things that make kind of sense than the
     normal waze arnold talking. only use that shit as fall back". Per slot: her
@@ -1072,6 +1112,8 @@ class TheRidePage(_Clean):
         self.addCleanup(ride._M.pop, "cues", None)         # noqa: SLF001
         ride._M.pop("held", None)                          # noqa: SLF001
         self.addCleanup(ride._M.pop, "held", None)         # noqa: SLF001
+        ride._M.pop("speeding_owed", None)                 # noqa: SLF001
+        self.addCleanup(ride._M.pop, "speeding_owed", None)  # noqa: SLF001
         self.played = self.capture_play()
         # Distance first, no cough - unless a test says otherwise.
         from agedashii_navi import character
@@ -1118,17 +1160,48 @@ class TheRidePage(_Clean):
         self.assertEqual(self.played, [[("tts", "In 400 ft,", None),
                                         ("clip", path, "turn left")]])
 
-    def test_on_the_now_band_the_turn_plays_before_a_situation(self):
-        # #10: a 1.5 s speeding line must not eat the 6 s "now" warning.
+    def speeding_fix(self, say="", parts=None, speed=40.0):
+        live.LIVE["speed_ms"] = speed
+        return self.ride._announce({"moved": True,                     # noqa: SLF001
+                                    "status": {"ok": True, "off_route": False},
+                                    "say": say, "say_parts": parts, "reroute": False}, 25)
+
+    def test_speeding_is_never_glued_to_a_turn(self):
+        # #10 kept: the turn plays first and alone. Then, on the next fix with
+        # nothing to say, the speeding line - alone ("big mistake, 0.1 mile,
+        # turn left, drunk" on minion 1's rides).
         turn, fast = self.add("turn-left"), self.add("speeding")
         prefs.set_value("voice", True)
-        live.LIVE["speed_ms"] = 40.0
-        self.ride._announce({"moved": True, "status": {"ok": True, "off_route": False},  # noqa: SLF001
-                             "say": "turn left onto Grand Ave",
-                             "say_parts": fired("turn left", band="now"),
-                             "reroute": False}, 25)
-        self.assertEqual(self.played, [[("clip", turn, "turn left"), ("clip", fast, None)]])
+        self.speeding_fix("turn left onto Grand Ave", fired("turn left", band="now"))
+        self.assertEqual(self.played, [[("clip", turn, "turn left")]])
         self.assertEqual(self.urgent, [True])
+        self.speeding_fix()
+        self.assertEqual(self.played[-1], [("clip", fast, None)])
+
+    def test_owed_speeding_is_forgotten_when_she_slows(self):
+        self.add("speeding")
+        prefs.set_value("voice", True)
+        self.speeding_fix("turn left", fired("turn left", band="now"))
+        self.speeding_fix(speed=10.0)                        # under the limit
+        self.speeding_fix(speed=40.0)                        # over, but no new edge
+        self.assertEqual(len(self.played), 1)
+
+    def test_never_once_she_has_arrived(self):
+        self.add("speeding")
+        prefs.set_value("voice", True)
+        live.LIVE["follower"] = mock.Mock(arrived=True)
+        self.speeding_fix()
+        self.speeding_fix()
+        self.assertEqual(self.played, [])
+
+    def test_never_over_a_line_already_playing(self):
+        fast = self.add("speeding")
+        prefs.set_value("voice", True)
+        with mock.patch.object(speech, "voice_active", return_value=True):
+            self.speeding_fix()
+        self.assertEqual(self.played, [])
+        self.speeding_fix()
+        self.assertEqual(self.played, [[("clip", fast, None)]])
 
     def test_sorry_follows_the_spoken_refusal_and_needs_a_voice(self):
         from agedashii_washi import routing as R
@@ -1174,13 +1247,15 @@ class TheRidePage(_Clean):
 
     def test_a_character_line_goes_after_the_whole_instruction(self):
         turn, far = self.add("turn-left"), self.add("dist-400ft")
-        self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3"}})
+        self.flourishes({"start": {"flourish-start-aagh": "/v/aagh.mp3"}})
         prefs.set_value("voice", True)
+        live.LIVE["dest"] = (37.81, -122.26, "Somewhere")         # a new route: start
         self.announce({"ok": True, "off_route": False},
                       "In 400 ft, turn left onto Grand Ave", fired("turn left"))
-        self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
+        self.assertEqual(self.played, [[("tts", "Starting the route.", None),
+                                        ("clip", far, "In 400 ft,"),
                                         ("clip", turn, "turn left"),
-                                        ("flourish", "/v/now.mp3", None)]])
+                                        ("flourish", "/v/aagh.mp3", None)]])
 
     def test_a_ride_prompt_can_cough_between_distance_and_turn(self):
         from agedashii_navi import character
@@ -1196,17 +1271,20 @@ class TheRidePage(_Clean):
                                         ("flourish", "/v/cough.mp3", None),
                                         ("clip", turn, "turn left")]])
 
-    def test_a_near_turn_can_get_two_of_his_lines(self):
+    def test_a_correct_turn_short_of_now_gets_banter_never_an_insult(self):
         turn, far = self.add("turn-left"), self.add("dist-400ft")
         self.flourishes({"urgent": {"flourish-urgent-do-it-now": "/v/now.mp3"},
-                         "angry": {"flourish-angry-damn-it": "/v/damn.mp3"}})
+                         "angry": {"flourish-angry-damn-it": "/v/damn.mp3"},
+                         "scold": {"flourish-scold-drunk": "/v/drunk.mp3"},
+                         "banter": {"flourish-banter-haha": "/v/haha.mp3",
+                                    "flourish-banter-trust-me": "/v/trust.mp3"}})
         prefs.set_value("voice", True)
         self.announce({"ok": True, "off_route": False},
                       "In 400 ft, turn left onto Grand Ave", fired("turn left"))
         self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
                                         ("clip", turn, "turn left"),
-                                        ("flourish", "/v/now.mp3", None),
-                                        ("flourish", "/v/damn.mp3", None)]])
+                                        ("flourish", "/v/haha.mp3", None),
+                                        ("flourish", "/v/trust.mp3", None)]])
 
     def test_the_corner_gets_one_line_at_most(self):
         turn = self.add("turn-left")
@@ -1275,7 +1353,6 @@ class TheRidePage(_Clean):
         self.announce({"ok": True, "off_route": True}, reroute=True)
         self.answer("far")
         self.assertEqual(self.played, [[("tts", "Off route.", None),
-                                        ("tts", "Re-routing.", None),
                                         ("flourish", "/v/mistake.mp3", None)]])
 
     def test_arriving_plays_one_of_his_wild_lines(self):
@@ -1347,12 +1424,13 @@ class TheRidePage(_Clean):
         with mock.patch.object(speech, "voice_active", return_value=True):
             self.assertEqual(character.opening(), [])
 
-    def test_off_route_and_rerouting_go_as_one_playlist(self):
+    def test_going_off_route_says_one_situation_line(self):
+        # "off route" and "re-routing" on one fix were half of the three-line
+        # stack before the new instruction (minion 1's Flet rides).
         prefs.set_value("voice", True)
         self.announce({"ok": True, "off_route": True}, reroute=True)
         self.answer(None)
-        self.assertEqual(self.played, [[("tts", "Off route.", None),
-                                        ("tts", "Re-routing.", None)]])
+        self.assertEqual(self.played, [[("tts", "Off route.", None)]])
 
     def test_the_line_waits_for_the_reroute_to_answer(self):
         prefs.set_value("voice", True)
@@ -1375,8 +1453,8 @@ class TheRidePage(_Clean):
         self.answer(ok=False)
         self.assertEqual(len(self.played), 1)
         words = [v for _k, v, _f in self.played[0]]
-        self.assertEqual(words[:2], ["Off route.", "Re-routing."])
-        self.assertIn("outside", words[2])
+        self.assertEqual(words[0], "Off route.")
+        self.assertIn("outside", words[1])
 
     def test_with_no_answer_it_plays_after_the_hold(self):
         import asyncio

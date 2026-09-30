@@ -194,6 +194,27 @@ def route_now(allow_server=False, timeout=25.0):
     return route
 
 
+#: Seconds without a fix after which the last speed is not shown as now.
+#: The stream reports only 3 m of movement, so a parked bike gets no fixes at
+#: all, and the gauge went on saying 34 mph forty seconds after she stopped
+#: (minion 1's Flet rides).
+SPEED_STALE_S = 5.0
+#: Below this a stale speed reads as stopped; above it, as unknown - a fix
+#: that stops coming at speed is a tunnel or lost signal, not a stop.
+STOPPED_MS = 3.0
+
+
+def speed_now(now=None):
+    """The speed to SHOW: the last fix's, or 0 once fixes have stopped coming
+    after a slow one, or None (unknown) once they stopped coming at speed."""
+    speed = LIVE.get("speed_ms")
+    at = LIVE.get("t")
+    now = time.time() if now is None else now
+    if speed is None or at is None or now - at <= SPEED_STALE_S:
+        return speed
+    return 0.0 if speed < STOPPED_MS else None
+
+
 #: Polyline characters per log line. logcat cuts a line near 4 kB and a
 #: Flutter print near 1 kB, so a long route goes out in numbered pieces.
 ROUTE_LOG_CHUNK = 800
@@ -387,9 +408,30 @@ def set_position(lat, lon, *, speed_ms=None, heading=None, alt_m=None,
         if row is not None:
             LIVE["track"].append((row["lat"], row["lon"]))
 
+    return _follow(out, t)
+
+
+def guide_now(t=None):
+    """Run the Follower on the last fix NOW, as set_position does - for the
+    moment a re-route answers, so the new route's first prompt fires at the
+    answer instead of on the next fix (Kotlin's Navigator does the same). The
+    same dict as set_position, never asking for another re-route; `moved`
+    False when there is no fix yet."""
+    out = {"moved": False, "status": None, "say": "", "reroute": False,
+           "rolling": False}
+    if LIVE.get("pos") is None:
+        return out
+    out["moved"] = True
+    out = _follow(out, float(t if t is not None else time.time()))
+    out["reroute"] = False
+    return out
+
+
+def _follow(out, t):
+    """The Follower's part of a fix: status, prompt, re-route ask."""
     follower = LIVE.get("follower")
     if follower is not None and LIVE.get("route") is not None:
-        status = follower.update(LIVE["pos"], speed_ms=speed_ms, now=t)
+        status = follower.update(LIVE["pos"], speed_ms=LIVE.get("speed_ms"), now=t)
         out["status"] = status
         # Arriving ends the screen-off service (unless a ride records):
         # a comparison, and a stream update only when something changed.

@@ -116,10 +116,10 @@ def _announce(out, limit):
     items handed to speech, for tests.
     """
     cues = _M.setdefault("cues", voicelines.Cues())
+    over = guidance.over_limit(live.LIVE.get("speed_ms"), limit)
     names = cues.update(out.get("status"), live.LIVE.get("dest"),
-                        out.get("reroute"),
-                        guidance.over_limit(live.LIVE.get("speed_ms"), limit),
-                        time.time())
+                        out.get("reroute"), over, time.time())
+    names = _speeding_alone(names, out, over)
     if not prefs.voice():
         return []
     # Every clip through character.clip: her recording, else his wild line,
@@ -159,6 +159,34 @@ def _announce(out, limit):
             return []
         speech.play(items, urgent=now)
     return items
+
+
+def _speeding_alone(names, out, over):
+    """`names` with "speeding" only where it may be said: ALONE.
+
+    minion 1's Flet rides: "big mistake, 0.1 mile, turn left, drunk"; on
+    arriving, "mission accomplished, big mistake, investigation over"; "cop,
+    stop that" 1.6 s after the choppa. A heckler, not a character. So the
+    line is never in a turn's playlist, never with another situation line,
+    never over a line already playing, and never once she has arrived. Its
+    edge (Cues, SPEEDING_EVERY_S) is kept as OWED until a quiet fix while she
+    is still over the limit, and forgotten when she is not, or when Announce
+    turns is off.
+    """
+    names = list(names)
+    if "speeding" in names:
+        names.remove("speeding")
+        _M["speeding_owed"] = True
+    follower = live.LIVE.get("follower")
+    if (not over or not prefs.voice()
+            or getattr(follower, "arrived", False)):
+        _M.pop("speeding_owed", None)
+        return names
+    quiet = not names and not out.get("say") and not speech.voice_active()
+    if _M.get("speeding_owed") and quiet:
+        _M.pop("speeding_owed", None)
+        names.append("speeding")
+    return names
 
 
 def _release(route):
@@ -368,7 +396,7 @@ def _hud_state():
     """
     ride = _dash_ride()
     row = ride.samples[-1] if (ride is not None and ride.samples) else {}
-    speed = live.LIVE.get("speed_ms")
+    speed = live.speed_now()
     rpm = audio.STATE.get("rpm_est")
     machine = prefs.machine()
     gear, _confidence = gears.estimate(speed, rpm, machine)
@@ -476,6 +504,12 @@ def build(page, go=None):
     # Bring the reused controls up to date. Field assignments on objects the
     # shell already holds - no new widgets, so no tile refetch.
     marker.coordinates = fmap.MapLatitudeLongitude(*start)
+    # And where the map opens. A full render re-mounts the reused map, and a
+    # re-mounted map starts at `initial_center` - the FIRST build's, which is
+    # Oakland when the app opened before its first fix. Parked at the
+    # destination no fix comes to move it back (the stream only reports 3 m
+    # of movement), so it sat over Oakland (minion 1's Flet rides, 2 of 4).
+    the_map.initial_center = fmap.MapLatitudeLongitude(*start)
     marker.content = ui.bike_marker(prefs.bike(), live.heading())
     track_line.coordinates = [fmap.MapLatitudeLongitude(*q)
                               for q in live.LIVE.get("track", [])]
@@ -539,7 +573,7 @@ def build(page, go=None):
     def paint():
         """Put the current live state into the controls that already exist."""
         pal = PAL()
-        speed = live.LIVE.get("speed_ms")
+        speed = live.speed_now()
         # The speed limit is kept by live.set_position on every taken fix,
         # rate-limited there (a spatial search of the road graph), so this page,
         # the speeding cue and every other surface read one current answer. It
@@ -610,6 +644,9 @@ def build(page, go=None):
         problem = speech.STATE.get("problem") if prefs.voice() else ""
         voice_band.visible = bool(problem)
         voice_text.value = problem or ""
+        # Past the offline map's edge the map is black with her bike on it;
+        # say why instead (minion 1's Flet rides, as Kotlin does).
+        map_band.visible = bool(pos is not None and tiles.outside(pos[0], pos[1]))
 
         # The gauges are rebuilt rather than mutated: each one is a stack of
         # transformed Containers whose angles ARE their construction, so there is
@@ -737,6 +774,11 @@ def build(page, go=None):
     voice_text = ft.Text("", size=ui.SMALL, weight=ft.FontWeight.W_700, color=p["bg"])
     voice_band = ft.Container(
         visible=False, bgcolor=p["warn"], content=voice_text,
+        padding=ft.Padding(left=BAND_INSET, top=8, right=12, bottom=8))
+    map_band = ft.Container(
+        visible=False, bgcolor=p["warn"],
+        content=ft.Text(tiles.OUTSIDE_WORDS, size=ui.SMALL,
+                        weight=ft.FontWeight.W_700, color=p["bg"]),
         padding=ft.Padding(left=BAND_INSET, top=8, right=12, bottom=8))
     _pin_words("Route to this point?")
     # Re-bound on every build: the Map outlives this function (see _map_parts),
@@ -913,6 +955,13 @@ def build(page, go=None):
         if route is not None and route.ok and follower is not None:
             follower.note_reroute()
         _release(route)
+        # The new route's first prompt now, at the answer, not on the next
+        # fix: a second of the 7-11 s minion 1 measured from leaving the line
+        # (Kotlin, 5-7 s, runs its Follower at the answer).
+        if route is not None and route.ok:
+            out = live.guide_now()
+            if out.get("say"):
+                _announce(out, (live.LIVE.get("limit") or (None, ""))[0])
         draw_route()
         paint()
         _update(page)
@@ -1464,7 +1513,7 @@ def build(page, go=None):
         ])))
 
     return ft.Column(spacing=0, expand=True, controls=[
-        prompt_band, turn_band, pin_band, voice_band,
+        prompt_band, turn_band, pin_band, voice_band, map_band,
         ft.Container(expand=True, content=ft.Stack(expand=True,
                                                    controls=map_layers)),
         *band])
