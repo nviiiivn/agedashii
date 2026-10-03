@@ -23,6 +23,7 @@ import math
 
 import flet as ft
 
+from . import version
 from .theme import BIKE_COLOURS, BIKE_OUTLINE, BRD, CYAN, ORANGE, PAL, PAD, PINK, RAD
 
 #: Minimum tappable edge, in logical pixels. Bigger than Material's 48.
@@ -139,8 +140,9 @@ def icon_button(icon, on_click, tooltip="", lit=False):
         content=ft.Icon(icon, size=24, color=p["accent"] if lit else p["text"]))
 
 
-def pill(text="Navi"):
+def pill(text=None):
     """The identity, and the only gradient in the app."""
+    text = version.NAME if text is None else text
     return ft.Container(
         padding=PAD(4, 12), border_radius=RAD(10),
         gradient=ft.LinearGradient(colors=[ORANGE, PINK, CYAN],

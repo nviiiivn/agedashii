@@ -1178,6 +1178,18 @@ class TheRidePage(_Clean):
         self.speeding_fix()
         self.assertEqual(self.played[-1], [("clip", fast, None)])
 
+    def test_no_banter_on_the_turn_where_she_goes_over(self):
+        # The speeding line waits for a quiet fix, but the turn it was held
+        # from is still a mistake fix: no "haha" on it, and no scold glued on.
+        turn, far = self.add("turn-left"), self.add("dist-400ft")
+        self.add("speeding")
+        self.flourishes({"banter": {"flourish-banter-haha": "/v/haha.mp3"},
+                         "scold": {"flourish-scold-drunk": "/v/drunk.mp3"}})
+        prefs.set_value("voice", True)
+        self.speeding_fix("In 400 ft, turn left", fired("turn left"))
+        self.assertEqual(self.played, [[("clip", far, "In 400 ft,"),
+                                        ("clip", turn, "turn left")]])
+
     def test_owed_speeding_is_forgotten_when_she_slows(self):
         self.add("speeding")
         prefs.set_value("voice", True)

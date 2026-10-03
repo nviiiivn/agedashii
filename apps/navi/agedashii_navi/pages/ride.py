@@ -117,9 +117,9 @@ def _announce(out, limit):
     """
     cues = _M.setdefault("cues", voicelines.Cues())
     over = guidance.over_limit(live.LIVE.get("speed_ms"), limit)
-    names = cues.update(out.get("status"), live.LIVE.get("dest"),
+    fired = cues.update(out.get("status"), live.LIVE.get("dest"),
                         out.get("reroute"), over, time.time())
-    names = _speeding_alone(names, out, over)
+    names = _speeding_alone(fired, out, over)
     if not prefs.voice():
         return []
     # Every clip through character.clip: her recording, else his wild line,
@@ -130,7 +130,10 @@ def _announce(out, limit):
                   for item in voicelines.situation(name, character.clip)]
     # His lines are chosen first: how many there are is part of the prompt's
     # shape, which the Arranger never repeats twice running.
-    lines = character.flourishes(names, parts)
+    # Moods from the cues as they FIRED: a speeding edge held back from this
+    # turn still rules out banter on it - "haha" as she goes over the limit
+    # (AGEDASHII's ruling).
+    lines = character.flourishes(names, parts, fired)
     prompt = []
     if out.get("say"):
         piece = voicelines.core(parts, lambda name: character.clip(name, band),

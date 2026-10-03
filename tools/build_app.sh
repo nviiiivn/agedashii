@@ -46,7 +46,7 @@ case "$APP" in
   *) echo "usage: $0 <tofu|moto|watudo|foodzen|navi> [apk] [linux] [web] [ipa]" >&2; exit 2 ;;
 esac
 
-TC="${TC:-/home/nvii/flet-toolchain}"
+TC="${TC:-/home/nvii/agedashii/flet-toolchain}"
 export JAVA_HOME="$TC/jdk17"
 export ANDROID_HOME="$TC/android-sdk"
 export ANDROID_SDK_ROOT="$TC/android-sdk"
@@ -212,6 +212,16 @@ if [ -n "${AGEDASHII_ICON:-}" ] && [ "${AGEDASHII_ICON}" != "default" ]; then
   fi
 fi
 
+# The adaptive icon's background is the artwork's OWN ground, so no ring of
+# another colour can show round it on a launcher whose mask is a touch wider
+# than the foreground. The default artwork's is in its pyproject
+# ([tool.flet.android] adaptive_icon_background); an alternate with a
+# different ground overrides it here. Sampled from each master's corners.
+ICON_BG=""
+case "$ICON_ID" in
+  navi-ex) ICON_BG="#FDFDFE" ;;
+esac
+
 if [ -f "$ICONS/$ICON_ID-1024.png" ]; then
   cp "$ICONS/$ICON_ID-1024.png" "$STAGE/assets/icon.png"
   cp "$ICONS/$ICON_ID-192.png"  "$STAGE/assets/icons/icon-192.png"
@@ -370,7 +380,9 @@ PYEOF
 
   # $SIGN and $VER are deliberately unquoted: they are lists of arguments, not
   # single strings.
-  time flet build "$T" --yes -o "dist/$T" --exclude .git dist build .venv $EXTRA $SIGN $VER
+  BG=""
+  [ -n "$ICON_BG" ] && [ "$T" = apk ] && BG="--android-adaptive-icon-background $ICON_BG"
+  time flet build "$T" --yes -o "dist/$T" --exclude .git dist build .venv $EXTRA $SIGN $VER $BG
   rc=$?
   if [ $rc -ne 0 ]; then
     echo "!!! $APP $T FAILED rc=$rc"

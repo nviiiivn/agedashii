@@ -33,10 +33,12 @@ from typing import Optional
 import flet as ft
 import flet_geolocator as fgeo
 
+from . import version
+
 #: What the ongoing notification says. It is visible on purpose: a phone
 #: reporting its position with nothing on screen saying so would be both a
 #: battery surprise and a privacy one (POST_NOTIFICATIONS, pyproject.toml).
-TITLE = "Agedashii Navi"
+TITLE = version.NAME
 TEXT = "Using GPS - guidance and the ride log keep going with the screen off"
 CHANNEL = "Navigation"
 

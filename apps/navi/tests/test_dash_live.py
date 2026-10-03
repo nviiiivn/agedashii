@@ -174,6 +174,52 @@ def walk(node, seen=None):
         yield from walk(child, seen)
 
 
+class ItCallsItselfXnavF(unittest.TestCase):
+    """Hers: "Call one xnav.k for kotlin and the other xnav.f for flet". With
+    both installed, everything she can see names this one xnav.f - above all
+    the GPS notification that says which app holds her location."""
+
+    def test_the_launcher_label_and_the_app_say_the_same(self):
+        import tomllib
+        from agedashii_navi import version
+        with open(APP_DIR / "pyproject.toml", "rb") as f:
+            flet = tomllib.load(f)["tool"]["flet"]
+        self.assertEqual(version.NAME, "xnav.f")
+        self.assertEqual(flet["product"], version.NAME)
+        self.assertEqual(flet["bundle_id"], "online.iamprettyfamous.agedashii.navi",
+                         "the id must not move: both apps install side by side")
+
+    def test_the_notification_help_and_the_log_say_it(self):
+        from agedashii_navi import location, telemetry, ui, version
+        from agedashii_navi.pages import help as help_page
+        from tests.test_road_test import Page, texts
+        self.assertEqual(location.TITLE, version.NAME)
+        self.assertIn(version.NAME, texts(help_page.build(Page())))
+        self.assertIn(version.NAME, texts(ft.Column(controls=[ui.pill()])))
+        # The GPX creator is NOT the label: a shared file format, and xnav.k's
+        # golden test compares it byte for byte.
+        self.assertIn('creator="Agedashii Navi"', telemetry.Ride(path=None).to_gpx())
+
+    def test_the_adaptive_icon_ground_is_the_artworks_own(self):
+        import re
+        import tomllib
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow is not installed here")
+        icons = APP_DIR.parents[1] / "assets" / "icons"
+
+        def ground(name):
+            r, g, b = Image.open(icons / name).convert("RGB").getpixel((2, 2))
+            return f"#{r:02X}{g:02X}{b:02X}"
+
+        with open(APP_DIR / "pyproject.toml", "rb") as f:
+            android = tomllib.load(f)["tool"]["flet"]["android"]
+        self.assertEqual(android["adaptive_icon_background"], ground("navi-1024.png"))
+        script = (APP_DIR.parents[1] / "tools" / "build_app.sh").read_text()
+        self.assertIn(f'navi-ex) ICON_BG="{ground("navi-ex-1024.png")}"', script)
+
+
 class AnEmptyGaugeSaysWhy(unittest.TestCase):
     def words(self, control):
         return " | ".join(texts(ft.Column(controls=[control])))

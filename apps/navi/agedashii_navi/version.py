@@ -27,6 +27,14 @@ whatever it describes, and the publish step reads it straight from here rather
 than being told separately.
 """
 
+#: What the app calls itself wherever she can see it - the page title, the
+#: GPS notification, the loading screen, Help. Hers: "Call one xnav.k for
+#: kotlin and the other xnav.f for flet": with both installed she must tell
+#: them apart at a glance, above all in the notification that says which one
+#: holds her location. The launcher label is pyproject.toml's `product`, kept
+#: equal to this by a test.
+NAME = "xnav.f"
+
 VERSION_NAME = "1.23.0"
 VERSION_CODE = 26093002
 

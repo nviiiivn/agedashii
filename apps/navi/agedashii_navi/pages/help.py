@@ -39,7 +39,7 @@ def build(page, go=None):
 
     return ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, controls=[
         ft.Row(spacing=10, controls=[
-            ui.pill("Navi"),
+            ui.pill(),
             ft.Text(TITLE, size=ui.BIG, weight=ft.FontWeight.W_800,
                     color=p["text"])]),
 

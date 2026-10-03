@@ -33,10 +33,11 @@ def clip(name, band=None):
                         character=prefs.flourishes(), band=band)
 
 
-def mood(names, parts):
+def mood(names, parts, fired=()):
     """The flourish mood for this moment, with the angry line's minute bar."""
     return voicelines.flourish_mood(names, parts,
-                                    angry_ok=FLOURISH.angry_ok(time.time()))
+                                    angry_ok=FLOURISH.angry_ok(time.time()),
+                                    fired=fired)
 
 
 def _maneuver(parts):
@@ -54,7 +55,7 @@ def flourish(mood, parts=None):
     return [("flourish", pick[1], None)] if pick else []
 
 
-def flourishes(names, parts):
+def flourishes(names, parts, fired=()):
     """His lines after a prompt: none, one, or two ("do it now" + "damn it").
 
     The first as it always was (voicelines.flourish_mood, its rate, one per
@@ -63,12 +64,12 @@ def flourishes(names, parts):
     """
     if (parts or {}).get("then"):
         return []                   # "and then" is the whole of that prompt
-    first = flourish(mood(names, parts), parts)
+    first = flourish(mood(names, parts, fired), parts)
     if not first:
         return []
     now = time.time()
     pools = {m: voice_import.flourishes(m) for m in voicelines.second_moods(
-        names, parts, angry_ok=FLOURISH.angry_ok(now))}
+        names, parts, angry_ok=FLOURISH.angry_ok(now), fired=fired)}
     pick = FLOURISH.second(pools, FLOURISH.last, now=now)
     return first + ([("flourish", pick[1], None)] if pick else [])
 

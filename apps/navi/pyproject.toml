@@ -62,7 +62,10 @@ dependencies = [
 include = ["agedashii_navi*"]
 
 [tool.flet]
-product = "Agedashii Navi"
+# The launcher label - what the phone shows under the icon. Hers: "Call one
+# xnav.k for kotlin and the other xnav.f for flet". Only the label: the bundle
+# id below is unchanged, so the two apps still install side by side.
+product = "xnav.f"
 org = "online.iamprettyfamous"
 # Pinned rather than composed, so the identity the OS installs under cannot
 # drift with a directory rename. Its own bundle id means its own
@@ -76,6 +79,15 @@ copyright = "Copyright (c) 2026 nvii"
 [tool.flet.dev_packages]
 agedashii-qi = "../../packages/agedashii-qi"
 agedashii-washi = "../../packages/agedashii-washi"
+
+[tool.flet.android]
+# The adaptive icon's background, under her artwork's inset foreground: the
+# artwork's OWN dark ground (the corners of navi-1024), not flutter's white.
+# The foreground covers 68% of the width and a round mask shows ~66.7%, so a
+# launcher with a slightly larger mask drew a thin white ring (minion 1, from
+# aapt2 on the built APK). Same colour as xnav.k's. The alternate artwork has
+# a white ground and gets its own in tools/build_app.sh.
+adaptive_icon_background = "#0D1117"
 
 [tool.flet.android.permission]
 # Location, at the accuracy a route needs. COARSE is listed as well because

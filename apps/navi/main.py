@@ -38,7 +38,7 @@ from agedashii_washi import config
 from agedashii_washi import prefs as wprefs
 
 from agedashii_navi import (awake, boot, character, live, prefs, sensors,
-                            theme, ui)
+                            theme, ui, version)
 from agedashii_navi.pages import diagnostics as diagnostics_page
 from agedashii_navi.pages import help as help_page
 from agedashii_navi.pages import log as log_page
@@ -100,7 +100,7 @@ _HERE = {"key": "ride"}
 
 async def main(page):
     # Without this the window, the taskbar and alt-tab all say "flet".
-    page.title = "Agedashii Navi"
+    page.title = version.NAME
     # Flet's Page defaults to Padding.all(10), which would put a pale border
     # around a map that is supposed to reach the edges of the screen.
     page.padding = 0
@@ -213,7 +213,7 @@ async def main(page):
                     # a square PNG shown square, so nothing is cut off the way
                     # the launcher crops it.
                     ft.Image(src=prefs.icon_asset(), width=132, height=132,
-                             fit=ft.BoxFit.CONTAIN, error_content=ui.pill("Navi")),
+                             fit=ft.BoxFit.CONTAIN, error_content=ui.pill()),
                     ft.Text(label, size=20, weight=ft.FontWeight.W_800,
                             color="#f2f6fb"),
                     ft.Text(f"{step} of {total}" if total else "", size=12,

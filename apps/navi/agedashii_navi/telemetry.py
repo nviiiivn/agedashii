@@ -522,6 +522,9 @@ class Ride:
         """
         rows = self.samples if rows is None else rows
         head = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+                # "Agedashii Navi", not xnav.f: the file format is shared
+                # with xnav.k and the family's tools, and Kotlin's golden test
+                # compares byte for byte (AGEDASHII's call).
                 '<gpx version="1.1" creator="Agedashii Navi" '
                 'xmlns="http://www.topografix.com/GPX/1/1" '
                 'xmlns:navi="https://alola.lol/navi/1">\n'

@@ -901,7 +901,7 @@ class TheBar(unittest.TestCase):
         boot.reset()
         page = StubPage()
         asyncio.run(self.main.main(page))
-        self.assertEqual(page.title, "Agedashii Navi")
+        self.assertEqual(page.title, "xnav.f")
         self.assertTrue(callable(getattr(page, "_navi_rerender", None)))
         self.assertTrue(any(getattr(fn, "__name__", "") == "boot_then_open"
                             for fn, _args in page.tasks),

@@ -458,7 +458,7 @@ P_SECOND = 0.35
 ANGRY_EVERY_S = 60.0
 
 
-def flourish_mood(names, parts, angry_ok=True):
+def flourish_mood(names, parts, angry_ok=True, fired=()):
     """Which pool this moment draws from, or None for no flourish.
 
     Always LAST, after the whole instruction, so it never delays one. By band,
@@ -472,7 +472,7 @@ def flourish_mood(names, parts, angry_ok=True):
     The arrive maneuver's far and near prompts get no line at all.
     `angry_ok` False (inside ANGRY_EVERY_S) passes over angry to the next.
     """
-    moods = flourish_moods(names, parts, angry_ok)
+    moods = flourish_moods(names, parts, angry_ok, fired)
     return moods[0] if moods else None
 
 
@@ -481,9 +481,11 @@ def _arriving(parts):
         "kind" not in parts and maneuver_name(parts.get("instruction")) == "arrive")
 
 
-def flourish_moods(names, parts, angry_ok=True):
+def flourish_moods(names, parts, angry_ok=True, fired=()):
     """Every mood this moment allows, best first (see flourish_mood, which
-    is the first of these)."""
+    is the first of these). `fired` is the cues as they FIRED on this fix,
+    when some are held back from `names` (ride._speeding_alone): a mistake
+    among them still rules out banter."""
     parts = parts or {}
     arriving = _arriving(parts)
     band = parts.get("band")
@@ -493,7 +495,8 @@ def flourish_moods(names, parts, angry_ok=True):
         return ["urgent"] if parts else []
     if arriving and parts:
         return []                   # arriving's line is for being there
-    mistake = any(n in names for n in ("offroute", "rerouting", "speeding"))
+    mistake = any(n in names or n in fired
+                  for n in ("offroute", "rerouting", "speeding"))
     moods = []
     if ("offroute" in names or "rerouting" in names) and angry_ok:
         moods.append("angry")
@@ -511,7 +514,7 @@ def flourish_moods(names, parts, angry_ok=True):
     return moods
 
 
-def second_moods(names, parts, angry_ok=True):
+def second_moods(names, parts, angry_ok=True, fired=()):
     """Where a SECOND flourish may come from: the moods this moment allows,
     and nothing more - a mood matches what she DID, so angry and scold only
     ever follow the situation that earned them, never a plain turn
@@ -521,7 +524,7 @@ def second_moods(names, parts, angry_ok=True):
     now")."""
     if (parts or {}).get("band") == "now" or "start" in names:
         return []
-    return flourish_moods(names, parts, angry_ok)
+    return flourish_moods(names, parts, angry_ok, fired)
 
 
 #: How many of a pool's recent lines are held back: the last k of a pool of
