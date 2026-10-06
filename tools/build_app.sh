@@ -46,7 +46,7 @@ case "$APP" in
   *) echo "usage: $0 <tofu|moto|watudo|foodzen|navi> [apk] [linux] [web] [ipa]" >&2; exit 2 ;;
 esac
 
-TC="${TC:-/home/nvii/agedashii/flet-toolchain}"
+TC="${TC:-/home/nvii/projects/agedashii/flet-toolchain}"
 export JAVA_HOME="$TC/jdk17"
 export ANDROID_HOME="$TC/android-sdk"
 export ANDROID_SDK_ROOT="$TC/android-sdk"
