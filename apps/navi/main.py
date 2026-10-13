@@ -38,7 +38,7 @@ from agedashii_washi import config
 from agedashii_washi import prefs as wprefs
 
 from agedashii_navi import (awake, boot, character, live, prefs, sensors,
-                            theme, ui, version)
+                            speech, theme, ui, version)
 from agedashii_navi.pages import diagnostics as diagnostics_page
 from agedashii_navi.pages import help as help_page
 from agedashii_navi.pages import log as log_page
@@ -131,13 +131,27 @@ async def main(page):
     page.run_task(awake.follow, page, True)
 
     def on_lifecycle(e):
-        """Back to the front: hold the screen again.
+        """Back to the front: hold the screen again. On the way out: goodbye.
 
         The flag lives on the activity's window, and a window Android rebuilt
         while she was elsewhere comes back without it.
+
+        DETACH is the app actually going away, and it is the only lifecycle
+        state that counts as quitting. PAUSE and HIDE fire every time she
+        glances at a message, and saying "hasta la vista, baby" at her for
+        that would be the same mistake as saying it when she ARRIVES. Android
+        gives no graceful exit, so the clip may be cut short; her rule asks
+        for it on quit, so it is asked for here.
         """
         if e.state == ft.AppLifecycleState.RESUME:
             page.run_task(awake.follow, page, True)
+        elif e.state == ft.AppLifecycleState.DETACH:
+            try:
+                items = character.farewell()
+                if items:
+                    speech.play(items)
+            except Exception:
+                pass            # never let a goodbye hold up a teardown
 
     page.on_app_lifecycle_state_change = on_lifecycle
 

@@ -438,7 +438,13 @@ FLOURISH_RATE = {"urgent": 0.25, "arrival": 1.0, "start": 1.0,
                  # thin fast. Minion 2's Kotlin number, kept identical.
                  "ui": 0.15,
                  # Kind lines on a correct turn, far or near. Kotlin's number.
-                 "banter": 0.25}
+                 "banter": 0.25,
+                 # Leaving: she quit, or stopped the GPS, or stopped
+                 # recording. Always, because it is the last thing he says -
+                 # and flourish_moods can never return this mood, so nothing
+                 # on the road can reach it. Her rule: "HASTA LA VISTA BABY
+                 # should only play when i quit or when i stop gps/recording".
+                 "farewell": 1.0}
 #: Her cough, "now and then": inside the instruction - in the middle of the
 #: maneuver line when it comes in halves ("continue *cough* straight"), else
 #: in the join between the distance and the turn. Rarer than any flourish,

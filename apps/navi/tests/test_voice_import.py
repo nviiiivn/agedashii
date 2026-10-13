@@ -502,13 +502,18 @@ class Flourishes(_Case):
         self.assertEqual(st["unknown"], [])
         self.assertIn("2 character lines", vi.status_text())
 
-    def test_the_moods_are_the_agreed_eight(self):
+    def test_the_moods_are_the_agreed_nine(self):
         # banter: AGEDASHII's ruling after minion 1's Flet rides; Kotlin reads
         # the same flourish-banter-* files.
+        # farewell: her rule, "HASTA LA VISTA BABY should only play when i
+        # quit or when i stop gps/recording" - its OWN mood, not part of
+        # arrival, which is turning up somewhere rather than leaving.
         self.assertEqual(vi.FLOURISH_MOODS,
                          ("start", "arrival", "angry", "urgent", "scold", "sorry",
-                          "ui", "banter"))
+                          "ui", "banter", "farewell"))
         self.assertEqual(vi._canonical("flourish-banter-haha"), "flourish-banter-haha")
+        self.assertEqual(vi._canonical("flourish-farewell-hasta-la-vista"),
+                         "flourish-farewell-hasta-la-vista")
 
     def test_sorry_is_a_mood(self):
         result = vi.import_files([_write(self.src, "flourish-sorry-my-bad.mp3")])
@@ -781,7 +786,7 @@ class TheTheatreCard(_Case):
     def test_every_mood_and_the_cough_in_ride_order(self):
         order = [mood for mood, *_rest in vi.theatre()]
         self.assertEqual(order, ["start", "banter", "urgent", "angry", "scold", "sorry",
-                                 "arrival", "ui", "cough"])
+                                 "arrival", "ui", "farewell", "cough"])
         self.assertEqual(sorted(order[:-1]), sorted(vi.FLOURISH_MOODS))
 
     def test_how_often_is_the_rides_own_rate(self):

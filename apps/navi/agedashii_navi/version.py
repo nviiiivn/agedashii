@@ -35,8 +35,8 @@ than being told separately.
 #: equal to this by a test.
 NAME = "xnav.f"
 
-VERSION_NAME = "1.23.0"
-VERSION_CODE = 26093002
+VERSION_NAME = "1.24.0"
+VERSION_CODE = 26101201
 
 
 def label():

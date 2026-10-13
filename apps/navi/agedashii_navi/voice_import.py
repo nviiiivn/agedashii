@@ -102,8 +102,14 @@ _NAMED_FEET = {"dist-quarter": 1320.0, "dist-half": 2640.0}
 #: "banter" is the eighth: lines true and kind in any moment ("haha", "trust
 #: me", "no problemo") - the app enjoying itself WITH her on a correct turn,
 #: never at her expense (AGEDASHII's ruling after minion 1's Flet rides).
+#: "farewell" is the ninth, and it is NOT arrival. Her rule, 2026-10-12:
+#: "HASTA LA VISTA BABY should only play when i quit or when i stop gps/
+#: recording". Arriving somewhere is not leaving, so the hasta clips were
+#: taken out of the arrival pool and renamed into this one. Nothing on the
+#: road ever asks for this mood - voicelines.flourish_moods cannot return it -
+#: so it fires only where the code says goodbye.
 FLOURISH_MOODS = ("start", "arrival", "angry", "urgent", "scold", "sorry", "ui",
-                  "banter")
+                  "banter", "farewell")
 _FLOURISH = re.compile(r"^flourish-(" + "|".join(FLOURISH_MOODS) + r")-([a-z0-9-]+)$")
 #: Sounds that drop INTO a prompt rather than beside it - a cough between the
 #: distance and the turn: interject-<slug>. Also extras, never "missing".
@@ -754,6 +760,8 @@ THEATRE = (
     ("sorry", "Sorry", "after saying a re-route could not be made"),
     ("arrival", "Arriving", "the last prompt, at the destination"),
     ("ui", "In the app", "tapping into search, or picking a destination"),
+    ("farewell", "Leaving", "quitting the app, or stopping the GPS or the "
+                            "recording - never on arriving"),
 )
 COUGH = ("Cough", "inside a turn - \"continue *cough* straight\" - or "
                   "between the distance and the turn")

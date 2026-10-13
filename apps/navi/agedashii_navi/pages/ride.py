@@ -1005,11 +1005,25 @@ def build(page, go=None):
         await sensors.battery_level()
         _M["battery_at"] = time.time()
 
+    def _farewell():
+        """"Hasta la vista, baby" - and only here.
+
+        Her rule, 2026-10-12: "HASTA LA VISTA BABY should only play when i
+        quit or when i stop gps/recording". It used to be an ARRIVAL line,
+        where it said goodbye to someone who had just turned up. The clips
+        now live in their own mood, which no moment on the road can reach, so
+        this is the only place in the app that plays them.
+        """
+        items = character.farewell()
+        if items:
+            speech.play(items)
+
     def _toggle_record(_e=None):
         if live.recording():
             summary = live.stop_recording()
             if summary:
                 page.run_task(_upload, summary)
+            _farewell()
         else:
             live.start_recording()
             page.run_task(location.ask_notifications, page)
@@ -1017,7 +1031,10 @@ def build(page, go=None):
         _rerender(page)
 
     def _toggle_gps(_e=None):
+        going_off = prefs.gps()
         prefs.set_value("gps", not prefs.gps())
+        if going_off:
+            _farewell()
         page.run_task(_save_prefs)
         _rerender(page)
 

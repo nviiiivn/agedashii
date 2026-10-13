@@ -55,6 +55,19 @@ def flourish(mood, parts=None):
     return [("flourish", pick[1], None)] if pick else []
 
 
+def farewell():
+    """His goodbye - "hasta la vista, baby" - or [].
+
+    Her rule, 2026-10-12: "HASTA LA VISTA BABY should only play when i quit or
+    when i stop gps/recording". It used to be an ARRIVAL line, which said
+    goodbye to someone who had just turned up. The clips are now a mood of
+    their own, which voicelines.flourish_moods can never return, so the only
+    way to hear one is to call this: stopping the GPS, stopping a recording,
+    or quitting the app.
+    """
+    return flourish("farewell")
+
+
 def flourishes(names, parts, fired=()):
     """His lines after a prompt: none, one, or two ("do it now" + "damn it").
 

@@ -1619,3 +1619,25 @@ class TheSettingsPage(_Clean):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheGoodbyeIsNotAnArrival(unittest.TestCase):
+    """Her rule, 2026-10-12: "HASTA LA VISTA BABY should only play when i quit
+    or when i stop gps/recording". It had been an ARRIVAL line, so it said
+    goodbye to someone who had just turned up."""
+
+    def test_no_moment_on_the_road_can_reach_the_farewell_mood(self):
+        for band in ("far", "near", "now", None):
+            for names in (("arrive",), ("offroute",), ("speeding",), ("start",),
+                          ("rerouting",), ("offroute", "speeding"), ()):
+                for parts in ({"band": band, "kind": "arrive"},
+                              {"band": band, "kind": "turn"},
+                              {"band": band}, {}):
+                    with self.subTest(band=band, names=names, kind=parts.get("kind")):
+                        self.assertNotIn("farewell",
+                                         voicelines.flourish_moods(names, parts))
+                        self.assertNotIn("farewell",
+                                         voicelines.second_moods(names, parts))
+
+    def test_it_plays_every_time_it_is_asked_for(self):
+        self.assertEqual(voicelines.FLOURISH_RATE["farewell"], 1.0)
