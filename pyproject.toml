@@ -75,3 +75,20 @@ NSLocationWhenInUseUsageDescription = "Agedashii uses your location to show wher
 NSLocationAlwaysAndWhenInUseUsageDescription = "Agedashii keeps reading your location while a ride is recording, including when the screen is off."
 NSCameraUsageDescription = "Agedashii uses the camera to photograph a meal or a nutrition label."
 NSPhotoLibraryUsageDescription = "Agedashii reads a photo you choose of a meal or a nutrition label."
+
+# A pin, because pub resolved a combination that cannot compile.
+#
+# Flet 0.86.5 writes `jni: 1.0.0` into the generated pubspec.yaml - an exact
+# version - but leaves jni_flutter floating. jni_flutter 1.0.4+1 was published
+# and its generated bindings assert at COMPILE time:
+#
+#   const _$jniVersionCheck = jni$_.JniVersionCheck(1, 1);
+#   Error: Constant evaluation error: The generated bindings expect
+#   package:jni ^1.1.0, but 1.0.x was imported.
+#
+# so every APK build failed in kernel_snapshot_program with no change to our
+# code at all. 1.0.3 is the version that built every APK before it and the one
+# the working build's pubspec.lock holds. Pinning jni_flutter rather than
+# raising jni leaves Flet's own pin alone.
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni_flutter = "1.0.3"
