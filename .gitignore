@@ -10,3 +10,4 @@ dist/
 # tools/build_app.sh; NEVER committed - this repo also pushes to GitHub, and
 # she said: only for her, not GitHub.
 assets/voice/
+assets/voice-held/

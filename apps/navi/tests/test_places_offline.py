@@ -423,5 +423,92 @@ class TheBuilder(unittest.TestCase):
         self.assertEqual(build_places.centre(square), (1.0, 1.0))
 
 
+class ATypedAddress(unittest.TestCase):
+    """Her report: "I TRIED LITERALLY PUTTING IN AN ADDRESS AND THE APP
+    WOULDN'T TAKE ME THERE -- I COULDN'T FIGURE OUT WHICH GOODWILL WAS THE ONE
+    I WANTED SO I PUT IN THE ADDRESS AND IT WOULDNT' LET ME DO THAT". An
+    address is neither the name of a place nor the name of a street, so both
+    offline searches returned nothing at all for one."""
+
+    def test_the_parts_of_an_envelope_address(self):
+        for typed, label, street, town in [
+            ("4919 Telegraph Ave, Oakland", "4919 Telegraph Avenue",
+             "telegraph avenue", "oakland"),
+            ("2201 Broadway, Oakland, CA 94612", "2201 Broadway", "broadway", "oakland"),
+            ("500 N First St, San Jose", "500 North First Street",
+             "north first street", "san jose"),
+            # The unit and everything after it goes, as a phrase: dropping
+            # "Apt" alone left a stray "4" welded to the street name.
+            ("1234 Grand Ave Apt 4, Alameda", "1234 Grand Avenue",
+             "grand avenue", "alameda"),
+            ("1500 SE 12th Pl, Renton WA 98055", "1500 Southeast 12th Place",
+             "southeast 12th place", "renton"),
+            # Her own capitals survive; title() alone would say "Macarthur".
+            ("MacArthur Blvd", "MacArthur Boulevard", "macarthur boulevard", ""),
+        ]:
+            with self.subTest(typed=typed):
+                found = places.parse_address(typed)
+                self.assertIsNotNone(found, typed)
+                self.assertEqual(found["label"], label)
+                self.assertEqual(found["street"], street)
+                self.assertEqual(found["town"], town)
+
+    def test_what_is_not_an_address_stays_a_place_search(self):
+        for typed in ["goodwill", "Chabot Space Science Center", "ikea emeryville",
+                      "37.8044,-122.2712", "geo:37.8,-122.2", "88", "", "   ",
+                      "https://maps.example/@37.8,-122.2"]:
+            with self.subTest(typed=typed):
+                self.assertIsNone(places.parse_address(typed))
+
+    def test_a_town_is_the_settlement_and_not_the_taqueria(self):
+        """San Jose is also a taqueria and a public toilet in the real list,
+        and the taqueria outranked the city as the anchor for a San Jose
+        address."""
+        path = places.places_path()
+        if path is None:
+            self.skipTest("no places list in this checkout")
+        found = places.town_centre("san jose", near=OAKLAND, path=path)
+        self.assertIsNotNone(found)
+        self.assertAlmostEqual(found[0], 37.336, places=2)
+        self.assertAlmostEqual(found[1], -121.891, places=2)
+        self.assertIsNone(places.town_centre("zzznowhere at all", near=OAKLAND, path=path))
+
+    def test_an_address_finds_its_street_on_the_real_graph(self):
+        rg = REPO / "assets" / "maps" / "bayarea.rg"
+        if not rg.is_file() or places.places_path() is None:
+            self.skipTest("the 86 MB graph is not in this checkout")
+        from agedashii_washi import routing
+        graph = routing.Graph(str(rg))
+        found = places.parse_address("2201 Broadway, Oakland, CA 94612")
+        rows = places.search_address(found, graph=graph, near=OAKLAND, limit=3)
+        self.assertTrue(rows)
+        # The street she NAMED, not Broadway Terrace, with the number carried
+        # into the row and the detail saying plainly what it is not.
+        self.assertEqual(rows[0]["name"], "2201 Broadway")
+        self.assertIn("no house numbers", rows[0]["detail"])
+        self.assertIn("Oakland", rows[0]["detail"])
+        self.assertLess(rows[0]["dist_m"], 2000, rows[0])
+        self.assertEqual([], places.search_address(
+            places.parse_address("9999 Nonexistent Pkwy, Oakland"),
+            graph=graph, near=OAKLAND))
+
+    def test_the_town_chooses_between_two_streets_of_one_name(self):
+        """street_index keeps one segment per name, so distance alone could
+        not tell Walnut Creek's Main Street from Oakland's."""
+        rg = REPO / "assets" / "maps" / "bayarea.rg"
+        if not rg.is_file() or places.places_path() is None:
+            self.skipTest("the 86 MB graph is not in this checkout")
+        from agedashii_washi import routing
+        graph = routing.Graph(str(rg))
+        creek = places.town_centre("walnut creek", near=OAKLAND)
+        self.assertIsNotNone(creek)
+        rows = places.search_address(places.parse_address("100 Main St, Walnut Creek"),
+                                    graph=graph, near=OAKLAND, limit=4)
+        self.assertTrue(rows)
+        closest = min(places.routing.haversine_m((creek[0], creek[1]),
+                                                 (r["lat"], r["lon"])) for r in rows)
+        self.assertLess(closest, 12000, rows)
+
+
 if __name__ == "__main__":
     unittest.main()

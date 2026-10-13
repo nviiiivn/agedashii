@@ -78,7 +78,7 @@ def build(page, go=None):
     p = PAL()
 
     box = ft.TextField(
-        value=_S["text"], hint_text="street, place, or 37.8044, -122.2712",
+        value=_S["text"], hint_text="address, place, street, or 37.8044, -122.2712",
         text_size=ui.MID, height=ui.TOUCH, border_radius=12,
         border_color=p["border"], focused_border_color=p["accent"],
         color=p["text"], bgcolor=p["surface"], expand=True,
@@ -156,7 +156,22 @@ def build(page, go=None):
         note.value = "searching this device…"
         _update(page)
         here = live.LIVE.get("pos")
-        # Named places first (a museum, a park, a fuel station - the offline
+        # An ADDRESS first, when she typed one. Her words: "I TRIED LITERALLY
+        # PUTTING IN AN ADDRESS AND THE APP WOULDN'T TAKE ME THERE". "4919
+        # Telegraph Ave, Oakland" is neither the name of a place nor the name
+        # of a street, so both of the searches below returned nothing for it.
+        posted = places.parse_address(_S["text"])
+        if posted:
+            rows = await _to_thread(places.search_address, posted, None,
+                                    here, PLACE_ROWS)
+            rows = await _to_thread(places.mark_outside, rows)
+            if rows:
+                _S["rows"] = rows
+                note.value = _S["note"] = ""
+                _paint_results()
+                _update(page)
+                return
+        # Named places next (a museum, a park, a fuel station - the offline
         # list beside the graph), then streets. The graph alone holds only
         # streets, which is why "Chabot Space Science Center" found nothing.
         found, total = await _to_thread(places.search_places, _S["text"], here,

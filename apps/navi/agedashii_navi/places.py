@@ -266,6 +266,237 @@ def search_streets(text, graph=None, limit=12, near=None, timeout=20.0):
     return out[:limit]
 
 
+# ------------------------------------------------- a typed street address
+
+#: What people write on an envelope, and what OSM calls the same thing. Her
+#: words: "I TRIED LITERALLY PUTTING IN AN ADDRESS AND THE APP WOULDN'T TAKE
+#: ME THERE" - she could not tell two Goodwills apart, so she typed the
+#: address of the one she wanted, and search_streets matched street NAMES
+#: only. "4919 Telegraph Ave, Oakland" is not a street name, so it found
+#: nothing and said nothing useful.
+_SUFFIX = {
+    "ave": "avenue", "av": "avenue", "st": "street", "str": "street",
+    "rd": "road", "blvd": "boulevard", "blv": "boulevard", "dr": "drive",
+    "ln": "lane", "ct": "court", "pl": "place", "plz": "plaza",
+    "hwy": "highway", "pkwy": "parkway", "pky": "parkway", "ter": "terrace",
+    "trl": "trail", "cir": "circle", "sq": "square", "expy": "expressway",
+    "wy": "way", "aly": "alley", "byp": "bypass", "cres": "crescent",
+    "xing": "crossing", "mnr": "manor", "gln": "glen", "hts": "heights",
+}
+#: The compass part, which OSM also spells out in full.
+_DIRECTION = {"n": "north", "s": "south", "e": "east", "w": "west",
+              "ne": "northeast", "nw": "northwest", "se": "southeast",
+              "sw": "southwest"}
+#: Anything after the street that is not a town: the state, the ZIP, the
+#: country, the unit. Dropped before the town is read.
+_NOT_A_TOWN = re.compile(r"^(?:[a-z]{2}|\d{5}(?:-\d{4})?|usa|us|united states)$")
+#: The unit and everything after it: "1234 Grand Ave Apt 4" is Grand Avenue.
+#: Cut as a phrase, not word by word - dropping only "apt" leaves a stray "4"
+#: on the end of the street name and nothing matches.
+_UNIT = re.compile(r"[\s,]+(?:apt|apartment|unit|ste|suite|bldg|building"
+                   r"|fl|floor|rm|room|no\.?|#)\b.*$", re.IGNORECASE)
+_HOUSE_NUMBER = re.compile(r"^(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\s+(?=\S)")
+
+
+def _expand(words):
+    """Envelope spelling to OSM spelling, word by word."""
+    out = []
+    for i, w in enumerate(words):
+        if i == 0 and w in _DIRECTION:
+            out.append(_DIRECTION[w])
+        elif i == len(words) - 1 and w in _SUFFIX:
+            out.append(_SUFFIX[w])
+        else:
+            out.append(w)
+    return out
+
+
+def parse_address(text):
+    """{number, street, town, label} from a typed address, or None.
+
+    Offline and total. None means "this does not look like an address", and
+    the ordinary place and street searches should have it instead. A house
+    number is remembered but cannot be found: the routing graph holds street
+    geometry and no address ranges, so the honest answer is the right street
+    with the number shown and said to be an estimate.
+    """
+    raw = (text or "").strip()
+    if len(raw) < 4 or raw.lower().startswith(("geo:", "http")):
+        return None
+    chunks = [c.strip() for c in raw.split(",") if c.strip()]
+    if not chunks:
+        return None
+
+    head = chunks[0]
+    found = _HOUSE_NUMBER.match(head)
+    number = found.group(1).replace(" ", "") if found else ""
+    street_raw = _UNIT.sub("", head[found.end():] if found else head)
+    words = norm_tokens(street_raw)
+    if not words:
+        return None
+    # A bare number, or a number and a town, is not an address we can use.
+    if all(w.isdigit() for w in words):
+        return None
+    # Address-shaped means: a house number in front of a name, or a name that
+    # ends in a street suffix. "goodwill" is neither and stays a place search.
+    suffixed = words[-1] in _SUFFIX or words[-1] in set(_SUFFIX.values())
+    if not number and not suffixed:
+        return None
+    street = " ".join(_expand(words))
+
+    town = ""
+    for c in chunks[1:]:
+        tokens = [w for w in norm_tokens(c)]
+        tokens = [w for w in tokens if not _NOT_A_TOWN.match(w)]
+        if tokens:
+            town = " ".join(tokens)
+            break
+    # Title-cased for the label only, and never over the top of her own
+    # capitals: "MacArthur Blvd" must not come back as "Macarthur".
+    typed = [w for w in re.split(r"[^0-9A-Za-z]+", street_raw) if w]
+    longer = _expand([w.lower() for w in typed])
+    parts = []
+    for short, long in zip(typed, longer):
+        # An abbreviation becomes its full word; anything she capitalised
+        # herself ("MacArthur") is left exactly as she typed it.
+        if long != short.lower():
+            parts.append(long.title())
+        elif short.islower() and not short[0].isdigit():
+            parts.append(short.title())        # "12th" must not become "12Th"
+        else:
+            parts.append(short)
+    shown = " ".join(parts)
+    label = " ".join(x for x in (number, shown) if x)
+    return {"number": number, "street": street, "town": town, "label": label}
+
+
+#: Kinds in the places list that are somewhere people live, biggest first. A
+#: town has to be looked up among these and not through search_places: "San
+#: Jose" is also a taqueria and a public toilet, and the taqueria outranked
+#: the city of a million people as the anchor for "500 N First St, San Jose".
+_SETTLEMENT = ("city", "town", "village", "suburb", "neighbourhood",
+               "locality", "hamlet")
+
+
+def nearest_named(graph, names, point):
+    """{lowercased name: (lat, lon)} - the segment of each name nearest `point`.
+
+    ONE pass over the segment names for all the names at once, which is what
+    street_index already costs once. It is the only way to tell two streets of
+    the same name apart: the index keeps one segment per name, so as far as it
+    is concerned the graph has a single Main Street. Called on the address
+    path only, where she has named a town and is waiting on a search she
+    asked for.
+    """
+    want = {str(n).lower() for n in (names or []) if n}
+    if graph is None or not want or not point:
+        return {}
+    best, gaps = {}, {}
+    try:
+        for sid in range(graph.s):
+            key = (graph.name(sid) or "").lower()
+            if key not in want:
+                continue
+            here = segment_point(graph, sid)
+            if here is None:
+                continue
+            gap = routing.haversine_m(point, here)
+            if key not in gaps or gap < gaps[key]:
+                best[key], gaps[key] = here, gap
+    except (AttributeError, IndexError, UnicodeDecodeError):
+        return best
+    return best
+
+
+def town_centre(name, near=None, path=None):
+    """(lat, lon, name) for a town by name, or None. Offline.
+
+    Biggest kind wins, then nearest to `near`, so "Oakland" is the city and
+    "Washington" near her is the Bay one.
+    """
+    path = path or places_path()
+    words = [w for w in norm_tokens(name) if w]
+    if path is None or not words:
+        return None
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        rows = con.execute(
+            "SELECT name, kind, lat, lon FROM place WHERE kind IN "
+            f"({','.join('?' * len(_SETTLEMENT))}) AND lower(name) = ?",
+            (*_SETTLEMENT, " ".join(words))).fetchall()
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (_SETTLEMENT.index(r[1]),
+                             routing.haversine_m(near, (r[2], r[3])) if near else 0.0))
+    best = rows[0]
+    return (best[2], best[3], best[0])
+
+
+def search_address(info, graph=None, near=None, limit=8, timeout=20.0):
+    """Street rows for a parsed address, nearest the named town first.
+
+    The number is carried into the row's name and the detail says plainly that
+    it is the street and not the door, because the offline graph cannot place a
+    house. Routing to the street beats refusing to route at all: she can see on
+    the map which end she wants once she is on it.
+    """
+    if not info:
+        return []
+    anchor = near
+    town_name = ""
+    if info.get("town"):
+        found = town_centre(info["town"], near=near)
+        if found:
+            anchor, town_name = (found[0], found[1]), found[2]
+    rows = search_streets(info["street"], graph=graph, limit=limit,
+                          near=anchor, timeout=timeout)
+    if not rows:
+        # "Telegraph" when OSM has only "Telegraph Avenue", or the other way
+        # about: try the name without its suffix before giving up.
+        bare = info["street"].rsplit(" ", 1)
+        if len(bare) == 2 and bare[1] in set(_SUFFIX.values()):
+            rows = search_streets(bare[0], graph=graph, limit=limit,
+                                  near=anchor, timeout=timeout)
+    if town_name and rows:
+        # street_index keeps ONE segment per name, so the graph has a single
+        # "Main Street" as far as a search is concerned and sorting by
+        # distance cannot choose between towns: "100 Main St, Walnut Creek"
+        # came back as Oakland's Main Street, twenty miles from the town she
+        # named. With a town to aim at, every segment of each name is measured
+        # in one pass and the nearest to the town wins.
+        if graph is None:
+            graph = routing.graph(timeout=timeout)
+        close = nearest_named(graph, [r["name"] for r in rows], anchor)
+        for row in rows:
+            point = close.get(row["name"].lower())
+            if point is not None:
+                row["lat"], row["lon"] = point
+                row["dist_m"] = routing.haversine_m(anchor, point)
+
+    # The street she NAMED before one that merely starts with it: "Broadway"
+    # came back under "Broadway Terrace" because the Terrace happened to be
+    # nearer, which is not what anyone means by typing 2201 Broadway.
+    # ... and a street that BEGINS with it before one that merely contains
+    # it, so "Main Street" does not have to compete with Pearmain Street.
+    want = info["street"]
+    rows.sort(key=lambda r: (r["name"].lower() != want,
+                             not r["name"].lower().startswith(want),
+                             r["dist_m"] if r["dist_m"] is not None else 9e9))
+    said = ("street only - the offline map has no house numbers"
+            if info.get("number") else "street")
+    for row in rows:
+        if info.get("number"):
+            row["name"] = f"{info['number']} {row['name']}"
+        row["detail"] = " · ".join(x for x in (town_name, said) if x)
+        if near:
+            row["dist_m"] = routing.haversine_m(near, (row["lat"], row["lon"]))
+    return rows
+
+
 # ------------------------------------------------------- the server's list
 
 def db_routes():
