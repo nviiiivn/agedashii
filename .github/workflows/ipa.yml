@@ -42,6 +42,9 @@ env:
   PYTHON_VERSION: "3.12"
   FLET_VERSION: "0.86.5"
 
+permissions:
+  contents: write     # the release the IPAs are published to
+
 jobs:
   ipa:
     runs-on: ${{ inputs.runner }}
@@ -126,8 +129,21 @@ jobs:
                 f"{len(names)} entries, bundle {bundles[:1]}")
           PY
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agedashii-${{ matrix.app }}-ipa
-          path: ${{ runner.temp }}/tc/out/${{ matrix.app }}/*.ipa
-          if-no-files-found: error
+      # Onto a release, not an Actions artifact: the account's artifact
+      # storage is full ("Artifact storage quota has been hit", 2026-10-20),
+      # and release assets do not count against it. One prerelease per
+      # branch, each app's .ipa replaced in place by the next build. The repo
+      # is private, so the release is too.
+      - name: Publish the IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TC: ${{ runner.temp }}/tc
+        run: |
+          tag="ipa-${GITHUB_REF_NAME}"
+          # Five jobs race to create it; whichever loses finds it made.
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --prerelease \
+            --target "$GITHUB_SHA" --title "iPhone and iPad builds ($GITHUB_REF_NAME)" \
+            --notes "Unsigned IPAs for AltStore or SideStore, which sign them on install." \
+            || gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$TC/out/${{ matrix.app }}/agedashii-${{ matrix.app }}.ipa"
