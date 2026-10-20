@@ -57,6 +57,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The image defaults to Xcode 16.4, and the iOS plugins flet pulls in
+      # now call iOS 26 APIs: device_info_plus 12.4 asks NSProcessInfo for
+      # isiOSAppOnVision, which only the iOS 26 SDK declares (2026-10-20).
+      # Take the newest Xcode the image has rather than naming one, so the
+      # next image update does not need an edit here.
+      - name: Use the newest Xcode
+        run: |
+          x="$(python3 -c 'import glob, re; print(max(glob.glob("/Applications/Xcode_[0-9]*.app"), key=lambda p: [int(n) for n in re.findall(r"\d+", p)]))')"
+          sudo xcode-select -s "$x"
+          xcodebuild -version
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
