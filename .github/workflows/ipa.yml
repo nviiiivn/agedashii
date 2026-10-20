@@ -25,9 +25,15 @@ on:
       apps:
         description: 'JSON list of apps, e.g. ["moto"]'
         default: '["tofu", "moto", "watudo", "foodzen", "navi"]'
+      # macOS arm64 runners sometimes sit queued until GitHub gives up on
+      # them ("not acquired by Runner of type hosted", 2026-10-20). The Intel
+      # pool is a separate queue, so it is the place to retry.
+      runner:
+        description: 'macos-latest, or macos-15-intel when arm64 will not start'
+        default: 'macos-latest'
 
 concurrency:
-  group: ipa-${{ github.ref }}
+  group: ipa-${{ github.ref }}-${{ inputs.runner }}
   cancel-in-progress: true
 
 env:
@@ -38,7 +44,7 @@ env:
 
 jobs:
   ipa:
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner }}
     # One job per app rather than one job building them all. A matrix gives each
     # app its own runner, its own log and its own artifact, so Foodzen
     # failing does not cost Moto's build - which matters when the runner is
