@@ -52,6 +52,19 @@ class _FlatForeground(fgeo.GeolocatorAndroidConfiguration):
     foreground_notification_channel_name: Optional[str] = None
     foreground_notification_enable_wake_lock: bool = False
     foreground_notification_set_ongoing: bool = False
+    # iOS reads its own flat keys from the same message (the AppleSettings
+    # branch of that geolocator.dart) and Android ignores them, so one
+    # configuration serves both phones. Background updates also need
+    # UIBackgroundModes "location" in Info.plist (pyproject.toml).
+    #
+    # The defaults are the Dart side's own, on purpose: Flet's encoder leaves
+    # out a field still at its default, and an omitted key gets Dart's
+    # default - so a default that differed from Dart's would be silently
+    # replaced by it. Anything else is set explicitly in android_config.
+    activity_type: fgeo.GeolocatorIosActivityType = fgeo.GeolocatorIosActivityType.OTHER
+    pause_location_updates_automatically: bool = False
+    allow_background_location_updates: bool = True
+    show_background_location_indicator: bool = False
 
 
 #: Whether this launch has had an ANSWER to the notification permission. Once
@@ -192,11 +205,17 @@ def android_config(hz=1, foreground=True):
     """
     common = dict(accuracy=fgeo.GeolocatorPositionAccuracy.HIGH,
                   distance_filter=3,
-                  interval_duration=ft.Duration(milliseconds=int(1000 / max(1, hz))))
+                  interval_duration=ft.Duration(milliseconds=int(1000 / max(1, hz))),
+                  activity_type=fgeo.GeolocatorIosActivityType.AUTOMOTIVE_NAVIGATION)
     if not foreground:
-        return _FlatForeground(**common)        # no keys: no service, no notification
+        # No keys: no service, no notification - and on iOS no stream once
+        # the screen locks.
+        return _FlatForeground(**common, allow_background_location_updates=False)
     return _FlatForeground(
         **common,
+        # iOS: show the blue location pill while the stream runs locked - its
+        # version of the ongoing notification.
+        show_background_location_indicator=True,
         foreground_notification_title=TITLE,
         foreground_notification_text=TEXT,
         foreground_notification_channel_name=CHANNEL,

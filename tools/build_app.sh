@@ -316,7 +316,9 @@ for T in "${TARGETS[@]}"; do
   ANDROID_ONLY="pyjnius"
   [ -f "$STAGE/pyproject.toml.all" ] || cp "$STAGE/pyproject.toml" "$STAGE/pyproject.toml.all"
   cp "$STAGE/pyproject.toml.all" "$STAGE/pyproject.toml"
-  if [ "$T" = web ]; then
+  # The same goes for ipa: pypi.flet.dev has no iOS wheel for pyjnius either,
+  # and the iPhone speaks through speech.py's iOS backend instead.
+  if [ "$T" = web ] || [ "$T" = ipa ]; then
     python3 - "$STAGE/pyproject.toml" "$ANDROID_ONLY" <<'PYEOF'
 import re, sys
 path, names = sys.argv[1], sys.argv[2].split()
@@ -328,7 +330,7 @@ def drop(m):
     return "dependencies = [" + ", ".join(kept) + "]"
 
 open(path, "w").write(re.sub(r"dependencies\s*=\s*\[([^\]]*)\]", drop, s, count=1))
-print(f"    deps:  {', '.join(names)} stripped for web (no Pyodide wheel)")
+print(f"    deps:  {', '.join(names)} stripped (Android-only)")
 PYEOF
   fi
 

@@ -122,3 +122,7 @@ agedashii-washi = "../../packages/agedashii-washi"
 [tool.flet.ios.info]
 NSLocationWhenInUseUsageDescription = "Agedashii Moto uses your location to show where you are on the map and to record a ride."
 NSLocationAlwaysAndWhenInUseUsageDescription = "Agedashii Moto keeps reading your location while a ride is recording, including when the screen is off."
+# Without "location" here iOS suspends the app when the screen locks, and a
+# recording ride becomes a straight line - geolocator only turns background
+# updates on when this key says it may. No "audio": Moto makes no sound.
+UIBackgroundModes = ["location"]

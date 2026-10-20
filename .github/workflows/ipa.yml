@@ -33,7 +33,7 @@ on:
         default: 'macos-latest'
 
 concurrency:
-  group: ipa-${{ github.ref }}-${{ inputs.runner }}
+  group: ipa-${{ github.ref }}-${{ inputs.runner }}-${{ inputs.apps }}
   cancel-in-progress: true
 
 env:

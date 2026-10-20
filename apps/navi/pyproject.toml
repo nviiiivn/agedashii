@@ -46,6 +46,10 @@ dependencies = [
     # silently left pyjnius out of the APK (probe, 2026-09-28: "No module named
     # 'jnius'"). The tests import it lazily and never need it installed.
     "pyjnius",
+    # The iPhone's voice - AVSpeechSynthesizer and AVAudioPlayer, reached the
+    # way pyjnius reaches Android's (speech.IOSBackend). BeeWare's, pure
+    # Python over ctypes, so it needs no iOS wheel and is inert on Android.
+    "rubicon-objc>=0.5,<0.6",
     # Washi is the plumbing, and the two pieces that matter most here are
     # already in it: `tileserver` serves MBTiles off the device over
     # loopback so the map works with the radio off, and `routing` is a
@@ -127,6 +131,18 @@ adaptive_icon_background = "#0D1117"
 "android.hardware.sensor.gyroscope" = false
 "android.hardware.sensor.barometer" = false
 "android.hardware.microphone" = false
+
+# The iPhone and iPad build. Each Usage sentence is shown verbatim in the
+# system prompt. UIBackgroundModes is what keeps guidance alive with the
+# screen locked: "location" lets the GPS stream run on (geolocator only turns
+# background updates on when this key allows it - location.py), and "audio"
+# lets a prompt - his clips or the phone's voice - play while she rides with
+# the phone asleep. Without either, iOS suspends the app at the lock screen.
+[tool.flet.ios.info]
+NSLocationWhenInUseUsageDescription = "xnav uses your location for turn-by-turn guidance and the ride log."
+NSLocationAlwaysAndWhenInUseUsageDescription = "xnav keeps reading your location while a route is active or a ride is recording, including with the screen off."
+NSMicrophoneUsageDescription = "xnav listens to the exhaust note for the loudness meter and RPM estimate, only when you switch it on in Settings."
+UIBackgroundModes = ["location", "audio"]
 
 # A pin, because pub resolved a combination that cannot compile.
 #

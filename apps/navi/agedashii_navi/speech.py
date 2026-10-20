@@ -40,6 +40,7 @@ A different voice later - a character voice, a model - replaces the backend and
 nothing else: callers only ever see say(), voice_active() and STATE.
 """
 import os
+import sys
 import threading
 import time
 
@@ -66,7 +67,10 @@ NO_ENGINE = ("Turns are shown, not spoken: no text-to-speech engine answered. "
 #: No pyjnius: the web and desktop builds, where the Android steps above would
 #: be advice about a phone to someone at a laptop.
 NO_BRIDGE = ("Turns are shown, not spoken: this build cannot reach a voice. "
-             "Only the Android app speaks them.")
+             "Only the phone apps speak them.")
+#: The iPhone with no English voice at all - rare, since iOS ships one.
+NO_VOICE_IOS = ("Turns are shown, not spoken: this phone has no English voice. "
+                "In Settings, Accessibility, Spoken Content, Voices, add English.")
 NO_WORKING_VOICE = ("Turns are shown, not spoken: every voice this phone lists "
                     "failed a test word. In Settings, search \"text-to-speech\", "
                     "open the Google engine's settings, Install voice data, "
@@ -102,7 +106,7 @@ def reset():
     # holding an old engine, could take the next test's prompt.
     _M.update({"backend": None, "worker": None, "pending": None, "urgent": False,
                "wake": threading.Event(), "lock": threading.Lock(),
-               "factory": _android_backend, "gen": object()})
+               "factory": _platform_backend, "gen": object()})
 
 
 class AndroidBackend:
@@ -267,6 +271,91 @@ class AndroidBackend:
                 player.release()
 
 
+class IOSBackend:
+    """AVSpeechSynthesizer, AVAudioPlayer and AVAudioSession, through
+    rubicon-objc - the iPhone's version of AndroidBackend.
+
+    The audio session is what Apple asks a navigation app to use: Playback,
+    so the ring/silent switch and the lock screen do not mute a turn;
+    VoicePrompt mode; and duck-others plus interrupt-spoken-audio, so her
+    music dips and a podcast pauses, then both come back when the session is
+    let go. With UIBackgroundModes "audio" (pyproject.toml) a prompt can
+    start while the phone is asleep in her pocket.
+
+    No test word here. That exists because Google's engine lists voices that
+    say nothing; iOS's built-in voices are on the device and either exist or
+    do not, and `voiceWithLanguage:` answers which.
+    """
+
+    #: AVAudioSessionCategoryOptions: DuckOthers | InterruptSpokenAudioAndMixWithOthers.
+    OPTIONS = 0x2 | 0x11
+    #: AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation: her music
+    #: comes back up when a prompt ends.
+    NOTIFY_OTHERS = 1
+
+    def __init__(self):
+        from rubicon.objc import ObjCClass
+        from rubicon.objc.runtime import load_library
+        load_library("AVFoundation")
+        self._url = ObjCClass("NSURL")
+        self._player_cls = ObjCClass("AVAudioPlayer")
+        self._utterance = ObjCClass("AVSpeechUtterance")
+        self._voices = ObjCClass("AVSpeechSynthesisVoice")
+        self.synth = ObjCClass("AVSpeechSynthesizer").alloc().init()
+        self.session = ObjCClass("AVAudioSession").sharedInstance()
+        # The category constants are NSStrings whose values are their names.
+        if not self.session.setCategory_mode_options_error_(
+                "AVAudioSessionCategoryPlayback", "AVAudioSessionModeVoicePrompt",
+                self.OPTIONS, None):
+            print("[navi] speech: AVAudioSession refused the navigation category",
+                  flush=True)
+        self.voice = None
+
+    def init(self, deadline):
+        """(ok, problem, engine, voice name, offline). Answers at once."""
+        self.voice = self._voices.voiceWithLanguage_("en-US")
+        if self.voice is None:
+            return False, NO_VOICE_IOS, "iOS", "", False
+        return True, "", "iOS", str(self.voice.name), True
+
+    def speak(self, text):
+        u = self._utterance.speechUtteranceWithString_(text)
+        u.setVoice_(self.voice)
+        self.synth.stopSpeakingAtBoundary_(0)       # AVSpeechBoundaryImmediate
+        self.synth.speakUtterance_(u)
+        return 0
+
+    def is_speaking(self):
+        # Called, not read: rubicon hands back a bound method for a getter
+        # that is not the property's name, and a method is always truthy.
+        return bool(self.synth.isSpeaking())
+
+    def request_focus(self):
+        return 1 if self.session.setActive_error_(True, None) else 0
+
+    def abandon_focus(self):
+        return self.session.setActive_withOptions_error_(False, self.NOTIFY_OTHERS, None)
+
+    _player = None
+
+    def play(self, path):
+        url = self._url.fileURLWithPath_(path)
+        player = self._player_cls.alloc().initWithContentsOfURL_error_(url, None)
+        if player is None:
+            raise OSError(f"AVAudioPlayer cannot open {path}")
+        if not player.play():
+            raise OSError(f"AVAudioPlayer would not start {path}")
+        self._player = player
+
+    def is_playing(self):
+        return bool(self._player is not None and self._player.isPlaying())
+
+    def stop_clip(self):
+        player, self._player = self._player, None
+        if player is not None:
+            player.stop()
+
+
 def _discard(path):
     try:
         os.remove(path)
@@ -276,7 +365,11 @@ def _discard(path):
         print(f"[navi] speech: could not remove {path}: {exc}", flush=True)
 
 
-def _android_backend():
+def _platform_backend():
+    """This phone's backend. Off both phones AndroidBackend raises
+    ImportError (no pyjnius), which _bring_up reports as NO_BRIDGE."""
+    if sys.platform == "ios":
+        return IOSBackend()
     return AndroidBackend()
 
 
