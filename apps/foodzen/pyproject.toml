@@ -80,3 +80,12 @@ copyright = "Copyright (c) 2026 nvii"
 [tool.flet.ios.info]
 NSCameraUsageDescription = "Foodzen uses the camera to photograph a meal or a nutrition label, so the food can be named and looked up."
 NSPhotoLibraryUsageDescription = "Foodzen reads a photo you choose of a meal or a nutrition label, so the food can be named and looked up."
+
+# Pins, because pub resolves plugins that cannot compile against Flet 0.86.5's
+# exact `jni: 1.0.0`: jni_flutter 1.0.4+1, and shared_preferences_android
+# 2.5.0+ (its JNI rewrite, 2026-10-17), both assert package:jni ^1.1.0 at
+# compile time - on iOS too, because Dart compiles every plugin's Dart code.
+# The full story is in apps/navi/pyproject.toml.
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni_flutter = "1.0.3"
+shared_preferences_android = "2.4.28"

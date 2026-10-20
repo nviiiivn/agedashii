@@ -158,5 +158,9 @@ UIBackgroundModes = ["location", "audio"]
 # code at all. 1.0.3 is the version that built every APK before it and the one
 # the working build's pubspec.lock holds. Pinning jni_flutter rather than
 # raising jni leaves Flet's own pin alone.
+# shared_preferences_android 2.5.0 (2026-10-17) moved to JNI bindings with
+# the same ^1.1.0 assertion, and broke every app's build the same way; 2.4.28
+# is the last release before it.
 [tool.flet.flutter.pubspec.dependency_overrides]
 jni_flutter = "1.0.3"
+shared_preferences_android = "2.4.28"

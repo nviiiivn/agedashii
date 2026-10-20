@@ -126,3 +126,12 @@ NSLocationAlwaysAndWhenInUseUsageDescription = "Agedashii Moto keeps reading you
 # recording ride becomes a straight line - geolocator only turns background
 # updates on when this key says it may. No "audio": Moto makes no sound.
 UIBackgroundModes = ["location"]
+
+# Pins, because pub resolves plugins that cannot compile against Flet 0.86.5's
+# exact `jni: 1.0.0`: jni_flutter 1.0.4+1, and shared_preferences_android
+# 2.5.0+ (its JNI rewrite, 2026-10-17), both assert package:jni ^1.1.0 at
+# compile time - on iOS too, because Dart compiles every plugin's Dart code.
+# The full story is in apps/navi/pyproject.toml.
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni_flutter = "1.0.3"
+shared_preferences_android = "2.4.28"
