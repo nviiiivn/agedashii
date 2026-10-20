@@ -384,7 +384,10 @@ PYEOF
   # single strings.
   BG=""
   [ -n "$ICON_BG" ] && [ "$T" = apk ] && BG="--android-adaptive-icon-background $ICON_BG"
-  time flet build "$T" --yes -o "dist/$T" --exclude .git dist build .venv $EXTRA $SIGN $VER $BG
+  # FLET_VERBOSE=-vv shows the xcodebuild/gradle output itself. Without it a
+  # failed iOS archive prints only Flutter's generic "select a Development
+  # Team" advice, which is a hint, not the error.
+  time flet build "$T" --yes -o "dist/$T" --exclude .git dist build .venv $EXTRA $SIGN $VER $BG ${FLET_VERBOSE:-}
   rc=$?
   if [ $rc -ne 0 ]; then
     echo "!!! $APP $T FAILED rc=$rc"

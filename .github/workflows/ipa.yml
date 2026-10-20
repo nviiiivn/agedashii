@@ -92,6 +92,7 @@ jobs:
       - name: Build the IPA
         env:
           TC: ${{ runner.temp }}/tc
+          FLET_VERBOSE: -vv
         run: bash tools/build_app.sh ${{ matrix.app }} ipa
 
       - name: Show what was produced
