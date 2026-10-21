@@ -687,6 +687,8 @@ def _geolocator(page):
         lat, lon = getattr(pos, "latitude", None), getattr(pos, "longitude", None)
         if lat is None or lon is None:
             return
+        # The weather is for where the phone is, once it knows (api.note_fix).
+        M.note_fix(lat, lon)
         _FOLLOW["position"] = (lat, lon)
         render = _FOLLOW["render"]
         if callable(render):

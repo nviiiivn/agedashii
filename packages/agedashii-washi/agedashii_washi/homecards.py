@@ -116,17 +116,24 @@ def nowplaying():
     ]))
 
 
-def weather_shortcut(on_open=None, place="Oakland"):
+def weather_shortcut(on_open=None, place=None):
     """A number and a tap through to the Weather page.
 
     Not the page - that is 1,623 lines and lives in the apps that have one.
     An app with no Weather page passes no handler, or leaves this out.
+
+    This read `M.weather().get("current")`, and `weather()` returns a
+    {"now", "days"} summary with no "current" key - so the card said "no
+    reading" on every phone, every time. It reads the raw block now, and the
+    place comes from the server's answer instead of a hardcoded "Oakland".
     """
     p = PAL()
     try:
-        cur = (M.weather() or {}).get("current")
+        cur = M.weather_current()
+        place = place or M.weather_place() or "Oakland"
     except Exception:                                  # noqa: BLE001
         cur = None
+        place = place or "Oakland"
     if not cur:
         return card(ft.Column(spacing=6, controls=[
             sub(f"WEATHER - {place.upper()}", 10),

@@ -409,14 +409,105 @@ class ForecastDays(unittest.TestCase):
             self.assertIsNone(api.weather_days())
 
     def test_the_current_block_carries_no_rain_chance(self):
-        """There is no `hourly` in this server's reply, so nothing may claim
-        a precipitation probability. Home used to print "0% rain"."""
+        """A server older than 2026-10-21 sends no rain chance at all, so
+        nothing may invent one from it. Home used to print "0% rain"."""
         with mock.patch.object(api, "_get", return_value={
                 "current": {"temperature_2m": 63.9, "weather_code": 1,
                             "relative_humidity_2m": 78}}):
             cur = api.weather_current()
         self.assertNotIn("precipitation_probability", cur)
         self.assertEqual(cur["relative_humidity_2m"], 78)
+
+
+class WeatherIsForWhereSheIs(unittest.TestCase):
+    """The weather reads ask for this phone's fix when it has one."""
+
+    PAYLOAD = {"current": {"temperature_2m": 61.2, "weather_code": 3,
+                           "wind_speed_10m": 4.0, "precipitation_probability": 40},
+               "hourly": {"precipitation_probability": [40, 55]},
+               "daily": {"time": ["2026-10-21"], "temperature_2m_max": [66],
+                         "temperature_2m_min": [55], "weather_code": [3]},
+               "place": {"name": "here", "source": "device"}}
+
+    def setUp(self):
+        api._FIX["at"] = None
+
+    def tearDown(self):
+        api._FIX["at"] = None
+
+    def _paths(self, answers):
+        """The paths read, answering each from `answers` (path -> payload)."""
+        asked = []
+
+        def fake(path, timeout=2.5):
+            asked.append(path)
+            return answers.get(path)
+        with mock.patch.object(api, "_get", side_effect=fake):
+            api.weather_current()
+        return asked
+
+    def test_a_fresh_fix_is_asked_for_rounded_to_the_servers_cell(self):
+        api.note_fix(37.77123, -122.44139)
+        asked = self._paths({"/api/weather?lat=37.77&lon=-122.44": self.PAYLOAD})
+        self.assertEqual(asked, ["/api/weather?lat=37.77&lon=-122.44"])
+
+    def test_no_fix_asks_for_her_place_on_the_server(self):
+        self.assertEqual(self._paths({"/api/weather": self.PAYLOAD}), ["/api/weather"])
+
+    def test_a_located_miss_falls_back_to_the_plain_reading(self):
+        api.note_fix(37.77, -122.44)
+        asked = self._paths({"/api/weather": self.PAYLOAD})
+        self.assertEqual(asked, ["/api/weather?lat=37.77&lon=-122.44", "/api/weather"])
+
+    def test_an_old_fix_is_not_where_she_is(self):
+        api.note_fix(37.77, -122.44)
+        lat, lon, at = api._FIX["at"]
+        api._FIX["at"] = (lat, lon, at - api.FIX_FRESH_S - 1)
+        self.assertEqual(self._paths({"/api/weather": self.PAYLOAD}), ["/api/weather"])
+
+    def test_junk_is_not_a_fix(self):
+        for lat, lon in (("x", 0), (None, None), (91, 0), (0, 181)):
+            api.note_fix(lat, lon)
+        self.assertIsNone(api._FIX["at"])
+
+    def test_rain_is_the_chance_now_and_unknown_is_not_zero(self):
+        with mock.patch.object(api, "_get", return_value=self.PAYLOAD):
+            self.assertEqual(api.weather()["now"]["rain"], 40)
+        bare = {"current": {"temperature_2m": 60}, "daily": {}}
+        with mock.patch.object(api, "_get", return_value=bare):
+            self.assertIsNone(api.weather()["now"]["rain"])
+
+    def test_the_city_is_the_place_the_server_answered_for(self):
+        with mock.patch.object(api, "_get", return_value=self.PAYLOAD):
+            self.assertEqual(api.weather()["now"]["city"], "here")
+            self.assertEqual(api.weather_place(), "here")
+
+
+class WeatherShortcutCard(unittest.TestCase):
+    """The shared Home weather card read a key `weather()` never has."""
+
+    def _texts(self, control):
+        out, stack = [], [control]
+        while stack:
+            c = stack.pop()
+            if isinstance(getattr(c, "value", None), str):
+                out.append(c.value)
+            for attr in ("content", "controls"):
+                kid = getattr(c, attr, None)
+                if isinstance(kid, list):
+                    stack.extend(kid)
+                elif kid is not None:
+                    stack.append(kid)
+        return out
+
+    def test_a_reading_is_shown_not_no_reading(self):
+        from agedashii_washi import homecards
+        payload = WeatherIsForWhereSheIs.PAYLOAD
+        with mock.patch.object(api, "_get", return_value=payload):
+            said = self._texts(homecards.weather_shortcut())
+        self.assertIn("61", said)
+        self.assertNotIn("no reading", said)
+        self.assertIn("WEATHER - HERE", said)
 
 
 class LocalDates(unittest.TestCase):

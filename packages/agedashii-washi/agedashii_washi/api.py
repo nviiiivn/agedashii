@@ -1208,8 +1208,56 @@ def nowplaying():
             "image": s.get("image") or ""}
 
 
+#: The last GPS fix this app saw, as (lat, lon, time.monotonic()), or None.
+#: Any page with a geolocator feeds it through `note_fix`; the weather reads
+#: below use it, so the weather is for where the phone is.
+_FIX = {"at": None}
+#: A fix older than this is no longer "where she is", and the server's own
+#: answer - the place she set, or its labelled default - is better than it.
+FIX_FRESH_S = 2 * 3600
+
+
+def note_fix(lat, lon):
+    """Remember where the phone is, for the weather. Never raises.
+
+    Rounded to 0.01 deg (about 1 km), which is how the server keys its cache:
+    the request path - and so the store entry - only changes when she has
+    moved far enough for the forecast to, not on every fix.
+    """
+    try:
+        lat, lon = round(float(lat), 2), round(float(lon), 2)
+    except (TypeError, ValueError):
+        return
+    if -90 <= lat <= 90 and -180 <= lon <= 180:
+        _FIX["at"] = (lat, lon, time.monotonic())
+
+
+def _weather_get():
+    """/api/weather for this phone's fix if it has a fresh one, else plain.
+
+    The plain path is the server's place for her: the one she set, else its
+    default, and its `place` block says which. A located read that comes back
+    empty - no signal and never cached at this point - falls through to the
+    plain one, which the store has kept, rather than to "no reading".
+    """
+    fix = _FIX["at"]
+    if fix and time.monotonic() - fix[2] < FIX_FRESH_S:
+        d = _get(f"/api/weather?lat={fix[0]:.2f}&lon={fix[1]:.2f}")
+        if isinstance(d, dict) and not d.get("error"):
+            return d
+    return _get("/api/weather")
+
+
+def weather_place():
+    """The name of the place the weather is for, or "" when unknown."""
+    d = _weather_get()
+    if not isinstance(d, dict):
+        return ""
+    return str((d.get("place") or {}).get("name") or "")
+
+
 def weather():
-    d = _get("/api/weather")
+    d = _weather_get()
     if d is None:
         return None
     cur = d.get("current") or {}
@@ -1218,7 +1266,13 @@ def weather():
     mx = daily.get("temperature_2m_max") or []
     mn = daily.get("temperature_2m_min") or []
     codes = daily.get("weather_code") or []
+    # The chance of rain NOW. The server's hourly block starts at the current
+    # hour, so [0] is this hour; `current` carries it directly as well. None
+    # when neither is there - 0 would be a measurement nobody took.
     pp = (d.get("hourly") or {}).get("precipitation_probability") or []
+    rain = cur.get("precipitation_probability")
+    if rain is None and pp:
+        rain = pp[0]
     days = []
     for i in range(1, min(5, len(times))):
         try:
@@ -1231,7 +1285,9 @@ def weather():
     return {"now": {"t": round(cur.get("temperature_2m") or 0), "desc": _wx(cur.get("weather_code")),
                     "h": f"{round(mx[0])}°" if mx else "—", "l": f"{round(mn[0])}°" if mn else "—",
                     "wind": round(cur.get("wind_speed_10m") or 0),
-                    "rain": pp[0] if pp else 0, "city": "Oakland"}, "days": days}
+                    "rain": rain,
+                    "city": (d.get("place") or {}).get("name") or "Oakland"},
+            "days": days}
 
 
 def feeds():
@@ -2934,7 +2990,7 @@ def weather_days(count=3):
     what the website shows - and the live server only sends three days at all,
     so skipping one there leaves two.
     """
-    d = _get("/api/weather")
+    d = _weather_get()
     if not isinstance(d, dict):
         return None
     daily = d.get("daily") or {}
@@ -2965,10 +3021,11 @@ def weather_current():
     """The raw `current` block, or None.
 
     Home needs humidity and apparent temperature, which `weather()`'s summary
-    does not carry - and it must *not* claim a rain chance, because this
-    server sends no `hourly` block at all. See home.py.
+    does not carry. Since 2026-10-21 the server also sends
+    `precipitation_probability` here; a server older than that does not, so a
+    reader must treat it as possibly absent rather than as 0.
     """
-    d = _get("/api/weather")
+    d = _weather_get()
     if not isinstance(d, dict):
         return None
     cur = d.get("current")
