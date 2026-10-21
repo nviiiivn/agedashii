@@ -137,7 +137,7 @@ jobs:
       # storage is full ("Artifact storage quota has been hit", 2026-10-20),
       # and release assets do not count against it. One prerelease per
       # branch, each app's .ipa replaced in place by the next build. The repo
-      # is private, so the release is too.
+      # is public, so the release and its .ipa files are public too.
       - name: Publish the IPA
         env:
           GH_TOKEN: ${{ github.token }}
