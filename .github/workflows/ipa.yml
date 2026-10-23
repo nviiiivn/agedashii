@@ -124,6 +124,10 @@ jobs:
               sys.exit(f"{path} has no Payload/ - not an installable ipa")
           if not [n for n in payload if n.endswith(".app/Info.plist")]:
               sys.exit(f"{path} has no app Info.plist under Payload/")
+          # The app itself must carry a signature, not just its frameworks:
+          # an installer refused the bare one as "not signed at all".
+          if not [n for n in payload if n.count("/") == 3 and n.endswith(".app/_CodeSignature/CodeResources")]:
+              sys.exit(f"{path}: the app is not signed")
           bundles = sorted({n.split("/")[1] for n in payload if n.count("/") > 1})
           print(f"ok: {os.path.getsize(path):,} bytes, "
                 f"{len(names)} entries, bundle {bundles[:1]}")

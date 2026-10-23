@@ -414,10 +414,20 @@ PYEOF
         pay="$(mktemp -d)/Payload"
         mkdir -p "$pay"
         cp -R "$app" "$pay/"
-        ( cd "$(dirname "$pay")" && zip -qry "$OUT/agedashii-$APP.ipa" Payload )
       else
-        cp "$found" "$OUT/agedashii-$APP.ipa"
-      fi ;;
+        pay="$(mktemp -d)/Payload"
+        found="$(cd "$(dirname "$found")" && pwd)/$(basename "$found")"
+        ( cd "$(dirname "$pay")" && unzip -q "$found" )
+      fi
+      # Self-signed (ad hoc). --no-codesign leaves the frameworks signed and
+      # the app itself bare, and an on-phone installer refused that as "not
+      # signed at all" (2026-10-22). An ad-hoc signature is what such
+      # installers and SideStore/AltStore expect to find, and re-sign.
+      for a in "$pay"/*.app; do
+        codesign --force --deep --sign - --timestamp=none "$a" || { echo "!!! $APP ipa: codesign failed"; rc_all=1; }
+      done
+      rm -f "$OUT/agedashii-$APP.ipa"
+      ( cd "$(dirname "$pay")" && zip -qry "$OUT/agedashii-$APP.ipa" Payload ) ;;
     linux) tar -C "dist/$T" -czf "$OUT/agedashii-$APP-linux-x64.tar.gz" . ;;
     # The web build is a directory of files to serve, not one artifact, so
     # it is tarred whole and unpacked at the far end.
